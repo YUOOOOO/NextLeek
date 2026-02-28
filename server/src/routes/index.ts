@@ -1,13 +1,12 @@
 import { Router } from 'express'
 import { getHealthStatus } from '../controllers/health.controller'
+import { getIndices, getQuote, getHistory } from '../controllers/market.controller'
 
 const router = Router()
 
-// Define routes
 router.get('/health', getHealthStatus)
-
-// Future routes can be added here, e.g.:
-// import userRoutes from './user.routes';
-// router.use('/users', userRoutes);
+router.get('/market/indices', getIndices)
+router.get('/market/quote', getQuote)
+router.get('/market/history', getHistory)
 
 export default router
