@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls*)",
+      "Bash(npm install*)",
+      "Bash(npm run dev)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(grep*)",
+      "Bash(findstr*)",
+      "Bash(npx vue-tsc:*)"
+    ]
+  }
+}

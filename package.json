@@ -1,0 +1,11 @@
+{
+  "name": "nextleek",
+  "private": true,
+  "workspaces": ["frontend", "server"],
+  "scripts": {
+    "dev": "chcp 65001 >nul && concurrently \"npm run dev -w frontend\" \"npm run dev -w server\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
