@@ -2,7 +2,8 @@
 import { ref, computed } from 'vue'
 
 const tabs = ['股票', '基金', '黄金'] as const
-const activeTab = ref<(typeof tabs)[number]>('股票')
+const activeTab = ref<(typeof tabs)[number]>('黄金')
+const disabledTabs = new Set(['股票', '基金'])
 
 const placeholder = computed(() => {
   if (activeTab.value === '股票') return '搜索股票代码或名称'
@@ -12,14 +13,16 @@ const placeholder = computed(() => {
 
 const searchQuery = ref('')
 
-const emit = defineEmits<{ enter: [] }>()
+const TAB_TYPE: Record<string, string> = { '股票': 'stock', '基金': 'fund', '黄金': 'gold' }
+
+const emit = defineEmits<{ enter: [type: string] }>()
 
 function onEnter() {
-  emit('enter')
+  emit('enter', TAB_TYPE[activeTab.value])
 }
 
 function onGoldClick() {
-  emit('enter')
+  emit('enter', 'gold')
 }
 </script>
 
@@ -29,7 +32,8 @@ function onGoldClick() {
       <button
         v-for="tab in tabs"
         :key="tab"
-        :class="['tab', { active: activeTab === tab }]"
+        :class="['tab', { active: activeTab === tab, disabled: disabledTabs.has(tab) }]"
+        :disabled="disabledTabs.has(tab)"
         @click="activeTab = tab"
       >
         {{ tab }}
@@ -61,6 +65,7 @@ function onGoldClick() {
   cursor: pointer; font-size: 0.85em; font-weight: 500; transition: all 0.2s;
 }
 .tab.active { background: #1a2536; color: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+.tab.disabled { opacity: 0.3; cursor: not-allowed; }
 .content { margin-top: 1rem; }
 .search-input {
   width: 100%; padding: 0.75em 1em; font-size: 0.85em;

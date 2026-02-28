@@ -4,8 +4,8 @@ import AssetSelector from './components/AssetSelector.vue'
 
 const router = useRouter()
 
-function onEnter() {
-  router.push('/home')
+function onEnter(type: string) {
+  router.push(`/home/${type}`)
 }
 </script>
 
