@@ -9,7 +9,8 @@
       "Bash(grep*)",
       "Bash(findstr*)",
       "Bash(npx vue-tsc:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(npx tsc:*)"
     ]
   }
 }
