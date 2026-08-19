@@ -1,6 +1,36 @@
-from fastapi import FastAPI, Query
+"""NextLeek Data API — AkShare backend for A-share indices / stocks / ETFs."""
+
+from __future__ import annotations
+
+import os
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
+
+# Bypass broken local system proxies (e.g. 127.0.0.1:2080) for Eastmoney calls.
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("no_proxy", "*")
+
+import urllib.request
+
+urllib.request.getproxies = lambda: {}  # type: ignore[assignment]
+
+import requests
+
+_orig_request = requests.Session.request
+
+
+def _no_proxy_request(self: requests.Session, *args: Any, **kwargs: Any):
+    kwargs.setdefault("proxies", {"http": None, "https": None})
+    self.trust_env = False
+    return _orig_request(self, *args, **kwargs)
+
+
+requests.Session.request = _no_proxy_request  # type: ignore[method-assign]
+
+import akshare as ak
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from openbb import obb
 
 app = FastAPI(title="NextLeek Data API")
 
@@ -12,84 +42,419 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+INDEX_CODES = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "399006": "创业板指",
+}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return default
+        if isinstance(value, str) and value.strip() in {"", "-", "--"}:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(_safe_float(value, float(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_symbol(symbol: str) -> tuple[str, str, str]:
+    """Return (bare_code, market SH|SZ, dotted code like 510300.SH)."""
+    raw = (symbol or "").strip().upper()
+    if not raw:
+        raise HTTPException(status_code=400, detail="symbol 不能为空")
+
+    raw = raw.replace("_", ".")
+
+    if raw.startswith("SH") and len(raw) >= 8 and raw[2:].replace(".", "").isdigit():
+        raw = raw[2:] if not raw[2] == "." else raw[3:]
+        if "." not in raw:
+            raw = f"{raw}.SH"
+    elif raw.startswith("SZ") and len(raw) >= 8 and raw[2:].replace(".", "").isdigit():
+        raw = raw[2:] if not raw[2] == "." else raw[3:]
+        if "." not in raw:
+            raw = f"{raw}.SZ"
+    elif raw.startswith("SS") and len(raw) >= 8 and raw[2:].replace(".", "").isdigit():
+        raw = raw[2:] if not raw[2] == "." else raw[3:]
+        if "." not in raw:
+            raw = f"{raw}.SH"
+
+    if "." in raw:
+        code, market = raw.split(".", 1)
+        market = "SH" if market in {"SH", "SS"} else "SZ" if market == "SZ" else market
+    else:
+        code = raw
+        if code.startswith(("5", "6", "9")):
+            market = "SH"
+        elif code.startswith(("15", "16", "18", "12", "0", "1", "2", "3")):
+            market = "SZ"
+        else:
+            market = "SZ"
+
+    code = "".join(ch for ch in code if ch.isdigit())
+    if len(code) < 5:
+        raise HTTPException(status_code=400, detail=f"无效代码: {symbol}")
+
+    if market not in {"SH", "SZ"}:
+        market = "SH" if code.startswith(("5", "6", "9")) else "SZ"
+
+    # Tracked indices: force exchange by code family.
+    if code in INDEX_CODES:
+        market = "SH" if code.startswith("000") else "SZ"
+
+    return code, market, f"{code}.{market}"
+
+
+def _default_start(end: Optional[str] = None) -> str:
+    end_dt = datetime.strptime(end, "%Y-%m-%d") if end else datetime.now()
+    return (end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
+
+
+def _to_ak_date(value: str) -> str:
+    return value.replace("-", "")
+
+
+def _row_date(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)[:10]
+
+
+def _upstream_error(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=502, detail=f"AkShare 上游失败: {exc}")
+
+
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to NextLeek Data API"}
+    return {"message": "Welcome to NextLeek Data API", "provider": "akshare"}
+
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "service": "data-api"}
-
-
-# 大盘指数行情 (上证、深证、创业板)
-INDEX_SYMBOLS = {
-    "000001.SS": "上证指数",
-    "399001.SZ": "深证成指",
-    "399006.SZ": "创业板指",
-}
+    return {"status": "ok", "service": "data-api", "provider": "akshare"}
 
 
 @app.get("/api/indices")
 def get_indices():
-    symbols = ",".join(INDEX_SYMBOLS.keys())
-    result = obb.equity.price.quote(symbols, provider="yfinance")
-    data = result.to_df().reset_index()
+    try:
+        df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=502, detail="指数行情为空")
+
     items = []
-    for _, row in data.iterrows():
-        symbol = row.get("symbol", "")
-        items.append({
-            "name": INDEX_SYMBOLS.get(symbol, symbol),
-            "code": symbol,
-            "price": round(float(row.get("last_price", 0)), 2),
-            "change": round(float(row.get("change_percent", 0)), 2),
-        })
+    for code, name in INDEX_CODES.items():
+        rows = df[df["代码"].astype(str) == code]
+        if rows.empty:
+            continue
+        row = rows.iloc[0]
+        market = "SH" if code.startswith("000") else "SZ"
+        items.append(
+            {
+                "name": name,
+                "code": f"{code}.{market}",
+                "price": round(_safe_float(row.get("最新价")), 2),
+                "change": round(_safe_float(row.get("涨跌幅")), 2),
+            }
+        )
+
+    if not items:
+        raise HTTPException(status_code=502, detail="未匹配到目标指数")
     return items
 
 
-# 个股实时报价
-@app.get("/api/quote")
-def get_quote(symbol: str = Query(..., description="股票代码，如 600519.SS")):
-    result = obb.equity.price.quote(symbol, provider="yfinance")
-    row = result.to_df().reset_index().iloc[0]
+def _quote_from_index(code: str) -> Optional[dict]:
+    if code not in INDEX_CODES:
+        return None
+    try:
+        df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+    rows = df[df["代码"].astype(str) == code]
+    if rows.empty:
+        return None
+    row = rows.iloc[0]
+    market = "SH" if code.startswith("000") else "SZ"
     return {
-        "symbol": str(row.get("symbol", "")),
-        "name": str(row.get("name", "")),
-        "price": round(float(row.get("last_price", 0)), 2),
-        "open": round(float(row.get("open", 0)), 2),
-        "prev_close": round(float(row.get("prev_close", 0)), 2),
-        "high": round(float(row.get("high", 0)), 2),
-        "low": round(float(row.get("low", 0)), 2),
-        "volume": int(row.get("volume", 0)),
-        "change_percent": round(float(row.get("change_percent", 0)), 2),
+        "symbol": f"{code}.{market}",
+        "name": INDEX_CODES[code],
+        "price": round(_safe_float(row.get("最新价")), 2),
+        "open": round(_safe_float(row.get("今开")), 2),
+        "prev_close": round(_safe_float(row.get("昨收")), 2),
+        "high": round(_safe_float(row.get("最高")), 2),
+        "low": round(_safe_float(row.get("最低")), 2),
+        "volume": _safe_int(row.get("成交量")),
+        "change_percent": round(_safe_float(row.get("涨跌幅")), 2),
     }
 
 
-# 历史K线数据
+def _quote_from_etf_spot(code: str) -> Optional[dict]:
+    try:
+        df = ak.fund_etf_spot_em()
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+    rows = df[df["代码"].astype(str) == code]
+    if rows.empty:
+        return None
+    row = rows.iloc[0]
+    _c, _m, dotted = _normalize_symbol(code)
+    return {
+        "symbol": dotted,
+        "name": str(row.get("名称", "")),
+        "price": round(_safe_float(row.get("最新价")), 2),
+        "open": round(_safe_float(row.get("开盘价")), 2),
+        "prev_close": round(_safe_float(row.get("昨收")), 2),
+        "high": round(_safe_float(row.get("最高价")), 2),
+        "low": round(_safe_float(row.get("最低价")), 2),
+        "volume": _safe_int(row.get("成交量")),
+        "change_percent": round(_safe_float(row.get("涨跌幅")), 2),
+    }
+
+
+def _quote_from_stock_hist(code: str) -> dict:
+    end = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=12)).strftime("%Y%m%d")
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=code,
+            period="daily",
+            start_date=start,
+            end_date=end,
+            adjust="qfq",
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"未找到行情: {code}")
+    row = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else row
+    _c, _m, dotted = _normalize_symbol(code)
+    close = _safe_float(row.get("收盘"))
+    prev_close = _safe_float(prev.get("收盘"))
+    change = (
+        (close - prev_close) / prev_close * 100
+        if prev_close
+        else _safe_float(row.get("涨跌幅"))
+    )
+    return {
+        "symbol": dotted,
+        "name": code,
+        "price": round(close, 2),
+        "open": round(_safe_float(row.get("开盘")), 2),
+        "prev_close": round(prev_close, 2),
+        "high": round(_safe_float(row.get("最高")), 2),
+        "low": round(_safe_float(row.get("最低")), 2),
+        "volume": _safe_int(row.get("成交量")),
+        "change_percent": round(change, 2),
+    }
+
+
+@app.get("/api/quote")
+def get_quote(
+    symbol: str = Query(
+        ..., description="股票/指数/ETF 代码，如 600519 / 600519.SH / sh600519"
+    ),
+):
+    code, _market, _dotted = _normalize_symbol(symbol)
+
+    if code in INDEX_CODES:
+        q = _quote_from_index(code)
+        if q:
+            return q
+
+    # Common ETF prefixes
+    if code.startswith(("15", "16", "18", "50", "51", "52", "56", "58", "159")):
+        q = _quote_from_etf_spot(code)
+        if q:
+            return q
+
+    return _quote_from_stock_hist(code)
+
+
 @app.get("/api/history")
 def get_history(
-    symbol: str = Query(..., description="股票代码"),
+    symbol: str = Query(..., description="股票/指数代码"),
     start_date: str = Query("", description="开始日期 YYYY-MM-DD"),
     end_date: str = Query("", description="结束日期 YYYY-MM-DD"),
 ):
-    kwargs: dict = {"provider": "yfinance"}
-    if start_date:
-        kwargs["start_date"] = start_date
-    if end_date:
-        kwargs["end_date"] = end_date
-    result = obb.equity.price.historical(symbol, **kwargs)
-    df = result.to_df().reset_index()
-    records = []
-    for _, row in df.iterrows():
-        records.append({
-            "date": str(row["date"])[:10],
-            "open": round(float(row["open"]), 2),
-            "high": round(float(row["high"]), 2),
-            "low": round(float(row["low"]), 2),
-            "close": round(float(row["close"]), 2),
-            "volume": int(row["volume"]),
-        })
-    return records
+    code, market, _dotted = _normalize_symbol(symbol)
+    end = end_date or datetime.now().strftime("%Y-%m-%d")
+    start = start_date or _default_start(end)
+
+    try:
+        if code in INDEX_CODES:
+            ak_symbol = f"{'sh' if market == 'SH' else 'sz'}{code}"
+            df = ak.stock_zh_index_daily_em(symbol=ak_symbol)
+            if df is None or df.empty:
+                raise HTTPException(status_code=404, detail=f"无指数历史: {code}")
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"])
+            mask = (df["date"] >= start) & (df["date"] <= end)
+            df = df.loc[mask]
+            return [
+                {
+                    "date": _row_date(row["date"]),
+                    "open": round(_safe_float(row["open"]), 2),
+                    "high": round(_safe_float(row["high"]), 2),
+                    "low": round(_safe_float(row["low"]), 2),
+                    "close": round(_safe_float(row["close"]), 2),
+                    "volume": _safe_int(row["volume"]),
+                }
+                for _, row in df.iterrows()
+            ]
+
+        df = ak.stock_zh_a_hist(
+            symbol=code,
+            period="daily",
+            start_date=_to_ak_date(start),
+            end_date=_to_ak_date(end),
+            adjust="qfq",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"无历史数据: {code}")
+
+    return [
+        {
+            "date": _row_date(row["日期"]),
+            "open": round(_safe_float(row["开盘"]), 2),
+            "high": round(_safe_float(row["最高"]), 2),
+            "low": round(_safe_float(row["最低"]), 2),
+            "close": round(_safe_float(row["收盘"]), 2),
+            "volume": _safe_int(row["成交量"]),
+        }
+        for _, row in df.iterrows()
+    ]
+
+
+def _etf_item_from_row(row: pd.Series) -> dict:
+    code = str(row.get("代码", ""))
+    _c, _m, dotted = _normalize_symbol(code)
+    return {
+        "code": dotted,
+        "name": str(row.get("名称", "")),
+        "price": round(_safe_float(row.get("最新价")), 2),
+        "change_percent": round(_safe_float(row.get("涨跌幅")), 2),
+        "volume": _safe_int(row.get("成交量")),
+        "amount": _safe_float(row.get("成交额")),
+    }
+
+
+@app.get("/api/etf/list")
+def list_etfs(
+    q: str = Query("", description="按代码或名称模糊搜索"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        df = ak.fund_etf_spot_em()
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+
+    if df is None or df.empty:
+        return {"total": 0, "limit": limit, "offset": offset, "items": []}
+
+    filtered = df
+    keyword = (q or "").strip()
+    if keyword:
+        key = keyword.lower()
+        bare = key.lstrip("shsz.").replace(".sh", "").replace(".sz", "")
+        code_series = filtered["代码"].astype(str).str.lower()
+        name_series = filtered["名称"].astype(str).str.lower()
+        filtered = filtered[
+            code_series.str.contains(bare, na=False)
+            | name_series.str.contains(key, na=False)
+        ]
+
+    total = int(len(filtered))
+    page = filtered.iloc[offset : offset + limit]
+    items = [_etf_item_from_row(row) for _, row in page.iterrows()]
+    return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+
+@app.get("/api/etf/quote")
+def etf_quote(symbol: str = Query(..., description="ETF 代码，如 510300")):
+    code, _market, dotted = _normalize_symbol(symbol)
+    try:
+        df = ak.fund_etf_spot_em()
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+
+    rows = df[df["代码"].astype(str) == code]
+    if rows.empty:
+        raise HTTPException(status_code=404, detail=f"未找到 ETF: {dotted}")
+    row = rows.iloc[0]
+    return {
+        "symbol": dotted,
+        "name": str(row.get("名称", "")),
+        "price": round(_safe_float(row.get("最新价")), 2),
+        "open": round(_safe_float(row.get("开盘价")), 2),
+        "prev_close": round(_safe_float(row.get("昨收")), 2),
+        "high": round(_safe_float(row.get("最高价")), 2),
+        "low": round(_safe_float(row.get("最低价")), 2),
+        "volume": _safe_int(row.get("成交量")),
+        "amount": _safe_float(row.get("成交额")),
+        "change_percent": round(_safe_float(row.get("涨跌幅")), 2),
+        "iopv": round(_safe_float(row.get("IOPV实时估值")), 4),
+        "premium_rate": round(_safe_float(row.get("基金折价率")), 2),
+    }
+
+
+@app.get("/api/etf/history")
+def etf_history(
+    symbol: str = Query(..., description="ETF 代码"),
+    start_date: str = Query("", description="开始日期 YYYY-MM-DD"),
+    end_date: str = Query("", description="结束日期 YYYY-MM-DD"),
+):
+    code, _market, _dotted = _normalize_symbol(symbol)
+    end = end_date or datetime.now().strftime("%Y-%m-%d")
+    start = start_date or _default_start(end)
+
+    try:
+        df = ak.fund_etf_hist_em(
+            symbol=code,
+            period="daily",
+            start_date=_to_ak_date(start),
+            end_date=_to_ak_date(end),
+            adjust="qfq",
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _upstream_error(exc) from exc
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"无 ETF 历史: {code}")
+
+    return [
+        {
+            "date": _row_date(row["日期"]),
+            "open": round(_safe_float(row["开盘"]), 2),
+            "high": round(_safe_float(row["最高"]), 2),
+            "low": round(_safe_float(row["最低"]), 2),
+            "close": round(_safe_float(row["收盘"]), 2),
+            "volume": _safe_int(row["成交量"]),
+        }
+        for _, row in df.iterrows()
+    ]
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

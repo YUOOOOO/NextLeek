@@ -1,11 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+// 业务路由已清空，待重新设计后再挂载。
 const router = createRouter({
   history: createWebHistory(),
-  routes: [
-    { path: '/', component: () => import('./pages/landing/index.vue') },
-    { path: '/home/:type', component: () => import('./pages/home/index.vue') },
-  ],
+  routes: [],
 })
 
 export default router
