@@ -1,9 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import RotationPage from './pages/rotation/index.vue'
 
-// 业务路由已清空，待重新设计后再挂载。
 const router = createRouter({
   history: createWebHistory(),
-  routes: [],
+  routes: [
+    { path: '/', redirect: '/rotation' },
+    { path: '/rotation', name: 'rotation', component: RotationPage },
+  ],
 })
 
 export default router

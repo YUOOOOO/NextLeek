@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -135,6 +136,20 @@ def _upstream_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=502, detail=f"AkShare 上游失败: {exc}")
 
 
+def _ak_call(fn, *args: Any, retries: int = 3, **kwargs: Any):
+    """Call AkShare with short retries for flaky Eastmoney connections."""
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if attempt + 1 < retries:
+                time.sleep(0.8 * (attempt + 1))
+    assert last is not None
+    raise last
+
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to NextLeek Data API", "provider": "akshare"}
@@ -147,15 +162,26 @@ def health_check():
 
 @app.get("/api/indices")
 def get_indices():
-    try:
-        df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
-    except Exception as exc:  # noqa: BLE001
-        raise _upstream_error(exc) from exc
+    frames = []
+    last_exc: Exception | None = None
+    for symbol in ("沪深重要指数", "上证系列指数", "深证系列指数"):
+        try:
+            part = _ak_call(ak.stock_zh_index_spot_em, symbol=symbol, retries=2)
+            if part is not None and not part.empty:
+                frames.append(part)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            continue
 
-    if df is None or df.empty:
-        raise HTTPException(status_code=502, detail="指数行情为空")
+    if frames:
+        df = pd.concat(frames, ignore_index=True)
+        if "代码" in df.columns:
+            df = df.drop_duplicates(subset=["代码"], keep="first")
+    else:
+        df = pd.DataFrame(columns=["代码", "最新价", "涨跌幅"])
 
     items = []
+    found = set()
     for code, name in INDEX_CODES.items():
         rows = df[df["代码"].astype(str) == code]
         if rows.empty:
@@ -170,9 +196,39 @@ def get_indices():
                 "change": round(_safe_float(row.get("涨跌幅")), 2),
             }
         )
+        found.add(code)
+
+    # Spot 表偶发缺深证/创业板：用日线末根兜底
+    for code, name in INDEX_CODES.items():
+        if code in found:
+            continue
+        market = "SH" if code.startswith("000") else "SZ"
+        ak_symbol = f"{'sh' if market == 'SH' else 'sz'}{code}"
+        try:
+            hist = _ak_call(ak.stock_zh_index_daily_em, symbol=ak_symbol, retries=2)
+        except Exception:
+            continue
+        if hist is None or hist.empty:
+            continue
+        last = hist.iloc[-1]
+        prev = hist.iloc[-2] if len(hist) > 1 else last
+        close = _safe_float(last.get("close"))
+        prev_close = _safe_float(prev.get("close"))
+        change = ((close - prev_close) / prev_close * 100) if prev_close else 0.0
+        items.append(
+            {
+                "name": name,
+                "code": f"{code}.{market}",
+                "price": round(close, 2),
+                "change": round(change, 2),
+            }
+        )
 
     if not items:
         raise HTTPException(status_code=502, detail="未匹配到目标指数")
+    # keep stable order of INDEX_CODES
+    order = {c: i for i, c in enumerate(INDEX_CODES)}
+    items.sort(key=lambda x: order.get(str(x["code"]).split(".")[0], 99))
     return items
 
 
@@ -180,7 +236,17 @@ def _quote_from_index(code: str) -> Optional[dict]:
     if code not in INDEX_CODES:
         return None
     try:
-        df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+        frames = []
+        for symbol in ("沪深重要指数", "上证系列指数", "深证系列指数"):
+            try:
+                part = _ak_call(ak.stock_zh_index_spot_em, symbol=symbol, retries=2)
+                if part is not None and not part.empty:
+                    frames.append(part)
+            except Exception:
+                continue
+        if not frames:
+            return None
+        df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["代码"], keep="first")
     except Exception as exc:  # noqa: BLE001
         raise _upstream_error(exc) from exc
     rows = df[df["代码"].astype(str) == code]
@@ -203,7 +269,7 @@ def _quote_from_index(code: str) -> Optional[dict]:
 
 def _quote_from_etf_spot(code: str) -> Optional[dict]:
     try:
-        df = ak.fund_etf_spot_em()
+        df = _ak_call(ak.fund_etf_spot_em)
     except Exception as exc:  # noqa: BLE001
         raise _upstream_error(exc) from exc
     rows = df[df["代码"].astype(str) == code]
@@ -228,7 +294,8 @@ def _quote_from_stock_hist(code: str) -> dict:
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=12)).strftime("%Y%m%d")
     try:
-        df = ak.stock_zh_a_hist(
+        df = _ak_call(
+            ak.stock_zh_a_hist,
             symbol=code,
             period="daily",
             start_date=start,
@@ -297,7 +364,7 @@ def get_history(
     try:
         if code in INDEX_CODES:
             ak_symbol = f"{'sh' if market == 'SH' else 'sz'}{code}"
-            df = ak.stock_zh_index_daily_em(symbol=ak_symbol)
+            df = _ak_call(ak.stock_zh_index_daily_em, symbol=ak_symbol)
             if df is None or df.empty:
                 raise HTTPException(status_code=404, detail=f"无指数历史: {code}")
             df = df.copy()
@@ -316,7 +383,8 @@ def get_history(
                 for _, row in df.iterrows()
             ]
 
-        df = ak.stock_zh_a_hist(
+        df = _ak_call(
+            ak.stock_zh_a_hist,
             symbol=code,
             period="daily",
             start_date=_to_ak_date(start),
@@ -364,7 +432,7 @@ def list_etfs(
     offset: int = Query(0, ge=0),
 ):
     try:
-        df = ak.fund_etf_spot_em()
+        df = _ak_call(ak.fund_etf_spot_em)
     except Exception as exc:  # noqa: BLE001
         raise _upstream_error(exc) from exc
 
@@ -393,7 +461,7 @@ def list_etfs(
 def etf_quote(symbol: str = Query(..., description="ETF 代码，如 510300")):
     code, _market, dotted = _normalize_symbol(symbol)
     try:
-        df = ak.fund_etf_spot_em()
+        df = _ak_call(ak.fund_etf_spot_em)
     except Exception as exc:  # noqa: BLE001
         raise _upstream_error(exc) from exc
 
@@ -428,7 +496,8 @@ def etf_history(
     start = start_date or _default_start(end)
 
     try:
-        df = ak.fund_etf_hist_em(
+        df = _ak_call(
+            ak.fund_etf_hist_em,
             symbol=code,
             period="daily",
             start_date=_to_ak_date(start),

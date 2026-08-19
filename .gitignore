@@ -16,3 +16,14 @@ dist-ssr
 __pycache__
 *.pyc
 .env
+.venv
+venv
+
+# strategy-api local lake / artifacts
+strategy-api/data/raw/
+strategy-api/data/live/
+strategy-api/data/jobs/
+strategy-api/.cache/
+
+# local research clone (do not commit)
+_tmp_etf_rot/

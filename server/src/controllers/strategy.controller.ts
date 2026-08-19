@@ -1,0 +1,93 @@
+import { Request, Response } from 'express'
+import { strategyProxy } from '../services/strategyApi'
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function statusOf(err: unknown): number {
+  if (err && typeof err === 'object' && 'status' in err) {
+    const s = err.status
+    if (typeof s === 'number') return s
+  }
+  return 502
+}
+
+function paramId(req: Request): string {
+  const raw = req.params.id
+  return Array.isArray(raw) ? String(raw[0] ?? '') : String(raw ?? '')
+}
+
+export async function strategyHealth(_req: Request, res: Response) {
+  try {
+    const data = await strategyProxy('/api/health')
+    res.json(data)
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getUniverse(_req: Request, res: Response) {
+  try {
+    res.json(await strategyProxy('/api/universe'))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getSealed(_req: Request, res: Response) {
+  try {
+    res.json(await strategyProxy('/api/sealed'))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function createJob(req: Request, res: Response) {
+  try {
+    const data = await strategyProxy('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify(req.body || {}),
+    })
+    res.status(201).json(data)
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function listJobs(req: Request, res: Response) {
+  try {
+    const q = new URLSearchParams()
+    if (req.query.limit) q.set('limit', String(req.query.limit))
+    const suffix = q.toString() ? `?${q}` : ''
+    res.json(await strategyProxy(`/api/jobs${suffix}`))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getJob(req: Request, res: Response) {
+  try {
+    const id = paramId(req)
+    res.json(await strategyProxy(`/api/jobs/${encodeURIComponent(id)}`))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getJobResult(req: Request, res: Response) {
+  try {
+    const id = paramId(req)
+    res.json(await strategyProxy(`/api/jobs/${encodeURIComponent(id)}/result`))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getLatestSignal(_req: Request, res: Response) {
+  try {
+    res.json(await strategyProxy('/api/signal/latest'))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}

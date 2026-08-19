@@ -1,0 +1,128 @@
+universe:
+  mode: A_SHARE_ONLY
+  qdii_tickers:
+    - "159920"
+    - "513050"
+    - "513100"
+    - "513130"
+    - "513180"
+    - "513400"
+    - "513500"
+    - "513520"
+
+backtest:
+  commission_rate: 0.0002
+  initial_capital: 1000000
+  lookback_window: 252
+  freq: 5
+  pos_size: 2
+  hysteresis:
+    delta_rank: 0.10
+    min_hold_days: 9
+  regime_gate:
+    enabled: true
+    proxy_symbol: "510300"
+    window: 20
+    thresholds_pct: [25, 30, 40]
+    exposures: [1.0, 0.7, 0.4, 0.1]
+
+data:
+  start_date: "2020-01-01"
+  # empty end_date = today
+  end_date: ""
+  symbols:
+    - "159801"
+    - "159819"
+    - "159859"
+    - "159883"
+    - "159915"
+    - "159920"
+    - "159928"
+    - "159949"
+    - "159985"
+    - "159992"
+    - "159995"
+    - "159998"
+    - "510050"
+    - "510300"
+    - "510500"
+    - "511010"
+    - "511260"
+    - "511380"
+    - "512010"
+    - "512100"
+    - "512200"
+    - "512400"
+    - "512480"
+    - "512660"
+    - "512690"
+    - "512720"
+    - "512800"
+    - "512880"
+    - "512980"
+    - "513050"
+    - "513100"
+    - "513130"
+    - "513180"
+    - "513400"
+    - "513500"
+    - "513520"
+    - "515030"
+    - "515180"
+    - "515210"
+    - "515220"
+    - "515650"
+    - "515790"
+    - "516090"
+    - "516160"
+    - "516520"
+    - "518880"
+    - "588000"
+    - "588200"
+
+# OHLCV factors available for WFO / sealed combos
+active_factors:
+  - MOM_20D
+  - MOM_60D
+  - SHARPE_RATIO_20D
+  - VOL_20D
+  - MAX_DD_60D
+  - PRICE_POSITION_20D
+  - PRICE_POSITION_120D
+  - BREAKOUT_20D
+  - SLOPE_20D
+  - CALMAR_RATIO_60D
+
+# Higher is better after sign flip for VOL/MAX_DD
+factor_signs:
+  MOM_20D: 1
+  MOM_60D: 1
+  SHARPE_RATIO_20D: 1
+  VOL_20D: -1
+  MAX_DD_60D: -1
+  PRICE_POSITION_20D: 1
+  PRICE_POSITION_120D: 1
+  BREAKOUT_20D: 1
+  SLOPE_20D: 1
+  CALMAR_RATIO_60D: 1
+
+wfo:
+  mode: smoke # smoke | full
+  combo_sizes: [2, 3]
+  max_combos: 80
+  train_ratio: 0.7
+  ic_threshold: 0.02
+  top_n_vec: 10
+  top_n_bt: 5
+  scoring:
+    return: 0.4
+    sharpe: 0.3
+    maxdd: 0.3
+
+sealed:
+  - id: momentum_core
+    name: MOM+Sharpe core
+    factors: [MOM_20D, SHARPE_RATIO_20D, PRICE_POSITION_120D]
+  - id: dual_mom
+    name: Dual momentum
+    factors: [MOM_20D, MOM_60D, VOL_20D]

@@ -1,30 +1,33 @@
 # NextLeek（AI 新时代韭菜）
 
-A 股 / 基金 / 黄金看板 + 多 Agent 投资对话原型。
+A 股 / 基金 / 黄金看板 + 多 Agent 投资对话原型 + **ETF 轮动研究平台**（WFO → VEC → BT + 信号）。
 
 ## 架构
 
 ```
 Browser → frontend (Vite :5173)
        → server Express (:3000) /api/*
-            ├─ /market/*  → data-api (:8000)  AkShare
-            ├─ /etf/*     → data-api (:8000)  AkShare
-            ├─ /gold/*    → 第三方黄金接口
-            └─ /ai/*      → LangChain 多 Agent（工具会调 data-api）
+            ├─ /market/*     → data-api (:8000)     AkShare 行情
+            ├─ /etf/*        → data-api (:8000)
+            ├─ /strategy/*   → strategy-api (:8001) 研究 + 信号
+            ├─ /gold/*       → 第三方黄金接口
+            └─ /ai/*         → LangChain 多 Agent（本轮未接策略 tool）
 ```
 
 | 进程 | 目录 | 默认端口 | 说明 |
 |------|------|----------|------|
-| frontend | `frontend/` | 5173 | Vue 3 + Vite |
-| server | `server/` | 3000 | Express API 网关 + AI |
-| **data-api** | `data-api/` | **8000** | **FastAPI + AkShare 行情** |
+| frontend | `frontend/` | 5173 | Vue 3 + Vite；`/rotation` 轮动页 |
+| server | `server/` | 3000 | Express BFF |
+| data-api | `data-api/` | 8000 | FastAPI + AkShare 薄行情 |
+| **strategy-api** | `strategy-api/` | **8001** | **WFO/VEC/BT/pipeline/signal** |
 
-`data-api` **不在** npm workspaces 里，需单独启动。
+`data-api` / `strategy-api` **不在** npm workspaces，需单独启动。
 
 环境变量：
 
 - `DATA_API_URL`：server → data-api，默认 `http://localhost:8000`
-- `VITE_API_BASE`：frontend → server
+- `STRATEGY_API_URL`：server → strategy-api，默认 `http://localhost:8001`
+- `VITE_API_BASE`：frontend → server，默认 `http://localhost:3000`
 - `PORT`：server 端口
 
 ---
@@ -38,7 +41,9 @@ npm install
 npm run dev
 ```
 
-### 2. data-api（必开，否则行情/ETF 不可用）
+打开：`http://localhost:5173/rotation`
+
+### 2. data-api（看板行情）
 
 ```bash
 cd data-api
@@ -46,100 +51,91 @@ pip install -r requirements.txt
 python main.py
 ```
 
-服务地址：`http://localhost:8000`  
-OpenAPI 文档：`http://localhost:8000/docs`
+### 3. strategy-api（研究引擎，必开才能跑轮动）
 
-依赖见 `data-api/requirements.txt`：`fastapi`、`uvicorn`、`akshare`（已移除 OpenBB / yfinance）。
+```bash
+cd strategy-api
+pip install -r requirements.txt
+# 在 strategy-api 根目录：
+python -m uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
+```
 
-> 若本机系统代理（如 `127.0.0.1:2080`）导致东财请求失败，data-api 启动时会尝试禁用进程内代理。仍失败时可检查系统代理设置。
+OpenAPI：`http://localhost:8001/docs`
+
+首次使用先提交 `update-data` 任务拉 AkShare 日线 parquet，再跑 `vec` / `bt` / `wfo` / `signal` / `pipeline`。
 
 ---
 
-## data-api
+## strategy-api
 
-行情数据源：**AkShare**（东财等）。策略层 / Express **不直连 AkShare**，只请求本服务。
+参考设计：`docs/superpowers/specs/2026-08-19-etf-rotation-strategy-platform-design.md`
+本地对照实现：`_tmp_etf_rot/`（gitignore，不提交）。
 
-### 直连接口（`:8000`）
+### 原生接口（`:8001`）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/health` | 健康检查，`provider: akshare` |
-| GET | `/api/indices` | 上证 / 深证成指 / 创业板指 |
-| GET | `/api/quote?symbol=` | 个股 / 指数 / ETF 报价 |
-| GET | `/api/history?symbol=&start_date=&end_date=` | 日 K（默认近 1 年） |
-| GET | `/api/etf/list?q=&limit=&offset=` | ETF 列表（关键字 + 分页） |
-| GET | `/api/etf/quote?symbol=` | 单只 ETF（含 IOPV、折溢价） |
-| GET | `/api/etf/history?symbol=&start_date=&end_date=` | ETF 日 K（前复权） |
+| GET | `/api/health` | `{ service: strategy-api }` |
+| GET | `/api/universe` | 池子 / mode / 冻结参数摘要 |
+| GET | `/api/sealed` | 封版策略因子组合 |
+| POST | `/api/jobs` | `{ type, params? }` → `{ job_id }` |
+| GET | `/api/jobs` | 最近任务 |
+| GET | `/api/jobs/{id}` | 状态 + 进度 |
+| GET | `/api/jobs/{id}/result` | 成功后的结果 JSON |
+| GET | `/api/signal/latest` | 有状态信号快照 |
 
-### 符号约定
+**Job types**：`update-data` | `wfo` | `vec` | `bt` | `pipeline` | `signal`
 
-入参可混用：`510300`、`510300.SH`、`sh510300`、`600519.SS`  
-出参统一为：`510300.SH`、`600519.SH` 这类 `代码.市场`。
+长任务单 worker 串行；产物在 `strategy-api/data/jobs/{id}/`（gitignore）。
 
-### ETF 列表参数
+### Express 代理（`:3000`）
 
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `q` | 空 | 代码或名称模糊匹配 |
-| `limit` | 50 | 1–200 |
-| `offset` | 0 | 偏移 |
+| Express | strategy-api |
+|---------|--------------|
+| `GET /api/strategy/health` | `/api/health` |
+| `GET /api/strategy/universe` | `/api/universe` |
+| `GET /api/strategy/sealed` | `/api/sealed` |
+| `POST /api/strategy/jobs` | `/api/jobs` |
+| `GET /api/strategy/jobs` | `/api/jobs` |
+| `GET /api/strategy/jobs/:id` | `/api/jobs/{id}` |
+| `GET /api/strategy/jobs/:id/result` | `/api/jobs/{id}/result` |
+| `GET /api/strategy/signal/latest` | `/api/signal/latest` |
 
-响应形状：
+### 数据湖
 
-```json
-{
-  "total": 66,
-  "limit": 3,
-  "offset": 0,
-  "items": [
-    {
-      "code": "510300.SH",
-      "name": "沪深300ETF",
-      "price": 4.68,
-      "change_percent": -2.26,
-      "volume": 123,
-      "amount": 456.0
-    }
-  ]
-}
+- 路径：`strategy-api/data/raw/ETF/daily/{code}.{SH\|SZ}_daily.parquet`
+- 列：`trade_date, adj_open, adj_high, adj_low, adj_close, vol[, amount]`
+- 源：AkShare `fund_etf_hist_em`（前复权映射到 `adj_*`）
+- 配置：`strategy-api/configs/config.yaml`（约 49 只池、FREQ=5、POS=2、Exp4 迟滞）
+
+### 示例
+
+```bash
+curl http://localhost:8001/api/health
+curl http://localhost:8001/api/universe
+curl -X POST http://localhost:8001/api/jobs -H "Content-Type: application/json" -d "{\"type\":\"vec\"}"
+
+# 经 Express
+curl http://localhost:3000/api/strategy/health
+curl -X POST http://localhost:3000/api/strategy/jobs -H "Content-Type: application/json" -d "{\"type\":\"signal\"}"
 ```
 
-### Express 代理（`:3000`，前端应走这里）
+---
+
+## data-api（摘要）
 
 | Express | data-api |
 |---------|----------|
 | `GET /api/market/indices` | `/api/indices` |
 | `GET /api/market/quote` | `/api/quote` |
 | `GET /api/market/history` | `/api/history` |
-| `GET /api/etf/list` | `/api/etf/list` |
-| `GET /api/etf/quote` | `/api/etf/quote` |
-| `GET /api/etf/history` | `/api/etf/history` |
-
-### 示例
-
-```bash
-curl http://localhost:8000/api/health
-curl "http://localhost:8000/api/etf/list?q=300&limit=5"
-curl "http://localhost:8000/api/etf/quote?symbol=510300"
-curl "http://localhost:8000/api/etf/history?symbol=510300&start_date=2026-01-01&end_date=2026-02-10"
-
-# 经 Express
-curl http://localhost:3000/api/etf/list?q=沪深300&limit=5
-```
-
-### 实现文件
-
-- `data-api/main.py` — 全部行情路由
-- `data-api/requirements.txt` — Python 依赖
-- `server/src/services/dataApi.ts` — 代理客户端
-- `server/src/controllers/market.controller.ts` — 指数/个股代理
-- `server/src/controllers/etf.controller.ts` — ETF 代理
-- `server/src/routes/index.ts` — 路由挂载
+| `GET /api/etf/*` | `/api/etf/*` |
 
 ---
 
 ## 其他说明
 
-- 黄金页走 `server` 第三方接口，不经过 data-api。
-- AI 对话需配置 LLM（`server` 策略 / apiKey）；工具会间接调用 data-api。
-- 当前前端股票页仍有 mock；基金页占位。页面重设计前可先用 data-api / Express ETF 接口联调。
+- 浏览器 **不直连** 8000/8001，只打 Express（或 Vite 代理到 Express）。
+- AI 本轮 **未** 接策略 tools；数值以 strategy-api 为准。
+- 大文件与 `_tmp_etf_rot` 已 gitignore。
+- 东财偶发断连时 `update-data` 可能部分失败；可重试或缩小 `symbols`。

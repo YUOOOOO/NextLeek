@@ -17,6 +17,16 @@ import {
   getEtfQuote,
   getEtfHistory,
 } from '../controllers/etf.controller'
+import {
+  strategyHealth,
+  getUniverse,
+  getSealed,
+  createJob,
+  listJobs,
+  getJob,
+  getJobResult,
+  getLatestSignal,
+} from '../controllers/strategy.controller'
 import goldRouter from '../controllers/gold.controller'
 
 const router = Router()
@@ -28,6 +38,15 @@ router.get('/market/history', getHistory)
 router.get('/etf/list', listEtfs)
 router.get('/etf/quote', getEtfQuote)
 router.get('/etf/history', getEtfHistory)
+
+router.get('/strategy/health', strategyHealth)
+router.get('/strategy/universe', getUniverse)
+router.get('/strategy/sealed', getSealed)
+router.post('/strategy/jobs', createJob)
+router.get('/strategy/jobs', listJobs)
+router.get('/strategy/jobs/:id', getJob)
+router.get('/strategy/jobs/:id/result', getJobResult)
+router.get('/strategy/signal/latest', getLatestSignal)
 
 router.post('/ai/chat', chat)
 router.get('/ai/strategies', listStrategies)
