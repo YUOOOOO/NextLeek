@@ -132,8 +132,9 @@ class TushareClient:
         )
 
     def fund_share(self, code: str, start: str, end: str) -> pd.DataFrame:
+        """ETF 份额：Promax/tureshare 默认接口名为 etf_share_size。"""
         return self.query(
-            os.getenv("TUSHARE_FUND_SHARE_API", "fund_share"),
+            os.getenv("TUSHARE_FUND_SHARE_API", "etf_share_size"),
             ts_code=code,
             start_date=start.replace("-", ""),
             end_date=end.replace("-", ""),

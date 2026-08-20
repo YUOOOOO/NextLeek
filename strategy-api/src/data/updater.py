@@ -18,6 +18,45 @@ def _as_ymd(value: str | None, fallback: str) -> str:
     text = (value or fallback or date.today().isoformat()).replace("-", "")
     return text[:8]
 
+def _normalize_share_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Map etf_share_size / fund_share payloads onto local fd_share schema."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    # date column aliases
+    if "trade_date" not in out.columns:
+        for alt in ("end_date", "nav_date", "date", "cal_date"):
+            if alt in out.columns:
+                out = out.rename(columns={alt: "trade_date"})
+                break
+    # share column aliases -> fd_share (local contract for loader/non_ohlcv)
+    if "fd_share" not in out.columns:
+        for alt in (
+            "etf_share_size",
+            "share_size",
+            "total_share",
+            "fund_share",
+            "share",
+        ):
+            if alt in out.columns:
+                out = out.rename(columns={alt: "fd_share"})
+                break
+    keep = [c for c in ("ts_code", "trade_date", "fd_share", "fund_type", "market") if c in out.columns]
+    out = out[keep].copy()
+    if "trade_date" not in out.columns or "fd_share" not in out.columns:
+        raise ValueError(
+            "share payload missing trade_date/fd_share after alias map; "
+            f"columns={list(df.columns)}"
+        )
+    out["trade_date"] = pd.to_datetime(
+        out["trade_date"].astype(str).str.replace("-", ""),
+        format="%Y%m%d",
+        errors="coerce",
+    )
+    out["fd_share"] = pd.to_numeric(out["fd_share"], errors="coerce")
+    return out.dropna(subset=["trade_date", "fd_share"])
+
+
 
 def _fetch_etf_hist(
     code: str,
@@ -151,19 +190,13 @@ def update_fund_share(
                 else:
                     failed.append({"code": code, "error": "empty"})
                 continue
-            keep = [
-                c
-                for c in ("ts_code", "trade_date", "fd_share", "fund_type", "market")
-                if c in df.columns
-            ]
-            df = df[keep].copy()
-            df["trade_date"] = pd.to_datetime(
-                df["trade_date"].astype(str).str.replace("-", ""),
-                format="%Y%m%d",
-                errors="coerce",
-            )
-            df["fd_share"] = pd.to_numeric(df.get("fd_share"), errors="coerce")
-            df = df.dropna(subset=["trade_date", "fd_share"])
+            df = _normalize_share_frame(df)
+            if df.empty:
+                if old is not None and not old.empty:
+                    ok.append(code)
+                else:
+                    failed.append({"code": code, "error": "empty after normalize"})
+                continue
             if old is not None and not old.empty:
                 old = old.copy()
                 old["trade_date"] = pd.to_datetime(old["trade_date"])
