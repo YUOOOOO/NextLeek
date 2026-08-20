@@ -118,8 +118,10 @@ class DataLoader:
                 except Exception as e:
                     # 兼容不同numpy版本/路径变化导致的pickle反序列化失败
                     logger.warning(f"缓存读取失败，忽略并重建缓存: {e}")
-        # 1. 扫描可用文件
+        # 1. 扫描可用文件（兼容 510300.SH_daily_xxx 与 510300.SZ_daily）
         parquet_files = list(self.data_dir.glob("*_daily_*.parquet"))
+        if not parquet_files:
+            parquet_files = list(self.data_dir.glob("*_daily.parquet"))
 
         # 2. 过滤指定的 ETF（兼容有/无交易所后缀的code，例如 510300 vs 510300.SH）
         if etf_codes:

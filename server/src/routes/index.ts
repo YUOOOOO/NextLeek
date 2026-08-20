@@ -21,6 +21,7 @@ import {
   strategyHealth,
   getUniverse,
   getSealed,
+  publishSealed,
   createJob,
   listJobs,
   getJob,
@@ -43,6 +44,7 @@ router.get('/etf/history', getEtfHistory)
 router.get('/strategy/health', strategyHealth)
 router.get('/strategy/universe', getUniverse)
 router.get('/strategy/sealed', getSealed)
+router.post('/strategy/sealed/publish', publishSealed)
 router.post('/strategy/jobs', createJob)
 router.get('/strategy/jobs', listJobs)
 router.get('/strategy/jobs/:id', getJob)

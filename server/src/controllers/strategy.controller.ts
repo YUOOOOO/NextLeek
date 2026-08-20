@@ -42,6 +42,19 @@ export async function getSealed(_req: Request, res: Response) {
   }
 }
 
+export async function publishSealed(req: Request, res: Response) {
+  try {
+    res.json(
+      await strategyProxy('/api/sealed/publish', {
+        method: 'POST',
+        body: JSON.stringify(req.body || {}),
+      }),
+    )
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
 export async function createJob(req: Request, res: Response) {
   try {
     const data = await strategyProxy('/api/jobs', {

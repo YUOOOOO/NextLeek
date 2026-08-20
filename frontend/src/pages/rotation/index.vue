@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
 
+
 type Universe = {
   mode?: string
   tradeable?: string[]
@@ -141,7 +142,7 @@ const STRATEGY_META: Record<string, { title: string; role: string; blurb: string
   v8_composite_1: {
     title: '主策略 · 五因子',
     role: '生产策略',
-    blurb: '因子配方已锁定。换仓看下面持仓，不代表因子每天重筛。',
+    blurb: '这是当前在用的生产策略。',
   },
 }
 
@@ -168,11 +169,11 @@ const JOB_STATUS_LABEL: Record<string, string> = {
 const FACTOR_LABEL: Record<string, string> = {
   ADX_14D: '趋势强度 ADX',
   AMIHUD_ILLIQUIDITY: '非流动性',
-  BREAKOUT_20D: '突破',
+  BREAKOUT_20D: '突破 20 日',
   CALMAR_RATIO_60D: 'Calmar 比率',
   CORRELATION_TO_MARKET_20D: '与市场相关性',
   GK_VOL_RATIO_20D: 'GK 波动比',
-  MAX_DD_60D: '最大回撤',
+  MAX_DD_60D: '最大回撤 60 日',
   MOM_20D: '动量 20 日',
   OBV_SLOPE_10D: 'OBV 斜率',
   PRICE_POSITION_20D: '价格位置 20 日',
@@ -180,7 +181,7 @@ const FACTOR_LABEL: Record<string, string> = {
   PV_CORR_20D: '价量相关',
   SHARPE_RATIO_20D: '夏普 20 日',
   SLOPE_20D: '价格斜率',
-  UP_DOWN_VOL_RATIO_20D: '涨跌波动比',
+  UP_DOWN_VOL_RATIO_20D: '涨跌量比',
   VOL_RATIO_20D: '波动率比',
   VORTEX_14D: '涡旋指标',
   SHARE_CHG_5D: '份额变化 5 日',
@@ -191,31 +192,12 @@ const FACTOR_LABEL: Record<string, string> = {
   MARGIN_BUY_RATIO: '融资买入比',
 }
 
-const OHLCV_FACTORS = new Set([
-  'ADX_14D',
-  'AMIHUD_ILLIQUIDITY',
-  'BREAKOUT_20D',
-  'CALMAR_RATIO_60D',
-  'CORRELATION_TO_MARKET_20D',
-  'GK_VOL_RATIO_20D',
-  'MAX_DD_60D',
-  'MOM_20D',
-  'OBV_SLOPE_10D',
-  'PRICE_POSITION_20D',
-  'PRICE_POSITION_120D',
-  'PV_CORR_20D',
-  'SHARPE_RATIO_20D',
-  'SLOPE_20D',
-  'UP_DOWN_VOL_RATIO_20D',
-  'VOL_RATIO_20D',
-  'VORTEX_14D',
-])
-
-/** 日常优先；研究层（WFO/VEC/BT）沉底，避免误点一键全流程 */
+/** 日常优先；研究步骤沉底 */
 const PIPELINE_STEPS: PipelineStep[] = [
   {
     id: 'update-data',
     order: 0,
+
     title: '更新数据',
     eng: 'Data',
     time: '视网络',
@@ -271,13 +253,14 @@ const result = ref<unknown>(null)
 const error = ref('')
 const busy = ref(false)
 const lastJobId = ref('')
+const sealNotice = ref('')
+const publishBusy = ref(false)
 const showResearch = ref(false)
 
 let timer: number | undefined
 
 const tradeableCount = computed(() => universe.value?.tradeable?.length ?? 0)
 const symbolCount = computed(() => universe.value?.symbols?.length ?? 0)
-const factorCount = computed(() => universe.value?.active_factors?.length ?? 0)
 const signalDate = computed(() => formatDate(signal.value?.asof || undefined))
 const posSize = computed(() => universe.value?.backtest?.pos_size ?? 2)
 const rebalanceDays = computed(() => universe.value?.backtest?.freq ?? 5)
@@ -301,19 +284,9 @@ const strategies = computed(() => {
   return raw.filter((s) => !HIDDEN_STRATEGY_IDS.has(s.strategy_id) && !/core_4f/i.test(s.strategy_id))
 })
 
-const factorPool = computed(() => {
-  const codes = universe.value?.active_factors || []
-  return codes.map((code) => ({
-    code,
-    label: factorText(code),
-    group: OHLCV_FACTORS.has(code) ? '行情类' : '份额/融资类',
-  }))
-})
-
-const ohlcvFactors = computed(() => factorPool.value.filter((f) => f.group === '行情类'))
-const altFactors = computed(() => factorPool.value.filter((f) => f.group === '份额/融资类'))
 
 const latestJob = computed(() => jobs.value[0] || null)
+const recentJobs = computed(() => jobs.value.slice(0, 5))
 
 
 const pipelineJob = computed(() =>
@@ -473,6 +446,183 @@ function stepStatusLabel(status: string): string {
   return jobStatusLabel(status)
 }
 
+function normalizeFactorList(raw: unknown): string[] {
+  if (raw == null) return []
+  if (Array.isArray(raw)) {
+    const out: string[] = []
+    for (const item of raw) {
+      out.push(...normalizeFactorList(item))
+    }
+    return out
+  }
+  const text = String(raw).trim()
+  if (!text) return []
+  return text
+    .replace(/,/g, '+')
+    .split('+')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function dedupeFactors(factors: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const f of factors) {
+    if (seen.has(f)) continue
+    seen.add(f)
+    out.push(f)
+  }
+  return out
+}
+
+type PublishCandidate = {
+  factors: string[]
+  combo: string
+  jobId?: string
+  metrics?: Record<string, unknown>
+  label: string
+}
+
+function pickMetrics(data: Record<string, unknown>): Record<string, unknown> | undefined {
+  const keys = ['total_return', 'sharpe', 'max_drawdown', 'engine', 'start', 'end'] as const
+  const out: Record<string, unknown> = {}
+  for (const k of keys) {
+    if (data[k] != null) out[k] = data[k]
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+function extractCandidateFromPayload(data: unknown, jobId?: string, label = '研究结果'): PublishCandidate | null {
+  if (!data || typeof data !== 'object') return null
+  const o = data as Record<string, unknown>
+  let factors = dedupeFactors([
+    ...normalizeFactorList(o.factors),
+    ...normalizeFactorList(o.requested_factors),
+    ...normalizeFactorList(o.combo),
+    ...normalizeFactorList(o.best_combo),
+  ])
+
+  if (factors.length < 2 && Array.isArray(o.top_combos) && o.top_combos.length) {
+    const first = o.top_combos[0]
+    if (typeof first === 'string') factors = dedupeFactors(normalizeFactorList(first))
+    else if (first && typeof first === 'object') {
+      const row = first as Record<string, unknown>
+      factors = dedupeFactors([
+        ...normalizeFactorList(row.factors),
+        ...normalizeFactorList(row.combo),
+      ])
+    }
+  }
+
+  if (factors.length < 2 && Array.isArray(o.winners) && o.winners.length) {
+    const first = o.winners[0]
+    if (typeof first === 'string') factors = dedupeFactors(normalizeFactorList(first))
+    else if (first && typeof first === 'object') {
+      const row = first as Record<string, unknown>
+      factors = dedupeFactors([
+        ...normalizeFactorList(row.factors),
+        ...normalizeFactorList(row.combo),
+      ])
+    }
+  }
+
+  if (factors.length < 2) return null
+  return {
+    factors,
+    combo: factors.join('+'),
+    jobId,
+    metrics: pickMetrics(o),
+    label,
+  }
+}
+
+const researchCandidate = computed(() => {
+  const fromResult = extractCandidateFromPayload(
+    result.value,
+    lastJobId.value || undefined,
+    '最近一次研究任务',
+  )
+  if (fromResult) return fromResult
+  return null
+})
+
+const sealedPrimaryCombo = computed(() => {
+  const list = sealed.value?.sealed || []
+  const primary =
+    list.find((s) => s.id === 'v8_composite_1' || s.name === 'v8_composite_1') || list[0]
+  return primary?.combo || (primary?.factors || []).join('+') || ''
+})
+
+async function resolvePublishCandidate(): Promise<PublishCandidate | null> {
+  if (researchCandidate.value) return researchCandidate.value
+
+  const prefer = ['bt', 'vec', 'wfo'] as const
+  for (const type of prefer) {
+    const job = jobs.value.find((j) => j.type === type && j.status === 'succeeded')
+    if (!job?.job_id) continue
+    try {
+      const payload = await api(`/api/strategy/jobs/${job.job_id}/result`)
+      const cand = extractCandidateFromPayload(payload, job.job_id, `${jobTypeLabel(type)} 任务`)
+      if (cand) return cand
+    } catch {
+      // try next
+    }
+  }
+  return null
+}
+
+async function publishToProduction() {
+  sealNotice.value = ''
+  error.value = ''
+  publishBusy.value = true
+  try {
+    const cand = await resolvePublishCandidate()
+    if (!cand) {
+      error.value = '没有可封版的研究因子。请先跑通 VEC/BT，或确保结果里带 factors/combo。'
+      return
+    }
+
+    const lines = [
+      '将替换生产主策略的封版因子（只换配方，不改持仓，不自动生成信号）。',
+      '',
+      `来源：${cand.label}${cand.jobId ? ` · ${cand.jobId}` : ''}`,
+      `新因子：${cand.factors.map((f) => factorText(f)).join(' + ')}`,
+      `代码：${cand.combo}`,
+    ]
+    if (sealedPrimaryCombo.value) {
+      lines.push(`当前主策略：${sealedPrimaryCombo.value}`)
+    }
+    lines.push('', '确认封版到生产？')
+    if (!window.confirm(lines.join('\n'))) return
+
+    const resp = await api<{
+      changed?: boolean
+      message?: string
+      hint?: string
+      primary?: { combo?: string }
+    }>('/api/strategy/sealed/publish', {
+      method: 'POST',
+      body: JSON.stringify({
+        combo: cand.factors,
+        source_job_id: cand.jobId,
+        metrics: cand.metrics,
+        note: `published from rotation UI (${cand.label})`,
+      }),
+    })
+
+    sealNotice.value =
+      (resp.changed === false
+        ? resp.message || '主策略已是该配方，无需改动。'
+        : resp.hint || resp.message || '已封版到生产。') +
+      (resp.primary?.combo ? ` 当前：${resp.primary.combo}` : '')
+    await refreshMeta(true)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    publishBusy.value = false
+  }
+}
+
 async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
@@ -529,6 +679,7 @@ async function startJob(type: string, params: Record<string, unknown> = {}) {
   }
 }
 
+
 async function pollJob(id: string) {
   for (let i = 0; i < 600; i++) {
     const st = await api<Job>(`/api/strategy/jobs/${id}`)
@@ -560,23 +711,6 @@ onUnmounted(() => {
 <template>
   <div class="page">
     <header class="head">
-      <div>
-        <p class="kicker">NextLeek · ETF 轮动</p>
-        <h1>今日信号</h1>
-        <p class="sub">
-          <strong>封版 = 锁死用哪几个因子算分</strong>，不是锁死永远拿哪几只 ETF。
-          因子配方不变时，持仓仍会按规则更新：约每
-          <strong>{{ rebalanceDays }}</strong>
-          个交易日评估一次 · 同时持
-          <strong>{{ posSize }}</strong>
-          只 · 通常至少持有
-          <strong>{{ minHoldDays }}</strong>
-          天 · 新票优势不足（Δrank
-          <strong>{{ deltaRank }}</strong>
-          ）就不换。
-          只有想<strong>换一套因子配方</strong>时，才去页面最下方做研究重筛。
-        </p>
-      </div>
       <button class="btn ghost" :disabled="busy" @click="refreshMeta()">刷新</button>
     </header>
 
@@ -584,17 +718,14 @@ onUnmounted(() => {
       <div class="stat">
         <span class="stat-label">信号日</span>
         <strong>{{ signalDate }}</strong>
-        <span class="stat-extra">生产策略 {{ strategies.length || '—' }}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">可交易标的</span>
+        <span class="stat-label">可交易</span>
         <strong>{{ tradeableCount || '—' }}/{{ symbolCount || '—' }}</strong>
-        <span class="stat-extra">因子池 {{ factorCount || '—' }}</span>
       </div>
       <div class="stat">
         <span class="stat-label">换仓节奏</span>
-        <strong>每 {{ rebalanceDays }} 日评估</strong>
-        <span class="stat-extra">最少持有 {{ minHoldDays }} 天</span>
+        <strong>每 {{ rebalanceDays }} 日</strong>
       </div>
       <div class="stat">
         <span class="stat-label">当前任务</span>
@@ -608,15 +739,14 @@ onUnmounted(() => {
 
     <p v-if="error" class="err">{{ error }}</p>
 
-    <!-- 主区：生产策略 + 日常操作 -->
     <section class="card primary-card">
       <div class="section-head">
         <div>
-          <h2>生产策略 · 今日持仓</h2>
-          <p class="hint">
-            上面是日常主路径：先更新行情，再生成信号。
-            <strong>不要</strong>为了看今天拿什么去点「一键全流程」——那会重跑研究筛选。
-          </p>
+          <h2>今日操作</h2>
+          <div class="howto compact">
+            <p>1. 点「更新行情」，把最新价格写进本地。</p>
+            <p>2. 点「生成今日信号」，刷新持仓结论。</p>
+          </div>
         </div>
         <div class="row tight">
           <button class="btn" :disabled="busy" @click="startJob('update-data')">更新行情</button>
@@ -625,8 +755,10 @@ onUnmounted(() => {
       </div>
 
       <div class="callout">
-        <p><strong>什么时候换持仓？</strong>到了评估日，且新标的比当前最差持仓强够多，并且旧仓已满最少持有天数——才会换。所以连续多天同一对 ETF 很正常。</p>
-        <p><strong>什么时候换因子？</strong>只有你主动做完下方 WFO→VEC→BT 并重新封版。日常信号不会自动换因子。</p>
+        <p class="callout-title">换持仓</p>
+        <p>到了评估日，且新标的明显强于当前最差持仓，才会换。</p>
+        <p>旧仓未满最少持有天数时，通常不换。</p>
+        <p>连续多天同一对 ETF 很正常。</p>
       </div>
 
       <div v-if="strategies.length" class="signal-grid">
@@ -656,20 +788,8 @@ onUnmounted(() => {
 
           <p class="signal-summary">{{ strategy.summary || '暂无说明' }}</p>
 
-          <div v-if="strategy.factors?.length" class="strategy-factors">
-            <p class="factor-heading">锁定的因子配方 · {{ strategy.factors.length }}（日常不改）</p>
-            <div class="factor-row">
-              <span
-                v-for="f in strategy.factors"
-                :key="f"
-                class="factor-chip"
-                :title="f"
-              >{{ factorText(f) }} <code>{{ f }}</code></span>
-            </div>
-          </div>
-
           <div v-if="displayActions(strategy).length" class="signal-actions">
-            <p class="factor-heading">当前持仓 / 动作</p>
+            <p class="factor-heading">今日持仓</p>
             <div
               v-for="item in displayActions(strategy)"
               :key="`${item.action}-${item.symbol}`"
@@ -683,7 +803,20 @@ onUnmounted(() => {
               <span v-if="item.hold_days" class="days">已持 {{ item.hold_days }} 天</span>
             </div>
           </div>
-          <p v-else class="empty">还没有持仓结论。点右上角「生成今日信号」。</p>
+          <p v-else class="empty">还没有持仓结论。</p>
+          <p v-if="!displayActions(strategy).length" class="empty">请先点上方「生成今日信号」。</p>
+
+          <div v-if="strategy.factors?.length" class="strategy-factors">
+            <p class="factor-heading">锁定因子 · {{ strategy.factors.length }} 个</p>
+            <div class="factor-row">
+              <span
+                v-for="f in strategy.factors"
+                :key="f"
+                class="factor-chip"
+                :title="f"
+              >{{ factorText(f) }}</span>
+            </div>
+          </div>
 
           <p v-if="strategy.last_rebalance" class="meta-line">
             上次换仓参考日：{{ formatDate(strategy.last_rebalance) }}
@@ -695,10 +828,15 @@ onUnmounted(() => {
 
     <section class="card">
       <div class="section-head">
-        <h2>最近任务</h2>
+        <div>
+          <h2>最近任务</h2>
+          <div class="howto compact">
+            <p>这里只看任务有没有跑完。</p>
+          </div>
+        </div>
       </div>
-      <ul v-if="jobs.length" class="jobs">
-        <li v-for="j in jobs" :key="j.job_id">
+      <ul v-if="recentJobs.length" class="jobs">
+        <li v-for="j in recentJobs" :key="j.job_id">
           <span class="job-type">{{ jobTypeLabel(j.type) }}</span>
           <span :class="['st', j.status]">{{ jobStatusLabel(j.status) }}</span>
           <span class="job-progress">{{ Math.round(j.pct || 0) }}%</span>
@@ -708,63 +846,32 @@ onUnmounted(() => {
       <p v-else class="empty">还没有任务记录。</p>
     </section>
 
-    <!-- 次要：因子池说明 -->
-    <section class="card muted-card">
-      <div class="section-head">
-        <div>
-          <h2>研究用因子池（共 {{ factorCount || 0 }} 个）</h2>
-          <p class="hint">
-            这是 WFO 可枚举的大池。生产策略只用其中锁定的那几个，见上方卡片。
-          </p>
-        </div>
-      </div>
-      <div v-if="factorPool.length" class="factor-groups">
-        <div>
-          <h3>行情类 · {{ ohlcvFactors.length }}</h3>
-          <div class="factor-row">
-            <span
-              v-for="f in ohlcvFactors"
-              :key="f.code"
-              class="factor-chip"
-              :title="f.code"
-            >{{ f.label }}</span>
-          </div>
-        </div>
-        <div>
-          <h3>份额 / 融资类 · {{ altFactors.length }}</h3>
-          <div class="factor-row">
-            <span
-              v-for="f in altFactors"
-              :key="f.code"
-              class="factor-chip alt"
-              :title="f.code"
-            >{{ f.label }}</span>
-          </div>
-        </div>
-      </div>
-      <p v-else class="empty">暂无因子列表，请检查配置是否加载成功。</p>
-    </section>
-
-    <!-- 最下方：研究重筛，默认收起 -->
     <section class="card research-card">
       <div class="section-head">
         <div>
-          <h2>研究重筛（不常用）</h2>
-          <p class="hint">
-            只有想<strong>换因子配方 / 重新封版</strong>时才打开。
-            日常看持仓请用上方「更新行情 → 生成今日信号」，不要点一键全流程。
-          </p>
+          <h2>研究重筛</h2>
+          <div class="howto compact">
+            <p>不常用。只在你想换因子配方时打开。</p>
+            <p>日常信号不会自动换因子。</p>
+            <p>只有你主动做完研究并重新封版，才会换因子配方。</p>
+            <p>
+              先看清每个因子含义，请打开菜单
+              <router-link class="inline-link" to="/factors">因子池</router-link>。
+            </p>
+            <p>日常看持仓，请回到上方两步操作。</p>
+          </div>
         </div>
         <button class="linkish" type="button" @click="showResearch = !showResearch">
-          {{ showResearch ? '收起研究区' : '展开研究区' }}
+          {{ showResearch ? '收起' : '展开' }}
         </button>
       </div>
 
       <div v-if="showResearch">
-        <p class="research-warn">
-          研究层进度 {{ researchProgress.done }}/{{ researchProgress.total }}（WFO · VEC · BT）。
-          「一键全流程」会串行重跑整条研究链，耗时长，且<strong>不会自动改生产封版</strong>——确认更好后才谈换配方。
-        </p>
+        <div class="research-warn howto compact">
+          <p>研究进度 {{ researchProgress.done }}/{{ researchProgress.total }}（WFO · VEC · BT）。</p>
+          <p>「一键全流程」会重跑整条研究链，耗时长。</p>
+          <p>它不会自动改生产封版。</p>
+        </div>
 
         <ol class="pipeline">
           <li
@@ -787,13 +894,14 @@ onUnmounted(() => {
               </div>
               <p class="pipe-desc">{{ step.desc }}</p>
               <p class="pipe-detail">{{ step.detail }}</p>
-              <p class="pipe-note">{{ step.note }}<template v-if="step.pct && step.status === 'running'"> · {{ Math.round(step.pct) }}%</template></p>
+              <p class="pipe-note">
+                {{ step.note }}
+                <template v-if="step.pct && step.status === 'running'">
+                  · {{ Math.round(step.pct) }}%
+                </template>
+              </p>
               <div class="pipe-actions">
-                <button
-                  class="btn sm"
-                  :disabled="busy"
-                  @click="startJob(step.id)"
-                >
+                <button class="btn sm" :disabled="busy" @click="startJob(step.id)">
                   运行本层
                 </button>
               </div>
@@ -802,22 +910,49 @@ onUnmounted(() => {
         </ol>
 
         <div class="research-foot">
+          <div class="seal-box">
+            <div class="seal-copy">
+              <strong>研究通过后 · 封版到生产</strong>
+              <p v-if="researchCandidate" class="seal-candidate">
+                候选：{{ researchCandidate.factors.map((f) => factorText(f)).join(' + ') }}
+              </p>
+              <p v-else class="seal-candidate muted">
+                暂无内存结果；点击后会尝试读取最近成功的 BT/VEC 任务。
+              </p>
+              <div class="howto compact">
+                <p>只替换主策略封版因子，不换仓、不自动跑信号。</p>
+                <p>封版后如需新持仓，请回到上方点「生成今日信号」。</p>
+              </div>
+            </div>
+            <button
+              class="btn primary"
+              type="button"
+              :disabled="busy || publishBusy"
+              @click="publishToProduction"
+            >
+              {{ publishBusy ? '封版中…' : '封版到生产' }}
+            </button>
+          </div>
+
+          <p v-if="sealNotice" class="seal-ok">{{ sealNotice }}</p>
+
           <button
             class="btn ghost dangerish"
-            :disabled="busy"
+            :disabled="busy || publishBusy"
             @click="startJob('pipeline')"
           >
-            一键全流程（研究用，慎点）
+            一键全流程（研究用）
           </button>
-          <p class="hint">内部仍按 数据 → WFO → VEC → BT → 信号 顺序。日常请勿使用。</p>
+          <div class="howto compact">
+            <p>顺序：数据 → WFO → VEC → BT → 信号。</p>
+            <p>日常请勿使用。</p>
+          </div>
         </div>
 
         <p v-if="lastJobId" class="hint last-job">最近任务编号：{{ lastJobId }}</p>
       </div>
     </section>
-
   </div>
-
 </template>
 
 <style scoped>
@@ -834,17 +969,39 @@ onUnmounted(() => {
 }
 .head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  justify-content: flex-end;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
-.kicker {
-  margin: 0 0 6px;
+.howto {
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 40rem;
+}
+.howto p {
+  margin: 0;
+  color: rgba(232, 234, 237, 0.72);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+.howto.compact {
+  margin-top: 8px;
+  max-width: 36rem;
+}
+.howto.compact p {
+  font-size: 0.86rem;
+  color: rgba(232, 234, 237, 0.62);
+}
+.howto .inline-link {
   color: #82b1ff;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  text-decoration: none;
+  font-weight: 700;
+}
+.howto .inline-link:hover {
+  text-decoration: underline;
 }
 h1 {
   margin: 0;
@@ -859,17 +1016,6 @@ h3 {
   margin: 0 0 8px;
   font-size: 0.85rem;
   color: rgba(232, 234, 237, 0.7);
-}
-.sub {
-  margin: 8px 0 0;
-  color: rgba(232, 234, 237, 0.68);
-  font-size: 0.92rem;
-  line-height: 1.55;
-  max-width: 52rem;
-}
-.sub strong {
-  color: #fff;
-  font-weight: 700;
 }
 .status-bar {
   display: grid;
@@ -923,15 +1069,22 @@ h3 {
   border-radius: 10px;
   background: rgba(47, 111, 237, 0.1);
   border: 1px solid rgba(47, 111, 237, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .callout p {
-  margin: 0 0 8px;
+  margin: 0;
   color: rgba(232, 234, 237, 0.82);
   font-size: 0.88rem;
-  line-height: 1.5;
+  line-height: 1.45;
 }
-.callout p:last-child {
-  margin-bottom: 0;
+.callout-title {
+  color: #fff !important;
+  font-weight: 700;
+}
+.callout-title.spaced {
+  margin-top: 8px !important;
 }
 .research-warn {
   margin: 0 0 14px;
@@ -939,9 +1092,9 @@ h3 {
   border-radius: 8px;
   background: rgba(255, 171, 64, 0.1);
   border: 1px solid rgba(255, 171, 64, 0.22);
-  color: rgba(255, 224, 178, 0.95);
-  font-size: 0.86rem;
-  line-height: 1.5;
+}
+.research-warn p {
+  color: rgba(255, 224, 178, 0.95) !important;
 }
 .research-foot {
   margin-top: 16px;
@@ -951,6 +1104,42 @@ h3 {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+}
+.seal-box {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(105, 240, 174, 0.08);
+  border: 1px solid rgba(105, 240, 174, 0.22);
+}
+.seal-copy {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.seal-copy strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #b9f6ca;
+}
+.seal-candidate {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: rgba(232, 234, 237, 0.92);
+  word-break: break-word;
+}
+.seal-candidate.muted {
+  color: rgba(232, 234, 237, 0.55);
+}
+.seal-ok {
+  margin: 0;
+  color: #69f0ae;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 .section-head {
   display: flex;
@@ -1094,7 +1283,7 @@ h3 {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  max-width: 560px;
+  width: 100%;
 }
 .factor-groups {
   display: flex;
@@ -1111,6 +1300,7 @@ h3 {
   margin-bottom: 12px;
 }
 .strategy-signal {
+  width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 14px;
@@ -1184,12 +1374,6 @@ h3 {
   color: #ffd54f;
   background: rgba(255, 213, 79, 0.1);
   border-color: rgba(255, 213, 79, 0.22);
-}
-.factor-chip code {
-  font-size: 0.68rem;
-  font-weight: 500;
-  opacity: 0.7;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .signal-actions {
   display: flex;

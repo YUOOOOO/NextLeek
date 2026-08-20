@@ -12,6 +12,10 @@ from pydantic import BaseModel, Field
 
 from .config import load_config, reload_config, tradeable_symbols
 from .jobs.runner import get_job, get_result, list_jobs, submit_job
+from .sealed_publish import PRIMARY_STRATEGY_NAME, publish_primary_strategy
+from .factor_catalog import build_factor_catalog
+
+
 from .paths import CONFIG_PATH, JOBS_DIR, LIVE_DIR, SIGNAL_STATE_PATH, ensure_data_dirs
 
 
@@ -67,6 +71,70 @@ def _factor_signs(factors: list[str]) -> dict[str, int]:
         pass
     return {factor: -1 if factor in low_is_good else 1 for factor in factors}
 
+def _parse_ymd(value: Any) -> Any:
+    """把 YYYYMMDD / YYYY-MM-DD 解析成 date；失败返回 None。"""
+    if value is None:
+        return None
+    text = str(value).strip().replace("-", "").replace("/", "")[:8]
+    if len(text) != 8 or not text.isdigit():
+        return None
+    try:
+        from datetime import date
+
+        return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+    except Exception:
+        return None
+
+
+def _resolve_last_rebalance(
+    raw: dict[str, Any],
+    *,
+    asof: Any = None,
+    hold_days: dict[str, int] | None = None,
+    default_asof: Any = None,
+) -> Any:
+    """解析上次换仓参考日。
+
+    - canonical shadow 状态文件：只在调仓日写入，父级 last_asof_date 即上次换仓日
+    - shadow_snapshots.jsonl：仅信任 is_rebalance=true 行带来的 explicit last_rebalance
+    - legacy signal_state：简化引擎曾写入一次性 last_rebalance，若与 asof/hold_days 明显矛盾则丢弃
+    """
+    explicit = raw.get("last_rebalance")
+    source = str(raw.get("source") or "")
+    has_canonical_portfolio = raw.get("signal_portfolio") is not None
+
+    # 快照回退：非调仓日 asof 不能冒充换仓参考日
+    if source.startswith("shadow_snapshot"):
+        return explicit
+
+    # canonical shadow 状态文件 / 扁平 shadow：优先用父状态 last_asof_date
+    if has_canonical_portfolio or source.startswith("shadow"):
+        return explicit or raw.get("last_asof_date") or default_asof
+
+
+    if explicit is None:
+        return None
+
+    # legacy：用 hold_days 与 asof 校验，避免永久钉死在首次错误 asof（如 20260210）
+    asof_dt = _parse_ymd(asof)
+    rebal_dt = _parse_ymd(explicit)
+    if asof_dt is None or rebal_dt is None:
+        return explicit
+
+    max_hold = 0
+    for days in (hold_days or {}).values():
+        try:
+            max_hold = max(max_hold, int(days))
+        except Exception:
+            continue
+
+    gap = (asof_dt - rebal_dt).days
+    # hold_days 按交易日计，日历 gap 远大于持有天数 → 参考日不可信
+    if max_hold >= 0 and gap > max(max_hold + 20, 30):
+        return None
+    return explicit
+
+
 
 def _extract_strategy_payload(
     sid: str,
@@ -120,6 +188,12 @@ def _extract_strategy_payload(
     summary = raw.get("last_summary") or (
         f"当前持仓 {len(holdings)} 只" if holdings else "暂无持仓"
     )
+    last_rebalance = _resolve_last_rebalance(
+        raw,
+        asof=asof,
+        hold_days=hold_days,
+        default_asof=default_asof,
+    )
 
     return {
         "strategy_id": str(sid),
@@ -131,11 +205,46 @@ def _extract_strategy_payload(
         "actions": actions,
         "holdings": holdings,
         "hold_days": hold_days,
-        "last_rebalance": raw.get("last_rebalance"),
+        "last_rebalance": last_rebalance,
         "generated_at": raw.get("last_generated_at") or generated_at,
         "source": raw.get("source") or "signal_state",
     }
 
+
+
+def _latest_shadow_snapshots() -> dict[str, dict[str, Any]]:
+    """从 append-only shadow_snapshots.jsonl 取每策略最新一行，并附带最近一次调仓日。"""
+    path = LIVE_DIR / "shadow_snapshots.jsonl"
+    if not path.exists():
+        return {}
+    latest: dict[str, dict[str, Any]] = {}
+    last_rebalance_asof: dict[str, Any] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return {}
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            row = json.loads(text)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("strategy") or "").strip()
+        if not name:
+            continue
+        latest[name] = row
+        if row.get("is_rebalance"):
+            last_rebalance_asof[name] = row.get("asof_date")
+    out: dict[str, dict[str, Any]] = {}
+    for name, row in latest.items():
+        item = dict(row)
+        item["_last_rebalance_asof"] = last_rebalance_asof.get(name)
+        out[name] = item
+    return out
 
 def _collect_shadow_strategy_states() -> list[dict[str, Any]]:
     """优先读 canonical shadow 状态文件，再回退 signal_state.json。"""
@@ -177,6 +286,36 @@ def _collect_shadow_strategy_states() -> list[dict[str, Any]]:
             payloads.append(payload)
             seen.add(name)
 
+    # 回退：canonical 非调仓日不写 shadow 状态文件时，读最新 snapshot
+    for name, row in _latest_shadow_snapshots().items():
+        if name in seen:
+            continue
+        definition = definitions.get(name, {"name": name, "combo": row.get("combo")})
+        if not definition.get("combo") and row.get("combo"):
+            definition = {**definition, "combo": row.get("combo")}
+        picks = [str(symbol) for symbol in (row.get("picks") or []) if symbol]
+        hold_days = {
+            str(symbol): int(days)
+            for symbol, days in (row.get("hold_days") or {}).items()
+        }
+        raw = {
+            "signal_portfolio": picks,
+            "signal_hold_days": hold_days,
+            "last_signal_asof": row.get("asof_date"),
+            "last_rebalance": row.get("_last_rebalance_asof"),
+            "source": f"shadow_snapshot:{name}",
+        }
+        payloads.append(
+            _extract_strategy_payload(
+                name,
+                raw,
+                definition,
+                default_asof=row.get("asof_date"),
+                generated_at=None,
+            )
+        )
+        seen.add(name)
+
     # 回退：旧 legacy signal_state.json（按策略 id）
     legacy = _load_json(SIGNAL_STATE_PATH)
     for sid, raw in (legacy.get("strategies") or {}).items():
@@ -195,6 +334,7 @@ def _collect_shadow_strategy_states() -> list[dict[str, Any]]:
                 generated_at=legacy.get("generated_at"),
             )
         )
+        seen.add(sid)
 
     # 保证封版策略都出现在列表中（即便还没跑过信号）
     for item in _shadow_strategies():
@@ -238,6 +378,14 @@ class JobCreate(BaseModel):
     params: Optional[dict[str, Any]] = None
 
 
+class SealPublishBody(BaseModel):
+    combo: Any = Field(..., description="factor list or A+B+C string")
+    source_job_id: Optional[str] = None
+    factor_signs: Optional[str] = None
+    note: Optional[str] = None
+    metrics: Optional[dict[str, Any]] = None
+
+
 @app.on_event("startup")
 def _startup() -> None:
     ensure_data_dirs()
@@ -256,12 +404,16 @@ def health() -> dict[str, Any]:
 @app.get("/api/universe")
 def universe() -> dict[str, Any]:
     cfg = load_config()
+    active_factors = list(cfg.get("active_factors") or [])
+    catalog = build_factor_catalog(active_factors)
     return {
         "mode": cfg.get("universe", {}).get("mode", "A_SHARE_ONLY"),
         "qdii_tickers": cfg.get("universe", {}).get("qdii_tickers", []),
         "symbols": cfg.get("data", {}).get("symbols", []),
         "tradeable": tradeable_symbols(cfg),
-        "active_factors": cfg.get("active_factors", []),
+        "active_factors": active_factors,
+        "factor_catalog": catalog,
+        "factor_count": len(catalog),
         "backtest": {
             "freq": cfg.get("backtest", {}).get("freq"),
             "pos_size": cfg.get("backtest", {}).get("pos_size"),
@@ -307,6 +459,31 @@ def sealed() -> dict[str, Any]:
             for strategy in strategies
         ],
         "factor_signs": signs,
+    }
+
+@app.post("/api/sealed/publish")
+def sealed_publish(body: SealPublishBody) -> dict[str, Any]:
+    """研究通过后：用公共池内因子替换主策略封版（不改持仓、不自动 signal）。"""
+    try:
+        result = publish_primary_strategy(
+            combo=body.combo,
+            source_job_id=body.source_job_id,
+            factor_signs=body.factor_signs,
+            note=body.note,
+            metrics=body.metrics,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"publish failed: {exc}") from exc
+
+    # Ensure subsequent reads see new yaml (config cache is separate file)
+    return {
+        **result,
+        "primary_slot": PRIMARY_STRATEGY_NAME,
+        "sealed": sealed().get("sealed"),
     }
 
 

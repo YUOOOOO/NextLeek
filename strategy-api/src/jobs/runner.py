@@ -123,7 +123,7 @@ def _run(job_id: str, job_type: str, params: dict[str, Any]) -> None:
         _append_log(job_id, f"{pct:.1f}% {msg}")
 
     try:
-        result = _dispatch(job_type, params, progress)
+        result = _dispatch(job_type, params, progress, job_id=job_id)
         _write_json(_job_dir(job_id) / "result.json", result)
         _set_status(
             job_id,
@@ -149,6 +149,66 @@ def _run(job_id: str, job_type: str, params: dict[str, Any]) -> None:
 def _project_root(params: dict[str, Any]) -> Path:
     raw = params.get("root") or params.get("cwd")
     return Path(raw).resolve() if raw else ROOT
+
+
+def _normalize_factor_list(raw: Any) -> list[str]:
+    """把 factors/combo 参数规范成去重保序的因子代码列表。"""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        text = raw.replace(",", "+")
+        parts = [p.strip() for p in text.replace(" + ", "+").split("+") if p.strip()]
+        return list(dict.fromkeys(parts))
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        for item in raw:
+            out.extend(_normalize_factor_list(item))
+        return list(dict.fromkeys(out))
+    return _normalize_factor_list(str(raw))
+
+
+def _materialize_manual_combos(
+    params: dict[str, Any],
+    job_id: str,
+) -> dict[str, Any]:
+    """手动自选因子 → 临时 parquet（combo 列），供 VEC/BT --combos 使用。"""
+    factors = _normalize_factor_list(params.get("factors") or params.get("combo"))
+    if not factors:
+        return params
+
+    if len(factors) < 2 or len(factors) > 8:
+        raise ValueError(f"手动研究需选择 2–8 个因子，当前 {len(factors)} 个")
+
+    from ..config import load_config
+
+    active = {str(x).strip() for x in (load_config().get("active_factors") or []) if str(x).strip()}
+    unknown = [f for f in factors if f not in active]
+    if unknown:
+        raise ValueError(f"因子不在公共池 active_factors：{', '.join(unknown)}")
+
+    import pandas as pd
+
+    # VEC/BT 脚本按 " + " 拆分 combo
+    combo = " + ".join(factors)
+    path = _job_dir(job_id) / "manual_combo.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "combo": combo,
+                "name": "manual_selection",
+                "rank": 1,
+            }
+        ]
+    ).to_parquet(path, index=False)
+
+    out = dict(params)
+    out["combos"] = str(path)
+    out["factors"] = factors
+    out["requested_factors"] = factors
+    out["manual"] = True
+    out["manual_combo"] = combo
+    return out
 
 
 def _detect_asof(root: Path) -> str:
@@ -270,7 +330,13 @@ def _dispatch_update_data(params: dict[str, Any], progress: ProgressCb) -> Any:
     )
 
 
-def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
+def _dispatch(
+    job_type: str,
+    params: dict[str, Any],
+    progress: ProgressCb,
+    *,
+    job_id: str | None = None,
+) -> Any:
     """仅原版精度：update-data 写 parquet 湖；其余 job 走 etf_strategy entrypoints。"""
     if job_type == "update-data":
         return _dispatch_update_data(params, progress)
@@ -300,26 +366,33 @@ def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> An
     cwd = str(params.get("cwd") or root)
     config = params.get("config")
 
+    # 手动自选：factors/combo → parquet，供 vec/bt
+    work = dict(params)
+    if job_type in {"vec", "bt"} and job_id:
+        work = _materialize_manual_combos(work, job_id)
+        if work.get("manual"):
+            progress(f"manual combo ({len(work.get('factors') or [])} factors)", 8.0)
+
     if job_type == "wfo":
         result = run_wfo(
             config=config,
-            robust=bool(params.get("robust")),
+            robust=bool(work.get("robust")),
             root=root,
             cwd=cwd,
         )
     elif job_type == "vec":
         result = run_vec(
             config=config,
-            combos=params.get("combos"),
+            combos=work.get("combos"),
             root=root,
             cwd=cwd,
         )
     elif job_type == "bt":
         result = run_bt(
             config=config,
-            combos=params.get("combos"),
-            topk=params.get("topk"),
-            sort_by=params.get("sort_by"),
+            combos=work.get("combos"),
+            topk=work.get("topk"),
+            sort_by=work.get("sort_by"),
             root=root,
             cwd=cwd,
         )
@@ -370,4 +443,15 @@ def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> An
         raise ValueError(f"unknown job type: {job_type}")
 
     progress("canonical runtime complete", 100.0)
+    if work.get("manual"):
+        if not isinstance(result, dict):
+            result = {"exit_code": result}
+        result = {
+            **result,
+            "manual": True,
+            "factors": work.get("factors"),
+            "requested_factors": work.get("requested_factors"),
+            "combo": work.get("manual_combo"),
+            "combos_path": work.get("combos"),
+        }
     return result
