@@ -56,6 +56,17 @@ def _normalize_share_frame(df: pd.DataFrame) -> pd.DataFrame:
     out["fd_share"] = pd.to_numeric(out["fd_share"], errors="coerce")
     return out.dropna(subset=["trade_date", "fd_share"])
 
+def _filter_code(df: pd.DataFrame, code: str) -> pd.DataFrame:
+    """Keep only the requested ts_code when API returns mixed symbols."""
+    if df is None or df.empty or "ts_code" not in df.columns:
+        return df
+    target = dotted(code)
+    bare = normalize_code(code)
+    mask = df["ts_code"].astype(str).isin({target, bare, f"{bare}.SH", f"{bare}.SZ"})
+    out = df.loc[mask].copy()
+    return out if not out.empty else df.iloc[0:0].copy()
+
+
 
 
 def _fetch_etf_hist(
@@ -183,7 +194,7 @@ def update_fund_share(
             except Exception:
                 old = None
         try:
-            df = client.fund_share(dotted(code), fetch_start, end)
+            df = _filter_code(client.fund_share(dotted(code), fetch_start, end), code)
             if df is None or df.empty:
                 if old is not None and not old.empty:
                     ok.append(code)
@@ -226,41 +237,58 @@ def update_margin(
     progress: ProgressCb | None = None,
     client: TushareClient | None = None,
 ) -> dict[str, Any]:
-    """Incremental consolidated margin parquet used by DataLoader.load_margin."""
+    """Incremental consolidated margin parquet used by DataLoader.load_margin.
+
+    Per-symbol fetch window:
+    - missing code in pool file -> full [start, end]
+    - existing code -> from day after its own last trade_date
+    Never skip the whole job just because some codes already reach end.
+    """
     ensure_data_dirs()
     cfg = load_config()
     client = client or TushareClient()
     symbols = [normalize_code(s) for s in (symbols or all_symbols(cfg))]
+    full_start = _as_ymd(start, cfg["data"].get("start_date") or "2020-01-01")
     end = _as_ymd(end, cfg["data"].get("end_date") or date.today().isoformat())
     path = RAW_MARGIN_DIR / "margin_pool43_2020_now.parquet"
     old = None
-    fetch_start = _as_ymd(start, cfg["data"].get("start_date") or "2020-01-01")
+    last_by_code: dict[str, str] = {}
     if path.exists():
         try:
             old = pd.read_parquet(path)
-            if not old.empty and "trade_date" in old.columns:
-                last = str(old["trade_date"].astype(str).str.replace("-", "").max())[:8]
-                if last >= end:
-                    return {
-                        "ok_count": 0,
-                        "fail_count": 0,
-                        "skipped": True,
-                        "last": last,
-                        "end": end,
-                    }
-                fetch_start = str(int(last) + 1)
+            if old is not None and not old.empty and {"trade_date", "ts_code"}.issubset(old.columns):
+                tmp = old.copy()
+                tmp["trade_date"] = tmp["trade_date"].astype(str).str.replace("-", "").str[:8]
+                tmp["code"] = tmp["ts_code"].map(normalize_code)
+                last_by_code = (
+                    tmp.groupby("code")["trade_date"].max().astype(str).to_dict()
+                )
         except Exception:
             old = None
+            last_by_code = {}
 
     frames: list[pd.DataFrame] = []
     failed: list[dict[str, str]] = []
+    skipped: list[str] = []
     n = len(symbols)
     for i, code in enumerate(symbols):
         if progress:
             progress(f"margin {code}", (i / max(n, 1)) * 100)
+        last = last_by_code.get(code)
+        if last and last >= end:
+            skipped.append(code)
+            continue
+        fetch_start = full_start if not last else str(int(last) + 1)
+        if fetch_start > end:
+            skipped.append(code)
+            continue
         try:
-            df = client.margin_detail(dotted(code), fetch_start, end)
+            df = _filter_code(client.margin_detail(dotted(code), fetch_start, end), code)
             if df is None or df.empty:
+                if last:
+                    skipped.append(code)
+                else:
+                    failed.append({"code": code, "error": "empty"})
                 continue
             frames.append(df)
         except Exception as exc:  # noqa: BLE001
@@ -268,13 +296,22 @@ def update_margin(
         time.sleep(0.12)
 
     if not frames:
+        if old is not None and not old.empty and not failed:
+            return {
+                "ok_count": len(skipped),
+                "fail_count": 0,
+                "skipped": True,
+                "reason": "all symbols already up to date",
+                "end": end,
+            }
         if old is not None and not old.empty:
             return {
-                "ok_count": 0,
+                "ok_count": len(skipped),
                 "fail_count": len(failed),
                 "failed": failed,
                 "skipped": True,
                 "reason": "no new rows",
+                "end": end,
             }
         raise RuntimeError(f"margin update returned no rows; failures={failed[:3]}")
 
@@ -297,8 +334,10 @@ def update_margin(
         "ok_count": len(symbols) - len(failed),
         "fail_count": len(failed),
         "failed": failed,
+        "skipped_codes": skipped,
         "rows": int(len(combined)),
-        "start": fetch_start,
+        "codes": int(combined["ts_code"].nunique()) if "ts_code" in combined.columns else 0,
+        "start": full_start,
         "end": end,
         "path": str(path),
     }

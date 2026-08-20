@@ -1,13 +1,18 @@
-# Shadow strategy definitions for forward signal monitoring.
-# These strategies run in parallel with production but do NOT trade.
-# Each strategy gets its own hysteresis state file at data/live/signal_state_shadow_{name}.json.
-# Snapshots appended to data/live/shadow_snapshots.jsonl for historical tracking.
+# Shadow / sealed production strategies (v8.0).
+# Used by generate_today_signal.py and /api/sealed.
+# Each strategy keeps hysteresis at data/live/signal_state_shadow_{name}.json.
 #
-# Used by: scripts/generate_today_signal.py --shadow-config configs/shadow_strategies.yaml
+# factor_signs: 1=high_is_good, -1=low_is_good (from factor_registry).
 
 shadow_strategies:
   - name: "v8_composite_1"
     combo: "ADX_14D+BREAKOUT_20D+MARGIN_BUY_RATIO+PRICE_POSITION_120D+SHARE_CHG_5D"
+    factor_signs: "1,1,-1,1,-1"
     # Sealed at: sealed_strategies/v8.0_20260215/
     # Factors: 5F — OHLCV + non-OHLCV (MARGIN_BUY_RATIO, SHARE_CHG_5D)
     # BT HO: +53.9%, VEC HO: +55.7%, Sharpe 1.38, VEC-BT gap -1.9pp
+
+  - name: "v8_core_4f"
+    combo: "MARGIN_CHG_10D+PRICE_POSITION_120D+SHARE_CHG_20D+SLOPE_20D"
+    factor_signs: "-1,1,-1,1"
+    # Sealed at: sealed_strategies/v8.0_20260215/ (core_4f pack)

@@ -1,15 +1,45 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import time
 from typing import Any
 
 import pandas as pd
 import requests
 
+def _load_dotenv() -> None:
+    """Load strategy-api/.env into process env without overriding existing keys."""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip('"').strip("'")
+
+
+_load_dotenv()
+
+
 
 class TushareClient:
-    """统一访问直连 Tushare Pro 与 Promax 聚合接口。"""
+    """统一访问直连 Tushare Pro 与 Promax/tureshare 聚合接口。
+
+    与语雀 promax 用法一致: ts(api_name, **params)
+    即本类 query(api_name, **params)。
+
+    默认接口名:
+    - 日线: fund_daily / daily
+    - ETF 份额: fund_share（直接 fd_share；也可用 etf_share_size）
+    - 融资融券明细: margin_detail
+    可用环境变量 TUSHARE_*_API 覆盖。
+    """
 
     def __init__(self) -> None:
         self.provider = os.getenv("TUSHARE_PROVIDER", "auto").strip().lower()
@@ -28,8 +58,8 @@ class TushareClient:
             or os.getenv("TUSHARE_API_KEY")
             or ""
         ).strip()
-        self.timeout = float(os.getenv("TUSHARE_TIMEOUT", "30"))
-        self.retries = max(1, int(os.getenv("TUSHARE_RETRIES", "3")))
+        self.timeout = float(os.getenv("TUSHARE_TIMEOUT", "90"))
+        self.retries = max(1, int(os.getenv("TUSHARE_RETRIES", "4")))
         self.promax_verify_ssl = os.getenv("TUSHARE_PROMAX_VERIFY_SSL", "0") == "1"
         self.session = requests.Session()
         self.session.trust_env = False
@@ -132,9 +162,9 @@ class TushareClient:
         )
 
     def fund_share(self, code: str, start: str, end: str) -> pd.DataFrame:
-        """ETF 份额：Promax/tureshare 默认接口名为 etf_share_size。"""
+        """ETF 份额：默认 fund_share（语雀 ts 同款）；可用 TUSHARE_FUND_SHARE_API=etf_share_size。"""
         return self.query(
-            os.getenv("TUSHARE_FUND_SHARE_API", "etf_share_size"),
+            os.getenv("TUSHARE_FUND_SHARE_API", "fund_share"),
             ts_code=code,
             start_date=start.replace("-", ""),
             end_date=end.replace("-", ""),

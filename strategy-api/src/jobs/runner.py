@@ -9,13 +9,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from ..paths import JOBS_DIR, ensure_data_dirs
+from ..paths import JOBS_DIR, LIVE_DIR, ROOT, ensure_data_dirs
 
 ProgressCb = Callable[[str, float], None]
 
 _lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="strategy-job")
 _jobs: dict[str, dict[str, Any]] = {}
+
+
 
 
 def _now() -> str:
@@ -144,58 +146,146 @@ def _run(job_id: str, job_type: str, params: dict[str, Any]) -> None:
         )
 
 
-def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
-    runtime = str(params.get("runtime", "legacy")).lower()
-    if runtime in {"canonical", "full", "full-fidelity"}:
-        return _dispatch_canonical(job_type, params, progress)
+def _project_root(params: dict[str, Any]) -> Path:
+    raw = params.get("root") or params.get("cwd")
+    return Path(raw).resolve() if raw else ROOT
 
+
+def _detect_asof(root: Path) -> str:
+    """从本地日线 parquet 推断最新可用 asof（YYYY-MM-DD）。"""
+    daily_dir = root / "data" / "raw" / "ETF" / "daily"
+    if not daily_dir.exists():
+        raise FileNotFoundError(f"daily data missing: {daily_dir}")
+
+    import pandas as pd
+
+    latest: pd.Timestamp | None = None
+    for path in daily_dir.glob("*.parquet"):
+        try:
+            df = pd.read_parquet(path, columns=None)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        col = "trade_date" if "trade_date" in df.columns else df.columns[0]
+        series = pd.to_datetime(
+            df[col].astype(str).str.replace("-", "").str[:8],
+            format="%Y%m%d",
+            errors="coerce",
+        ).dropna()
+        if series.empty:
+            continue
+        value = series.max()
+        if latest is None or value > latest:
+            latest = value
+    if latest is None:
+        raise RuntimeError("unable to detect asof from daily parquet")
+    return latest.strftime("%Y-%m-%d")
+
+
+def _prepare_sealed_candidates(root: Path) -> Path:
+    """用 shadow_strategies 生成 canonical signal 所需 candidates parquet。"""
+    import pandas as pd
+    import yaml
+
+    cfg_path = root / "configs" / "shadow_strategies.yaml"
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"shadow strategies missing: {cfg_path}")
+    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    strategies = list(raw.get("shadow_strategies") or [])
+    if not strategies:
+        raise ValueError("shadow_strategies.yaml is empty")
+
+    rows: list[dict[str, Any]] = []
+    for idx, item in enumerate(strategies, start=1):
+        combo = str(item.get("combo") or "").strip()
+        if not combo:
+            continue
+        row: dict[str, Any] = {
+            "combo": combo,
+            "name": str(item.get("name") or item.get("id") or combo),
+            "rank": idx,
+        }
+        if item.get("factor_signs") is not None:
+            row["factor_signs"] = str(item.get("factor_signs"))
+        if item.get("factor_icirs") is not None:
+            row["factor_icirs"] = str(item.get("factor_icirs"))
+        rows.append(row)
+    if not rows:
+        raise ValueError("no sealed combos found in shadow_strategies.yaml")
+
+    out = LIVE_DIR / "sealed_signal_candidates.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_parquet(out, index=False)
+    return out
+
+
+def _prepare_canonical_signal_params(params: dict[str, Any], progress: ProgressCb) -> dict[str, Any]:
+    """为前端一键信号补齐 candidates/asof/trade_date/shadow_config。"""
+    out = dict(params)
+    root = _project_root(out)
+    out.setdefault("root", str(root))
+    out.setdefault("cwd", str(root))
+
+    if not out.get("shadow_config"):
+        out["shadow_config"] = str(root / "configs" / "shadow_strategies.yaml")
+
+    if not out.get("candidates"):
+        progress("prepare sealed candidates", 8.0)
+        out["candidates"] = str(_prepare_sealed_candidates(root))
+
+    if not out.get("asof"):
+        progress("detect asof", 12.0)
+        out["asof"] = _detect_asof(root)
+
+    if not out.get("trade_date"):
+        # 标签用途；无显式执行日时与 asof 对齐，避免前端必填。
+        out["trade_date"] = str(out["asof"]).replace("-", "")
+
+    return out
+
+
+def _dispatch_update_data(params: dict[str, Any], progress: ProgressCb) -> Any:
+    """数据更新固定走 Tushare/Promax → 本地 parquet（与 runtime 无关）。"""
     from ..data.updater import update_daily, update_market_data
-    from ..engine.pipeline import (
-        run_backtest_job,
-        run_pipeline_job,
-        run_signal_job,
-    )
 
-    if job_type == "update-data":
-        include_daily = bool(params.get("include_daily", True))
-        include_share = bool(params.get("include_share", True))
-        include_margin = bool(params.get("include_margin", True))
-        if include_share or include_margin:
-            return update_market_data(
-                symbols=params.get("symbols"),
-                start=params.get("start"),
-                end=params.get("end"),
-                include_daily=include_daily,
-                include_share=include_share,
-                include_margin=include_margin,
-            )
-        return update_daily(
+    include_daily = bool(params.get("include_daily", True))
+    include_share = bool(params.get("include_share", True))
+    include_margin = bool(params.get("include_margin", True))
+    if include_share or include_margin:
+        return update_market_data(
             symbols=params.get("symbols"),
             start=params.get("start"),
             end=params.get("end"),
-        )
-    if job_type == "wfo":
-        return run_wfo_job(progress=progress)
-    if job_type == "vec":
-        return run_backtest_job(
-            engine="vec",
-            factors=params.get("factors"),
+            include_daily=include_daily,
+            include_share=include_share,
+            include_margin=include_margin,
             progress=progress,
         )
-    if job_type == "bt":
-        return run_backtest_job(
-            engine="bt",
-            factors=params.get("factors"),
-            progress=progress,
+    return update_daily(
+        symbols=params.get("symbols"),
+        start=params.get("start"),
+        end=params.get("end"),
+        progress=progress,
+    )
+
+
+def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
+    """仅原版精度：update-data 写 parquet 湖；其余 job 走 etf_strategy entrypoints。"""
+    if job_type == "update-data":
+        return _dispatch_update_data(params, progress)
+
+    # 显式拒绝旧简化引擎 runtime，避免静默降配。
+    runtime = str(params.get("runtime", "canonical") or "canonical").strip().lower()
+    if runtime in {"legacy", "smoke", "simplified"}:
+        raise ValueError(
+            f"runtime={runtime!r} 已移除；只支持 canonical（原版 etf_strategy）"
         )
-    if job_type == "pipeline":
-        return run_pipeline_job(progress=progress)
-    if job_type == "signal":
-        return run_signal_job(progress=progress)
-    raise ValueError(f"unknown job type: {job_type}")
+    if runtime not in {"canonical", "full", "full-fidelity", "default", ""}:
+        raise ValueError(
+            f"unknown runtime={runtime!r}; only canonical is supported"
+        )
 
-
-def _dispatch_canonical(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
     from ..etf_strategy.entrypoints import (
         precompute_non_ohlcv,
         run_bt,
@@ -206,13 +296,24 @@ def _dispatch_canonical(job_type: str, params: dict[str, Any], progress: Progres
     )
 
     progress("canonical runtime", 5.0)
+    root = str(_project_root(params))
+    cwd = str(params.get("cwd") or root)
     config = params.get("config")
-    root = params.get("root")
-    cwd = params.get("cwd")
+
     if job_type == "wfo":
-        result = run_wfo(config=config, robust=bool(params.get("robust")), root=root, cwd=cwd)
+        result = run_wfo(
+            config=config,
+            robust=bool(params.get("robust")),
+            root=root,
+            cwd=cwd,
+        )
     elif job_type == "vec":
-        result = run_vec(config=config, combos=params.get("combos"), root=root, cwd=cwd)
+        result = run_vec(
+            config=config,
+            combos=params.get("combos"),
+            root=root,
+            cwd=cwd,
+        )
     elif job_type == "bt":
         result = run_bt(
             config=config,
@@ -235,24 +336,38 @@ def _dispatch_canonical(job_type: str, params: dict[str, Any], progress: Progres
             cwd=cwd,
         )
     elif job_type == "signal":
-        required = ("candidates", "asof", "trade_date")
-        missing = [key for key in required if not params.get(key)]
-        if missing:
-            raise ValueError(f"canonical signal requires: {', '.join(missing)}")
+        prepared = _prepare_canonical_signal_params(params, progress)
         result = run_signal(
-            candidates=params["candidates"],
-            asof=str(params["asof"]),
-            trade_date=str(params["trade_date"]),
-            capital=float(params.get("capital", 50_000.0)),
-            lot_size=int(params.get("lot_size", 100)),
-            outdir=params.get("outdir"),
-            shadow_config=params.get("shadow_config"),
-            root=root,
-            cwd=cwd,
+            candidates=prepared["candidates"],
+            asof=str(prepared["asof"]),
+            trade_date=str(prepared["trade_date"]),
+            capital=float(prepared.get("capital", 50_000.0)),
+            lot_size=int(prepared.get("lot_size", 100)),
+            outdir=prepared.get("outdir"),
+            shadow_config=prepared.get("shadow_config"),
+            root=prepared.get("root") or root,
+            cwd=prepared.get("cwd") or cwd,
         )
+        if isinstance(result, dict):
+            result = {
+                **result,
+                "runtime": "canonical",
+                "asof": prepared.get("asof"),
+                "trade_date": prepared.get("trade_date"),
+                "candidates": prepared.get("candidates"),
+            }
+        else:
+            result = {
+                "runtime": "canonical",
+                "exit_code": result,
+                "asof": prepared.get("asof"),
+                "trade_date": prepared.get("trade_date"),
+                "candidates": prepared.get("candidates"),
+            }
     elif job_type == "precompute":
         result = precompute_non_ohlcv(root=root, cwd=cwd)
     else:
-        raise ValueError(f"unknown canonical job type: {job_type}")
+        raise ValueError(f"unknown job type: {job_type}")
+
     progress("canonical runtime complete", 100.0)
     return result

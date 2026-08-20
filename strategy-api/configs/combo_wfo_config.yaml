@@ -203,7 +203,7 @@ cross_section:
       pos_count: 1
 data:
   cache_dir: .cache
-  data_dir: raw/ETF/daily
+  data_dir: data/raw/ETF/daily
   start_date: '2020-01-01'
   # empty = today; research freeze for sealed WFO was 2026-02-10
   end_date: ''

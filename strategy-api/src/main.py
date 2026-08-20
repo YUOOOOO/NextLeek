@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from .config import load_config, reload_config, tradeable_symbols
 from .jobs.runner import get_job, get_result, list_jobs, submit_job
-from .paths import CONFIG_PATH, JOBS_DIR, SIGNAL_STATE_PATH, ensure_data_dirs
+from .paths import CONFIG_PATH, JOBS_DIR, LIVE_DIR, SIGNAL_STATE_PATH, ensure_data_dirs
 
 
 def _shadow_strategies() -> list[dict[str, Any]]:
@@ -23,25 +23,204 @@ def _shadow_strategies() -> list[dict[str, Any]]:
     return list(raw.get("shadow_strategies", []))
 
 
-def _signal_state() -> dict[str, Any]:
-    if not SIGNAL_STATE_PATH.exists():
-        return {}
-    return json.loads(SIGNAL_STATE_PATH.read_text(encoding="utf-8"))
-
-
 def _strategy_id(strategy: dict[str, Any]) -> str:
     return str(strategy.get("name") or strategy.get("id") or strategy.get("combo") or "unknown")
 
 
-def _factor_signs(factors: list[str]) -> dict[str, int]:
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
     try:
-        from .etf_strategy.core.factor_registry import get_factor_direction
-    except ImportError:
-        return {factor: 1 for factor in factors}
-    return {
-        factor: -1 if get_factor_direction(factor) == "low_is_good" else 1
-        for factor in factors
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _factor_signs(factors: list[str]) -> dict[str, int]:
+    """优先读 registry；失败时按 low_is_good 名单兜底。"""
+    low_is_good = {
+        "SHARE_CHG_5D",
+        "SHARE_CHG_10D",
+        "SHARE_CHG_20D",
+        "MARGIN_CHG_10D",
+        "MARGIN_BUY_RATIO",
+        "VOL_20D",
+        "MAX_DD_60D",
+        "AMIHUD_ILLIQUIDITY",
     }
+    try:
+        import importlib.util
+
+        registry_path = Path(__file__).resolve().parent / "etf_strategy" / "core" / "factor_registry.py"
+        spec = importlib.util.spec_from_file_location("_nl_factor_registry", registry_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            get_dir = getattr(module, "get_factor_direction", None)
+            if callable(get_dir):
+                return {
+                    factor: -1 if get_dir(factor) == "low_is_good" else 1
+                    for factor in factors
+                }
+    except Exception:
+        pass
+    return {factor: -1 if factor in low_is_good else 1 for factor in factors}
+
+
+def _extract_strategy_payload(
+    sid: str,
+    raw: dict[str, Any],
+    definition: dict[str, Any],
+    *,
+    default_asof: Any = None,
+    generated_at: Any = None,
+) -> dict[str, Any]:
+    """把 legacy holdings 或 canonical signal_portfolio 统一成前端 payload。"""
+    holdings = [
+        str(symbol)
+        for symbol in (
+            raw.get("signal_portfolio")
+            or raw.get("holdings")
+            or []
+        )
+    ]
+    hold_days_src = raw.get("signal_hold_days") or raw.get("hold_days") or {}
+    hold_days = {str(symbol): int(days) for symbol, days in hold_days_src.items()}
+
+    actions = list(raw.get("last_actions") or [])
+    if not actions:
+        actions = [
+            {
+                "symbol": symbol,
+                "action": "current",
+                "label": "当前持仓",
+                "reason": "最新信号持仓",
+                "hold_days": hold_days.get(symbol, 0),
+            }
+            for symbol in holdings
+        ]
+
+    factors = [
+        factor.strip()
+        for factor in str(definition.get("combo") or "").split("+")
+        if factor.strip()
+    ]
+    if not factors and isinstance(raw.get("factors"), list):
+        factors = [str(f) for f in raw["factors"]]
+    if not factors:
+        factors = [str(sid)]
+
+    asof = (
+        raw.get("last_signal_asof")
+        or raw.get("last_seen_asof")
+        or raw.get("last_asof_date")
+        or default_asof
+    )
+    summary = raw.get("last_summary") or (
+        f"当前持仓 {len(holdings)} 只" if holdings else "暂无持仓"
+    )
+
+    return {
+        "strategy_id": str(sid),
+        "name": definition.get("name") or raw.get("name") or str(sid),
+        "factors": factors,
+        "combo": definition.get("combo"),
+        "asof": asof,
+        "summary": summary,
+        "actions": actions,
+        "holdings": holdings,
+        "hold_days": hold_days,
+        "last_rebalance": raw.get("last_rebalance"),
+        "generated_at": raw.get("last_generated_at") or generated_at,
+        "source": raw.get("source") or "signal_state",
+    }
+
+
+def _collect_shadow_strategy_states() -> list[dict[str, Any]]:
+    """优先读 canonical shadow 状态文件，再回退 signal_state.json。"""
+    definitions = {_strategy_id(item): item for item in _shadow_strategies()}
+    payloads: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for path in sorted(LIVE_DIR.glob("signal_state_shadow_*.json")):
+        state = _load_json(path)
+        name = path.stem.replace("signal_state_shadow_", "", 1)
+        definition = definitions.get(name, {"name": name})
+        strategies = state.get("strategies") or {}
+        if strategies:
+            # canonical 状态以 combo 为 key；对外统一成策略名。
+            for combo, raw in strategies.items():
+                raw = dict(raw or {})
+                raw.setdefault("source", f"shadow:{name}")
+                if not definition.get("combo"):
+                    definition = {**definition, "combo": combo}
+                payload = _extract_strategy_payload(
+                    name,
+                    raw,
+                    definition,
+                    default_asof=state.get("last_asof_date"),
+                    generated_at=state.get("generated_at"),
+                )
+                payloads.append(payload)
+                seen.add(name)
+                break
+        else:
+            # 兼容扁平 shadow 文件
+            payload = _extract_strategy_payload(
+                name,
+                state,
+                definition,
+                default_asof=state.get("last_asof_date"),
+                generated_at=state.get("generated_at"),
+            )
+            payloads.append(payload)
+            seen.add(name)
+
+    # 回退：旧 legacy signal_state.json（按策略 id）
+    legacy = _load_json(SIGNAL_STATE_PATH)
+    for sid, raw in (legacy.get("strategies") or {}).items():
+        sid = str(sid)
+        if sid in seen:
+            continue
+        definition = definitions.get(sid, {"name": sid})
+        raw = dict(raw or {})
+        raw.setdefault("source", "legacy_signal_state")
+        payloads.append(
+            _extract_strategy_payload(
+                sid,
+                raw,
+                definition,
+                default_asof=legacy.get("last_asof_date"),
+                generated_at=legacy.get("generated_at"),
+            )
+        )
+
+    # 保证封版策略都出现在列表中（即便还没跑过信号）
+    for item in _shadow_strategies():
+        sid = _strategy_id(item)
+        if sid in {p["strategy_id"] for p in payloads}:
+            continue
+        payloads.append(
+            {
+                "strategy_id": sid,
+                "name": item.get("name", sid),
+                "factors": [
+                    f.strip() for f in str(item.get("combo", "")).split("+") if f.strip()
+                ],
+                "combo": item.get("combo"),
+                "asof": None,
+                "summary": "尚未生成信号",
+                "actions": [],
+                "holdings": [],
+                "hold_days": {},
+                "last_rebalance": None,
+                "generated_at": None,
+                "source": "sealed_definition",
+            }
+        )
+
+    return payloads
 
 app = FastAPI(title="NextLeek Strategy API", version="0.1.0")
 
@@ -66,7 +245,12 @@ def _startup() -> None:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "strategy-api"}
+    return {
+        "status": "ok",
+        "service": "strategy-api",
+        "runtime_default": "canonical",
+        "sealed_count": len(_shadow_strategies()),
+    }
 
 
 @app.get("/api/universe")
@@ -90,29 +274,45 @@ def universe() -> dict[str, Any]:
 @app.get("/api/sealed")
 def sealed() -> dict[str, Any]:
     strategies = _shadow_strategies()
-    factors = sorted({
-        factor
-        for strategy in strategies
-        for factor in str(strategy.get("combo", "")).split("+")
-        if factor
-    })
+    factors = sorted(
+        {
+            factor
+            for strategy in strategies
+            for factor in str(strategy.get("combo", "")).split("+")
+            if factor
+        }
+    )
+    signs = _factor_signs(factors)
     return {
+        "runtime_default": "canonical",
         "sealed": [
             {
                 "id": _strategy_id(strategy),
                 "name": strategy.get("name", _strategy_id(strategy)),
-                "factors": [f.strip() for f in str(strategy.get("combo", "")).split("+") if f.strip()],
+                "factors": [
+                    f.strip()
+                    for f in str(strategy.get("combo", "")).split("+")
+                    if f.strip()
+                ],
                 "combo": strategy.get("combo"),
+                "factor_signs": strategy.get("factor_signs")
+                or ",".join(
+                    str(
+                        signs.get(f.strip(), 1)
+                    )
+                    for f in str(strategy.get("combo", "")).split("+")
+                    if f.strip()
+                ),
             }
             for strategy in strategies
         ],
-        "factor_signs": _factor_signs(factors),
+        "factor_signs": signs,
     }
 
 
 @app.post("/api/jobs")
 def create_job(body: JobCreate) -> dict[str, str]:
-    allowed = {"update-data", "wfo", "vec", "bt", "pipeline", "signal"}
+    allowed = {"update-data", "wfo", "vec", "bt", "pipeline", "signal", "precompute"}
     if body.type not in allowed:
         raise HTTPException(status_code=400, detail=f"type must be one of {sorted(allowed)}")
     job_id = submit_job(body.type, body.params or {})
@@ -157,63 +357,18 @@ def artifact(job_id: str, name: str) -> FileResponse:
 @app.get("/api/signal/latest")
 def signal_latest() -> dict[str, Any]:
     ensure_data_dirs()
-    state = _signal_state()
-    if not state:
-        return {"strategies": [], "note": "no signal_state yet; run job type=signal"}
-
-    definitions = {
-        _strategy_id(strategy): strategy
-        for strategy in _shadow_strategies()
-    }
-    strategies = []
-    signal_dates = [
-        str(raw.get("last_signal_asof") or raw.get("last_seen_asof"))
-        for raw in (state.get("strategies") or {}).values()
-        if raw.get("last_signal_asof") or raw.get("last_seen_asof")
-    ]
-    asof = max(signal_dates) if signal_dates else state.get("last_asof_date")
-    for sid, raw in (state.get("strategies") or {}).items():
-        st = raw or {}
-        definition = definitions.get(str(sid), {})
-        holdings = [str(symbol) for symbol in st.get("signal_portfolio", st.get("holdings", []))]
-        hold_days = {
-            str(symbol): int(days)
-            for symbol, days in (st.get("signal_hold_days", st.get("hold_days", {})) or {}).items()
-        }
-        actions = [
-            {
-                "symbol": symbol,
-                "action": "current",
-                "label": "当前持仓",
-                "reason": "最新信号持仓",
-                "hold_days": hold_days.get(symbol, 0),
-            }
-            for symbol in holdings
-        ]
-        strategies.append(
-            {
-                "strategy_id": str(sid),
-                "name": definition.get("name", str(sid)),
-                "factors": [
-                    factor.strip()
-                    for factor in str(definition.get("combo", str(sid))).split("+")
-                    if factor.strip()
-                ],
-                "asof": asof,
-                "summary": f"当前持仓 {len(holdings)} 只",
-                "actions": actions,
-                "holdings": holdings,
-                "hold_days": hold_days,
-                "last_rebalance": st.get("last_rebalance"),
-                "generated_at": state.get("generated_at"),
-            }
-        )
+    strategies = _collect_shadow_strategy_states()
+    signal_dates = [str(item.get("asof")) for item in strategies if item.get("asof")]
+    asof = max(signal_dates) if signal_dates else None
+    note = None
+    if not any(item.get("source") != "sealed_definition" for item in strategies):
+        note = "no signal yet; run job type=signal (default runtime=canonical)"
     return {
-        "version": state.get("version"),
-        "freq": state.get("freq"),
+        "version": "v8.0-shadow",
+        "runtime_default": "canonical",
         "asof": asof,
-        "universe_mode": state.get("universe_mode"),
         "strategies": strategies,
+        "note": note,
     }
 
 
