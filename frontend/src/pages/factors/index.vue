@@ -23,16 +23,6 @@ type Universe = {
   factor_count?: number
 }
 
-type Job = {
-  job_id: string
-  type: string
-  status: string
-  pct?: number
-  message?: string
-  stage?: string
-  error?: string | null
-}
-
 const FACTOR_LABEL: Record<string, string> = {
   ADX_14D: '趋势强度 ADX',
   AMIHUD_ILLIQUIDITY: '非流动性',
@@ -110,9 +100,6 @@ const OHLCV_FACTORS = new Set([
 const universe = ref<Universe | null>(null)
 const error = ref('')
 const busy = ref(false)
-const lastJobId = ref('')
-const lastJob = ref<Job | null>(null)
-const selectedFactorCodes = ref<string[]>([])
 const detailFactorCode = ref<string | null>(null)
 const detailOpen = ref(false)
 const modalRootRef = ref<HTMLElement | null>(null)
@@ -145,36 +132,21 @@ const factorCount = computed(
   () => universe.value?.factor_count ?? factorPool.value.length,
 )
 
-const selectedFactorSet = computed(() => new Set(selectedFactorCodes.value))
-
 const detailFactor = computed(() => {
   const code = detailFactorCode.value
   if (!code) return null
   return factorPool.value.find((f) => f.code === code) || null
 })
 
-const detailSelected = computed(() =>
-  detailFactor.value ? selectedFactorSet.value.has(detailFactor.value.code) : false,
-)
-
-const manualSelectOk = computed(() => {
-  const n = selectedFactorCodes.value.length
-  return n >= 2 && n <= 8
-})
-
 function factorText(code: string): string {
   return FACTOR_LABEL[code] || code
-}
-
-function isFactorSelected(code: string): boolean {
-  return selectedFactorSet.value.has(code)
 }
 
 function setBodyScrollLocked(locked: boolean) {
   document.body.style.overflow = locked ? 'hidden' : ''
 }
 
-/** 点击胶囊：打开原理弹窗 */
+/** 点击胶囊：只打开原理弹窗 */
 async function openFactorDetail(code: string) {
   detailFactorCode.value = code
   detailOpen.value = true
@@ -186,28 +158,6 @@ async function openFactorDetail(code: string) {
 function closeFactorDetail() {
   detailOpen.value = false
   setBodyScrollLocked(false)
-}
-
-function toggleSelect(code: string) {
-  const set = new Set(selectedFactorCodes.value)
-  if (set.has(code)) set.delete(code)
-  else {
-    if (set.size >= 8) {
-      error.value = '最多勾选 8 个因子'
-      return
-    }
-    set.add(code)
-  }
-  selectedFactorCodes.value = Array.from(set)
-}
-
-function toggleDetailSelect() {
-  if (!detailFactor.value) return
-  toggleSelect(detailFactor.value.code)
-}
-
-function clearSelectedFactors() {
-  selectedFactorCodes.value = []
 }
 
 async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
@@ -229,41 +179,11 @@ async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   return data as T
 }
 
-async function refresh(preserveError = false) {
-  if (!preserveError) error.value = ''
+async function refresh() {
+  error.value = ''
+  busy.value = true
   try {
     universe.value = await api<Universe>('/api/strategy/universe')
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  }
-}
-
-async function pollJob(id: string) {
-  for (let i = 0; i < 600; i++) {
-    const st = await api<Job>(`/api/strategy/jobs/${id}`)
-    lastJob.value = st
-    if (st.status === 'succeeded' || st.status === 'failed') return
-    await new Promise((r) => setTimeout(r, 1000))
-  }
-  error.value = '等待超时，请稍后点刷新查看任务状态'
-}
-
-async function startManualResearch(type: 'vec' | 'bt') {
-  if (!manualSelectOk.value) {
-    error.value = '请先勾选 2–8 个因子，再跑 VEC 或 BT'
-    return
-  }
-  busy.value = true
-  error.value = ''
-  lastJob.value = null
-  try {
-    const factors = [...selectedFactorCodes.value]
-    const r = await api<{ job_id: string }>('/api/strategy/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ type, params: { factors, manual: true } }),
-    })
-    lastJobId.value = r.job_id
-    await pollJob(r.job_id)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -287,8 +207,12 @@ onUnmounted(() => {
         <p class="eyebrow">研究目录</p>
         <h1>公共因子池 · {{ factorCount || 0 }}</h1>
         <div class="howto compact">
-          <p>这里是研究可枚举的大池，不等于生产锁定配方。</p>
-          <p>点击因子胶囊打开原理弹窗；点胶囊上的 +/✓ 勾选 2–8 个做手跑研究。</p>
+          <p>这里只查看因子含义与原理，不做研究勾选。</p>
+          <p>
+            手选因子 / WFO 请到
+            <RouterLink class="inline-link" to="/rotation">轮动</RouterLink>
+            页「研究重筛 → 筛选层」。
+          </p>
         </div>
       </div>
       <button class="btn ghost" type="button" :disabled="busy" @click="refresh()">刷新</button>
@@ -306,19 +230,11 @@ onUnmounted(() => {
               :key="f.code"
               type="button"
               class="factor-chip"
-              :class="{
-                active: detailOpen && detailFactorCode === f.code,
-                picked: isFactorSelected(f.code),
-              }"
+              :class="{ active: detailOpen && detailFactorCode === f.code }"
               :title="f.code"
               @click="openFactorDetail(f.code)"
             >
               <span class="chip-label">{{ f.label }}</span>
-              <span
-                class="pick-dot"
-                :title="isFactorSelected(f.code) ? '已加入研究勾选' : '未勾选'"
-                @click.stop="toggleSelect(f.code)"
-              >{{ isFactorSelected(f.code) ? '✓' : '+' }}</span>
             </button>
           </div>
         </div>
@@ -330,74 +246,16 @@ onUnmounted(() => {
               :key="f.code"
               type="button"
               class="factor-chip alt"
-              :class="{
-                active: detailOpen && detailFactorCode === f.code,
-                picked: isFactorSelected(f.code),
-              }"
+              :class="{ active: detailOpen && detailFactorCode === f.code }"
               :title="f.code"
               @click="openFactorDetail(f.code)"
             >
               <span class="chip-label">{{ f.label }}</span>
-              <span
-                class="pick-dot"
-                :title="isFactorSelected(f.code) ? '已加入研究勾选' : '未勾选'"
-                @click.stop="toggleSelect(f.code)"
-              >{{ isFactorSelected(f.code) ? '✓' : '+' }}</span>
             </button>
           </div>
         </div>
       </div>
       <p v-else class="empty">暂无因子列表。请确认 strategy-api 已启动。</p>
-    </section>
-
-    <section class="card research-bar">
-      <div class="research-copy">
-        <h2>手动研究勾选</h2>
-        <p class="manual-count" :class="{ ok: manualSelectOk }">
-          已选 {{ selectedFactorCodes.length }} / 2–8
-          <template v-if="selectedFactorCodes.length">
-            · {{ selectedFactorCodes.map((c) => factorText(c)).join(' + ') }}
-          </template>
-        </p>
-        <p class="hint">
-          跳过 WFO，直接用已选因子跑 VEC / BT。封版请回
-          <RouterLink to="/rotation">轮动</RouterLink>
-          页研究区。
-        </p>
-      </div>
-      <div class="row-actions">
-        <button
-          type="button"
-          class="btn ghost sm"
-          :disabled="!selectedFactorCodes.length || busy"
-          @click="clearSelectedFactors"
-        >
-          清空
-        </button>
-        <button
-          type="button"
-          class="btn primary sm"
-          :disabled="!manualSelectOk || busy"
-          @click="startManualResearch('vec')"
-        >
-          用已选跑 VEC
-        </button>
-        <button
-          type="button"
-          class="btn primary sm"
-          :disabled="!manualSelectOk || busy"
-          @click="startManualResearch('bt')"
-        >
-          用已选跑 BT
-        </button>
-      </div>
-      <p v-if="lastJob" class="job-line">
-        最近任务
-        <code>{{ lastJobId.slice(0, 8) }}</code>
-        · {{ lastJob.type }} · {{ lastJob.status }}
-        <template v-if="lastJob.pct != null"> · {{ Math.round(lastJob.pct) }}%</template>
-        <template v-if="lastJob.message"> · {{ lastJob.message }}</template>
-      </p>
     </section>
 
     <div
@@ -453,14 +311,6 @@ onUnmounted(() => {
         </div>
 
         <div class="modal-actions">
-          <button
-            type="button"
-            class="btn sm"
-            :class="detailSelected ? 'ghost' : 'primary'"
-            @click="toggleDetailSelect"
-          >
-            {{ detailSelected ? '取消勾选' : '加入研究勾选' }}
-          </button>
           <button type="button" class="btn primary sm" @click="closeFactorDetail">知道了</button>
         </div>
       </div>
@@ -511,6 +361,14 @@ h1 {
 .howto.compact p + p {
   margin-top: 2px;
 }
+.inline-link {
+  color: #82b1ff;
+  text-decoration: none;
+  font-weight: 700;
+}
+.inline-link:hover {
+  text-decoration: underline;
+}
 .error {
   margin: 0;
   padding: 10px 12px;
@@ -525,8 +383,7 @@ h1 {
   border-radius: 14px;
   padding: 14px 16px;
 }
-.list-card h2,
-.research-bar h2 {
+.list-card h2 {
   margin: 0 0 10px;
   font-size: 0.98rem;
 }
@@ -543,9 +400,8 @@ h1 {
 .factor-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   border-radius: 999px;
-  padding: 6px 8px 6px 12px;
+  padding: 7px 14px;
   border: 1px solid rgba(130, 177, 255, 0.18);
   background: rgba(130, 177, 255, 0.1);
   color: #82b1ff;
@@ -553,7 +409,6 @@ h1 {
   font-weight: 600;
   cursor: pointer;
   user-select: none;
-  transition: filter 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .factor-chip.alt {
   color: #ffd54f;
@@ -567,37 +422,9 @@ h1 {
   box-shadow: 0 0 0 1px rgba(105, 240, 174, 0.45);
   border-color: rgba(105, 240, 174, 0.55);
 }
-.factor-chip.picked {
-  color: #0b1b12;
-  background: #69f0ae;
-  border-color: #69f0ae;
-  font-weight: 700;
-}
-.factor-chip.picked.alt {
-  color: #1a1400;
-  background: #ffd54f;
-  border-color: #ffd54f;
-}
 .factor-chip .chip-label {
   line-height: 1.2;
   white-space: nowrap;
-}
-.factor-chip .pick-dot {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 800;
-  color: inherit;
-  background: rgba(0, 0, 0, 0.12);
-  border: 0;
-}
-.factor-chip.picked .pick-dot {
-  background: rgba(0, 0, 0, 0.18);
 }
 .detail-head {
   display: flex;
@@ -693,44 +520,6 @@ h1 {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
-}
-.research-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.research-copy h2 {
-  margin-bottom: 6px;
-}
-.manual-count {
-  margin: 0;
-  font-size: 0.9rem;
-  color: rgba(232, 234, 237, 0.72);
-  line-height: 1.45;
-}
-.manual-count.ok {
-  color: #69f0ae;
-}
-.hint {
-  margin: 6px 0 0;
-  color: rgba(232, 234, 237, 0.5);
-  font-size: 0.84rem;
-}
-.hint a {
-  color: #82b1ff;
-}
-.row-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.job-line {
-  margin: 0;
-  color: rgba(232, 234, 237, 0.55);
-  font-size: 0.82rem;
-}
-.job-line code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .empty {
   margin: 0;

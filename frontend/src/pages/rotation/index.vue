@@ -1,14 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
 
+
+type FactorInfo = {
+  code: string
+  label: string
+  group: string
+  source?: string
+  bucket?: string | null
+  bucket_label?: string
+  direction?: string
+  direction_note?: string
+  summary?: string
+  principle?: string
+}
 
 type Universe = {
   mode?: string
   tradeable?: string[]
   symbols?: string[]
   active_factors?: string[]
+  factor_catalog?: FactorInfo[]
+  factor_count?: number
   backtest?: {
     freq?: number
     pos_size?: number
@@ -207,11 +223,11 @@ const PIPELINE_STEPS: PipelineStep[] = [
   {
     id: 'wfo',
     order: 1,
-    title: 'WFO 筛选',
-    eng: 'WFO',
-    time: '~2 分钟+',
-    desc: '枚举因子组合，IC 门控后打分',
-    detail: '研究用：重筛因子配方，不是每日操作。',
+    title: '筛选层',
+    eng: 'WFO / 手选',
+    time: '视模式',
+    desc: 'WFO 自动枚举，或手动勾选 2–8 个因子',
+    detail: '研究用：在这一层决定走自动筛选还是自选因子。',
   },
   {
     id: 'vec',
@@ -256,8 +272,58 @@ const lastJobId = ref('')
 const sealNotice = ref('')
 const publishBusy = ref(false)
 const showResearch = ref(false)
+/** wfo=自动枚举；manual=本层手选因子后进 VEC/BT */
+const researchMode = ref<'wfo' | 'manual'>('wfo')
+const selectedFactorCodes = ref<string[]>([])
 
 let timer: number | undefined
+
+const OHLCV_FACTOR_CODES = new Set([
+  'ADX_14D',
+  'AMIHUD_ILLIQUIDITY',
+  'BREAKOUT_20D',
+  'CALMAR_RATIO_60D',
+  'CORRELATION_TO_MARKET_20D',
+  'GK_VOL_RATIO_20D',
+  'MAX_DD_60D',
+  'MOM_20D',
+  'OBV_SLOPE_10D',
+  'PRICE_POSITION_20D',
+  'PRICE_POSITION_120D',
+  'PV_CORR_20D',
+  'SHARPE_RATIO_20D',
+  'SLOPE_20D',
+  'UP_DOWN_VOL_RATIO_20D',
+  'VOL_RATIO_20D',
+  'VORTEX_14D',
+])
+
+const factorPool = computed((): FactorInfo[] => {
+  const catalog = universe.value?.factor_catalog
+  if (catalog?.length) {
+    return catalog.map((item) => ({
+      ...item,
+      label: item.label || factorText(item.code),
+      group: item.group || (OHLCV_FACTOR_CODES.has(item.code) ? '行情类' : '份额/融资类'),
+    }))
+  }
+  const codes = universe.value?.active_factors || Object.keys(FACTOR_LABEL)
+  return codes.map((code) => ({
+    code,
+    label: factorText(code),
+    group: OHLCV_FACTOR_CODES.has(code) ? '行情类' : '份额/融资类',
+  }))
+})
+
+const ohlcvFactors = computed(() => factorPool.value.filter((f) => f.group === '行情类'))
+const altFactors = computed(() => factorPool.value.filter((f) => f.group !== '行情类'))
+
+const selectedFactorSet = computed(() => new Set(selectedFactorCodes.value))
+
+const manualSelectOk = computed(() => {
+  const n = selectedFactorCodes.value.length
+  return n >= 2 && n <= 8
+})
 
 const tradeableCount = computed(() => universe.value?.tradeable?.length ?? 0)
 const symbolCount = computed(() => universe.value?.symbols?.length ?? 0)
@@ -393,6 +459,91 @@ function strategyBlurb(s: SignalStrategy): string {
 
 function factorText(code: string): string {
   return FACTOR_LABEL[code] || code
+}
+
+function isFactorSelected(code: string): boolean {
+  return selectedFactorSet.value.has(code)
+}
+
+/** 筛选层手动模式：点胶囊勾选/取消 */
+function toggleFactor(code: string) {
+  const set = new Set(selectedFactorCodes.value)
+  if (set.has(code)) set.delete(code)
+  else set.add(code)
+  selectedFactorCodes.value = Array.from(set)
+}
+
+function clearSelectedFactors() {
+  selectedFactorCodes.value = []
+}
+
+/**
+ * 研究步骤运行入口。
+ * 筛选层：WFO 模式跑 wfo；手动模式校验 2–8 后直接跑 VEC（跳过 WFO）。
+ * VEC/BT 在手动模式下带 factors+manual。
+ */
+function researchStepButtonLabel(stepId: PipelineStepId): string {
+  if (stepId === 'wfo') {
+    return researchMode.value === 'manual' ? '确认手选并跑 VEC' : '运行 WFO'
+  }
+  if (stepId === 'vec' || stepId === 'bt') {
+    return researchMode.value === 'manual' ? `手选运行 ${stepId.toUpperCase()}` : '运行本层'
+  }
+  return '运行本层'
+}
+
+function researchStepDisabled(stepId: PipelineStepId): boolean {
+  if (stepId === 'wfo' || stepId === 'vec' || stepId === 'bt') {
+    if (researchMode.value === 'manual') return !manualSelectOk.value
+  }
+  return false
+}
+
+async function runResearchStep(stepId: PipelineStepId) {
+  if (stepId === 'update-data') {
+    await startJob('update-data')
+    return
+  }
+
+  if (stepId === 'wfo') {
+    if (researchMode.value === 'manual') {
+      if (!manualSelectOk.value) {
+        error.value = '手动模式请先勾选 2–8 个因子'
+        return
+      }
+      await startJob('vec', {
+        factors: [...selectedFactorCodes.value],
+        manual: true,
+      })
+      return
+    }
+    await startJob('wfo')
+    return
+  }
+
+  if (stepId === 'vec' || stepId === 'bt') {
+    if (researchMode.value === 'manual') {
+      if (!manualSelectOk.value) {
+        error.value = '手动模式请先勾选 2–8 个因子'
+        return
+      }
+      await startJob(stepId, {
+        factors: [...selectedFactorCodes.value],
+        manual: true,
+      })
+      return
+    }
+    await startJob(stepId)
+  }
+}
+
+/** 一键全流程：手动模式不支持（后端 pipeline 不会把 factors 接到 VEC） */
+async function startFullResearch() {
+  if (researchMode.value === 'manual') {
+    error.value = '手动模式请逐层运行 VEC / BT，不要用一键全流程'
+    return
+  }
+  await startJob('pipeline')
 }
 
 function formatDate(raw?: string | null): string {
@@ -855,9 +1006,11 @@ onUnmounted(() => {
             <p>日常信号不会自动换因子。</p>
             <p>只有你主动做完研究并重新封版，才会换因子配方。</p>
             <p>
-              先看清每个因子含义，请打开菜单
-              <router-link class="inline-link" to="/factors">因子池</router-link>。
+              因子原理请打开
+              <RouterLink class="inline-link" to="/factors">因子池</RouterLink>
+              （只看不选）。
             </p>
+            <p>手选因子在下面「筛选层」切换到手动模式。</p>
             <p>日常看持仓，请回到上方两步操作。</p>
           </div>
         </div>
@@ -900,9 +1053,93 @@ onUnmounted(() => {
                   · {{ Math.round(step.pct) }}%
                 </template>
               </p>
+
+              <div v-if="step.id === 'wfo'" class="screen-panel">
+                <div class="mode-toggle" role="group" aria-label="筛选方式">
+                  <button
+                    type="button"
+                    class="mode-btn"
+                    :class="{ active: researchMode === 'wfo' }"
+                    :disabled="busy"
+                    @click="researchMode = 'wfo'"
+                  >
+                    WFO 自动枚举
+                  </button>
+                  <button
+                    type="button"
+                    class="mode-btn"
+                    :class="{ active: researchMode === 'manual' }"
+                    :disabled="busy"
+                    @click="researchMode = 'manual'"
+                  >
+                    手动选因子
+                  </button>
+                </div>
+
+                <div v-if="researchMode === 'wfo'" class="howto compact mode-hint">
+                  <p>自动扫公共池组合，产出候选后再进 VEC / BT。</p>
+                </div>
+
+                <div v-else class="manual-box">
+                  <div class="manual-head">
+                    <p :class="['manual-count', { ok: manualSelectOk }]">
+                      已选 {{ selectedFactorCodes.length }} / 2–8
+                    </p>
+                    <button
+                      type="button"
+                      class="btn ghost sm"
+                      :disabled="!selectedFactorCodes.length || busy"
+                      @click="clearSelectedFactors"
+                    >
+                      清空
+                    </button>
+                  </div>
+                  <div class="howto compact">
+                    <p>点胶囊勾选。原理请到因子池查看。</p>
+                  </div>
+                  <div v-if="factorPool.length" class="factor-groups compact">
+                    <div>
+                      <h3>行情类</h3>
+                      <div class="factor-row">
+                        <button
+                          v-for="f in ohlcvFactors"
+                          :key="f.code"
+                          type="button"
+                          class="factor-chip"
+                          :class="{ selected: isFactorSelected(f.code) }"
+                          :title="f.code"
+                          :disabled="busy"
+                          @click="toggleFactor(f.code)"
+                        >
+                          {{ f.label }}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <h3>份额 / 融资</h3>
+                      <div class="factor-row">
+                        <button
+                          v-for="f in altFactors"
+                          :key="f.code"
+                          type="button"
+                          class="factor-chip alt"
+                          :class="{ selected: isFactorSelected(f.code) }"
+                          :title="f.code"
+                          :disabled="busy"
+                          @click="toggleFactor(f.code)"
+                        >
+                          {{ f.label }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <p v-else class="empty sm">暂无因子列表，请先刷新或确认 strategy-api。</p>
+                </div>
+              </div>
+
               <div class="pipe-actions">
-                <button class="btn sm" :disabled="busy" @click="startJob(step.id)">
-                  运行本层
+                <button class="btn sm" :disabled="busy || researchStepDisabled(step.id)" @click="runResearchStep(step.id)">
+                  {{ researchStepButtonLabel(step.id) }}
                 </button>
               </div>
             </div>
@@ -938,13 +1175,14 @@ onUnmounted(() => {
 
           <button
             class="btn ghost dangerish"
-            :disabled="busy || publishBusy"
-            @click="startJob('pipeline')"
+            :disabled="busy || publishBusy || researchMode === 'manual'"
+            @click="startFullResearch"
           >
             一键全流程（研究用）
           </button>
           <div class="howto compact">
-            <p>顺序：数据 → WFO → VEC → BT → 信号。</p>
+            <p v-if="researchMode === 'manual'">手动模式请逐层跑 VEC / BT。</p>
+            <p v-else>顺序：数据 → WFO → VEC → BT → 信号。</p>
             <p>日常请勿使用。</p>
           </div>
         </div>
@@ -1275,6 +1513,97 @@ h3 {
 }
 .pipe-actions {
   margin-top: 10px;
+}
+.screen-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.14);
+}
+.mode-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mode-btn {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(232, 234, 237, 0.78);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mode-btn.active {
+  color: #0b1210;
+  background: #69f0ae;
+  border-color: #69f0ae;
+}
+.mode-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mode-hint {
+  margin: 0;
+}
+.manual-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.manual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.manual-count {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: rgba(232, 234, 237, 0.72);
+}
+.manual-count.ok {
+  color: #69f0ae;
+}
+.factor-groups.compact {
+  gap: 12px;
+}
+.factor-groups.compact h3 {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: rgba(232, 234, 237, 0.55);
+  font-weight: 600;
+}
+button.factor-chip {
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+button.factor-chip:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+button.factor-chip.selected {
+  color: #0b1210;
+  background: #69f0ae;
+  border-color: #69f0ae;
+  font-weight: 700;
+}
+button.factor-chip.alt.selected {
+  color: #0b1210;
+  background: #ffd54f;
+  border-color: #ffd54f;
+}
+button.factor-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.empty.sm {
+  margin: 0;
+  font-size: 0.8rem;
 }
 .last-job {
   margin-top: 4px;
