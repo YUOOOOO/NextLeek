@@ -29,6 +29,11 @@ Browser → frontend (Vite :5173)
 - `STRATEGY_API_URL`：server → strategy-api，默认 `http://localhost:8001`
 - `VITE_API_BASE`：frontend → server，默认 `http://localhost:3000`
 - `PORT`：server 端口
+- `TUSHARE_PROVIDER`：`auto`（默认）、`pro` 或 `promax`
+- `TUSHARE_TOKEN`：直连 Tushare Pro token
+- `TUSHARE_PRO_URL`：直连 Pro 地址，默认 `https://api.tushare.pro`
+- `TUSHARE_PROMAX_KEY`：Promax 聚合接口 key
+- `TUSHARE_PROMAX_URL`：Promax 地址，默认 `https://pcd.mobcvb.cn/tushare/pro`
 
 ---
 
@@ -62,7 +67,7 @@ python -m uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 
 OpenAPI：`http://localhost:8001/docs`
 
-首次使用先提交 `update-data` 任务拉 AkShare 日线 parquet，再跑 `vec` / `bt` / `wfo` / `signal` / `pipeline`。
+首次使用先提交 `update-data` 任务拉 Tushare `fund_daily` 日线 parquet，再跑 `vec` / `bt` / `wfo` / `signal` / `pipeline`。`TUSHARE_PROVIDER=auto` 时优先直连 Pro，失败后回退 Promax。
 
 ---
 
@@ -105,8 +110,7 @@ OpenAPI：`http://localhost:8001/docs`
 
 - 路径：`strategy-api/data/raw/ETF/daily/{code}.{SH\|SZ}_daily.parquet`
 - 列：`trade_date, adj_open, adj_high, adj_low, adj_close, vol[, amount]`
-- 源：AkShare `fund_etf_hist_em`（前复权映射到 `adj_*`）
-- 配置：`strategy-api/configs/config.yaml`（约 49 只池、FREQ=5、POS=2、Exp4 迟滞）
+- 源：Tushare `fund_daily`（直连 Pro / Promax 可切换），字段映射到现有 `adj_*`
 
 ### 示例
 
@@ -138,4 +142,4 @@ curl -X POST http://localhost:3000/api/strategy/jobs -H "Content-Type: applicati
 - 浏览器 **不直连** 8000/8001，只打 Express（或 Vite 代理到 Express）。
 - AI 本轮 **未** 接策略 tools；数值以 strategy-api 为准。
 - 大文件与 `_tmp_etf_rot` 已 gitignore。
-- 东财偶发断连时 `update-data` 可能部分失败；可重试或缩小 `symbols`。
+- Tushare 上游偶发断连时 `update-data` 会重试；若全部来源失败，任务直接失败，不会生成旧数据冒充最新信号。

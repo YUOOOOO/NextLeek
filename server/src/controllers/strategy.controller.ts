@@ -1,6 +1,5 @@
 import { Request, Response } from 'express'
-import { strategyProxy } from '../services/strategyApi'
-
+import { STRATEGY_API, strategyProxy } from '../services/strategyApi'
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -79,6 +78,29 @@ export async function getJobResult(req: Request, res: Response) {
   try {
     const id = paramId(req)
     res.json(await strategyProxy(`/api/jobs/${encodeURIComponent(id)}/result`))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+
+export async function getArtifact(req: Request, res: Response) {
+  try {
+    const id = paramId(req)
+    const name = Array.isArray(req.params.name)
+      ? String(req.params.name[0] ?? '')
+      : String(req.params.name ?? '')
+    const upstream = await fetch(
+      `${STRATEGY_API}/api/artifacts/${encodeURIComponent(id)}/${encodeURIComponent(name)}`,
+    )
+    if (!upstream.ok) {
+      const body = await upstream.text()
+      res.status(upstream.status).json({ error: body || `Strategy API error: ${upstream.status}` })
+      return
+    }
+    const contentType = upstream.headers.get('content-type')
+    if (contentType) res.type(contentType)
+    res.send(Buffer.from(await upstream.arrayBuffer()))
   } catch (e: unknown) {
     res.status(statusOf(e)).json({ error: errorMessage(e) })
   }

@@ -145,20 +145,34 @@ def _run(job_id: str, job_type: str, params: dict[str, Any]) -> None:
 
 
 def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
-    from ..data.updater import update_daily
+    runtime = str(params.get("runtime", "legacy")).lower()
+    if runtime in {"canonical", "full", "full-fidelity"}:
+        return _dispatch_canonical(job_type, params, progress)
+
+    from ..data.updater import update_daily, update_market_data
     from ..engine.pipeline import (
         run_backtest_job,
         run_pipeline_job,
         run_signal_job,
-        run_wfo_job,
     )
 
     if job_type == "update-data":
+        include_daily = bool(params.get("include_daily", True))
+        include_share = bool(params.get("include_share", True))
+        include_margin = bool(params.get("include_margin", True))
+        if include_share or include_margin:
+            return update_market_data(
+                symbols=params.get("symbols"),
+                start=params.get("start"),
+                end=params.get("end"),
+                include_daily=include_daily,
+                include_share=include_share,
+                include_margin=include_margin,
+            )
         return update_daily(
             symbols=params.get("symbols"),
             start=params.get("start"),
             end=params.get("end"),
-            progress=progress,
         )
     if job_type == "wfo":
         return run_wfo_job(progress=progress)
@@ -179,3 +193,66 @@ def _dispatch(job_type: str, params: dict[str, Any], progress: ProgressCb) -> An
     if job_type == "signal":
         return run_signal_job(progress=progress)
     raise ValueError(f"unknown job type: {job_type}")
+
+
+def _dispatch_canonical(job_type: str, params: dict[str, Any], progress: ProgressCb) -> Any:
+    from ..etf_strategy.entrypoints import (
+        precompute_non_ohlcv,
+        run_bt,
+        run_pipeline,
+        run_signal,
+        run_vec,
+        run_wfo,
+    )
+
+    progress("canonical runtime", 5.0)
+    config = params.get("config")
+    root = params.get("root")
+    cwd = params.get("cwd")
+    if job_type == "wfo":
+        result = run_wfo(config=config, robust=bool(params.get("robust")), root=root, cwd=cwd)
+    elif job_type == "vec":
+        result = run_vec(config=config, combos=params.get("combos"), root=root, cwd=cwd)
+    elif job_type == "bt":
+        result = run_bt(
+            config=config,
+            combos=params.get("combos"),
+            topk=params.get("topk"),
+            sort_by=params.get("sort_by"),
+            root=root,
+            cwd=cwd,
+        )
+    elif job_type == "pipeline":
+        result = run_pipeline(
+            config=config,
+            top_n=int(params.get("top_n", 200)),
+            n_jobs=int(params.get("n_jobs", 16)),
+            skip_wfo=bool(params.get("skip_wfo")),
+            regime_gate=str(params.get("regime_gate", "auto")),
+            with_mining=bool(params.get("with_mining")),
+            skip_mining=bool(params.get("skip_mining")),
+            root=root,
+            cwd=cwd,
+        )
+    elif job_type == "signal":
+        required = ("candidates", "asof", "trade_date")
+        missing = [key for key in required if not params.get(key)]
+        if missing:
+            raise ValueError(f"canonical signal requires: {', '.join(missing)}")
+        result = run_signal(
+            candidates=params["candidates"],
+            asof=str(params["asof"]),
+            trade_date=str(params["trade_date"]),
+            capital=float(params.get("capital", 50_000.0)),
+            lot_size=int(params.get("lot_size", 100)),
+            outdir=params.get("outdir"),
+            shadow_config=params.get("shadow_config"),
+            root=root,
+            cwd=cwd,
+        )
+    elif job_type == "precompute":
+        result = precompute_non_ohlcv(root=root, cwd=cwd)
+    else:
+        raise ValueError(f"unknown canonical job type: {job_type}")
+    progress("canonical runtime complete", 100.0)
+    return result

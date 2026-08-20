@@ -74,6 +74,41 @@ def _slope(close: np.ndarray, w: int) -> np.ndarray:
     return out
 
 
+def _adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, w: int = 14) -> np.ndarray:
+    """Wilder-ish ADX via EMA of DX."""
+    t, n = high.shape
+    out = np.full((t, n), np.nan, dtype=np.float64)
+    up = np.diff(high, axis=0, prepend=high[:1])
+    down = -np.diff(low, axis=0, prepend=low[:1])
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    tr = np.maximum(
+        high - low,
+        np.maximum(np.abs(high - np.roll(close, 1, axis=0)), np.abs(low - np.roll(close, 1, axis=0))),
+    )
+    tr[0] = high[0] - low[0]
+    alpha = 2.0 / (w + 1.0)
+    atr = np.full((t, n), np.nan, dtype=np.float64)
+    plus = np.full((t, n), np.nan, dtype=np.float64)
+    minus = np.full((t, n), np.nan, dtype=np.float64)
+    atr[0] = tr[0]
+    plus[0] = plus_dm[0]
+    minus[0] = minus_dm[0]
+    for i in range(1, t):
+        atr[i] = alpha * tr[i] + (1.0 - alpha) * atr[i - 1]
+        plus[i] = alpha * plus_dm[i] + (1.0 - alpha) * plus[i - 1]
+        minus[i] = alpha * minus_dm[i] + (1.0 - alpha) * minus[i - 1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        plus_di = 100.0 * plus / atr
+        minus_di = 100.0 * minus / atr
+        dx = 100.0 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    out[0] = dx[0]
+    for i in range(1, t):
+        out[i] = alpha * dx[i] + (1.0 - alpha) * out[i - 1]
+    out[: w - 1] = np.nan
+    return out
+
+
 FACTOR_FUNCS = {}
 
 
@@ -108,6 +143,8 @@ def compute_factor(name: str, close: np.ndarray, high: np.ndarray, low: np.ndarr
         prev_hi = np.roll(hi, 1, axis=0)
         prev_hi[0] = np.nan
         return close / prev_hi - 1.0
+    if name == "ADX_14D":
+        return _adx(high, low, close, 14)
     if name == "SLOPE_20D":
         return _slope(close, 20)
     if name == "CALMAR_RATIO_60D":
@@ -125,14 +162,37 @@ def compute_all_factors(
     low: np.ndarray,
     vol: np.ndarray,
     signs: dict[str, int] | None = None,
+    dates: list[str] | None = None,
+    codes: list[str] | None = None,
 ) -> dict[str, np.ndarray]:
     signs = signs or {}
     out: dict[str, np.ndarray] = {}
     for name in names:
-        arr = compute_factor(name, close, high, low, vol)
+        try:
+            arr = compute_factor(name, close, high, low, vol)
+        except KeyError:
+            continue
         sign = int(signs.get(name, 1))
         out[name] = arr * sign
+
+    missing = [name for name in names if name not in out]
+    if missing and dates is not None and codes is not None:
+        from .non_ohlcv import compute_non_ohlcv_factor_map
+
+        extra = compute_non_ohlcv_factor_map(
+            missing,
+            dates=dates,
+            codes=codes,
+            close=close,
+            vol=vol,
+            signs=signs,
+        )
+        out.update(extra)
+
+    if not out:
+        raise ValueError(f"no computable factors from {names}")
     return out
+
 
 
 def combine_scores(factor_map: dict[str, np.ndarray], names: list[str]) -> np.ndarray:

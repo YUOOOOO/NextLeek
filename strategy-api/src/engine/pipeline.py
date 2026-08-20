@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from ..config import load_config, tradeable_symbols
+from ..config import load_config, sealed_strategies, tradeable_symbols
 from ..data.loader import load_panel, panel_to_close_matrix
 from .backtest import run_event_backtest, run_vectorized_backtest
 from .factors import combine_scores, compute_all_factors
@@ -70,7 +70,7 @@ def run_backtest_job(
     if progress:
         progress("load data", 5)
     close, dates, codes, fields = _load_market(cfg)
-    names = factors or list(cfg["sealed"][0]["factors"])
+    names = factors or list(sealed_strategies()[0]["factors"])
     if progress:
         progress("factors", 25)
     fmap = compute_all_factors(
@@ -80,8 +80,12 @@ def run_backtest_job(
         fields["low"],
         fields["vol"],
         cfg.get("factor_signs", {}),
+        dates=dates,
+        codes=codes,
     )
-    scores = combine_scores(fmap, names)
+    usable = [name for name in names if name in fmap]
+    scores = combine_scores(fmap, usable)
+
     regime = _regime(cfg, close, codes)
     params = _bt_params(cfg)
     if progress:
@@ -96,7 +100,8 @@ def run_backtest_job(
         regime_exposure=regime,
         **{k: params[k] for k in ("freq", "pos_size", "lookback", "commission", "delta_rank", "min_hold_days", "initial_capital")},
     )
-    result["factors"] = names
+    result["factors"] = usable
+    result["requested_factors"] = names
     result["n_symbols"] = len(codes)
     if progress:
         progress("done", 100)
@@ -145,6 +150,8 @@ def run_wfo_job(progress: ProgressCb | None = None) -> dict[str, Any]:
             fields["low"],
             fields["vol"],
             cfg.get("factor_signs", {}),
+            dates=dates,
+            codes=codes,
         )
         scores = combine_scores(fmap, c["factors"])
         met = run_vectorized_backtest(
@@ -205,6 +212,8 @@ def run_pipeline_job(progress: ProgressCb | None = None) -> dict[str, Any]:
             fields["low"],
             fields["vol"],
             cfg.get("factor_signs", {}),
+            dates=dates,
+            codes=codes,
         )
         scores = combine_scores(fmap, c["factors"])
         met = run_event_backtest(
@@ -245,8 +254,8 @@ def run_signal_job(progress: ProgressCb | None = None) -> dict[str, Any]:
     state["version"] = "v2"
     state["freq"] = params["freq"]
     state["universe_mode"] = cfg.get("universe", {}).get("mode", "A_SHARE_ONLY")
-    outputs = []
-    sealed = cfg.get("sealed", [])
+    sealed = sealed_strategies()
+    outputs: list[dict[str, Any]] = []
     for i, s in enumerate(sealed):
         if progress:
             progress(f"signal {s['id']}", 20 + 70 * (i / max(len(sealed), 1)))
@@ -258,8 +267,11 @@ def run_signal_job(progress: ProgressCb | None = None) -> dict[str, Any]:
             fields["low"],
             fields["vol"],
             cfg.get("factor_signs", {}),
+            dates=dates,
+            codes=codes,
         )
-        scores = combine_scores(fmap, names)
+        usable = [name for name in names if name in fmap]
+        scores = combine_scores(fmap, usable)
         last = scores[-1]
         out = generate_signal_for_strategy(
             s["id"],
@@ -273,7 +285,7 @@ def run_signal_job(progress: ProgressCb | None = None) -> dict[str, Any]:
             universe_mode=state["universe_mode"],
             state=state,
             strategy_name=s.get("name", s["id"]),
-            factors=names,
+            factors=usable,
         )
         outputs.append(out)
     active_strategy_ids = {s["id"] for s in sealed}

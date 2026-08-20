@@ -24,4 +24,4 @@ def dotted(code: str) -> str:
 
 def parquet_stem(code: str) -> str:
     c = normalize_code(code)
-    return f"{c}.{market_of(c)}_daily"
+    return f"{c}.{market_of(c)}_daily_ohlcv"
