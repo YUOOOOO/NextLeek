@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const isRotation = computed(() => route.path.startsWith('/rotation') || route.path === '/')
+const isStockPick = computed(() => route.path.startsWith('/stock-pick'))
 const isFactors = computed(() => route.path.startsWith('/factors'))
 </script>
 
@@ -23,6 +24,13 @@ const isFactors = computed(() => route.path.startsWith('/factors'))
             to="/rotation"
           >
             轮动
+          </router-link>
+          <router-link
+            class="menu-item"
+            :class="{ active: isStockPick }"
+            to="/stock-pick"
+          >
+            选股
           </router-link>
           <router-link
             class="menu-item"
