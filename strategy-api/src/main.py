@@ -14,6 +14,7 @@ from .config import load_config, reload_config, tradeable_symbols
 from .jobs.runner import get_job, get_result, list_jobs, submit_job
 from .sealed_publish import PRIMARY_STRATEGY_NAME, publish_primary_strategy
 from .factor_catalog import build_factor_catalog
+from .stock_strategy.auction_long import score_auction_long
 
 
 from .paths import CONFIG_PATH, JOBS_DIR, LIVE_DIR, SIGNAL_STATE_PATH, ensure_data_dirs
@@ -420,6 +421,64 @@ def universe() -> dict[str, Any]:
             "lookback_window": cfg.get("backtest", {}).get("lookback_window"),
             "hysteresis": cfg.get("backtest", {}).get("hysteresis", {}),
         },
+    }
+
+
+@app.get("/api/auction-long")
+def auction_long(date: str = "", top_n: int = 6) -> dict[str, Any]:
+    """Return the transparent auction-long ranking for a cached trade date."""
+    import re
+
+    if not re.fullmatch(r"\d{8}", date):
+        raise HTTPException(status_code=400, detail="date must be YYYYMMDD")
+    if top_n < 1 or top_n > 100:
+        raise HTTPException(status_code=400, detail="top_n must be between 1 and 100")
+
+    cache = Path(__file__).resolve().parents[1] / "results" / "_auction_long_research" / f"stk_auction_{date}.csv"
+    if not cache.is_file():
+        raise HTTPException(status_code=404, detail=f"auction cache not found for {date}")
+    try:
+        import pandas as pd
+
+        scored = score_auction_long(pd.read_csv(cache), top_n=top_n)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"auction scoring failed: {exc}") from exc
+
+    component_names = {
+        "auction_strength_score": "auction_strength",
+        "auction_amount_score": "auction_amount",
+        "volume_ratio_score": "volume_ratio",
+        "turnover_score": "turnover",
+        "momentum_score": "momentum",
+    }
+    rows = []
+    for record in scored.to_dict(orient="records"):
+        rows.append(
+            {
+                "rank": int(record["rank"]),
+                "ts_code": record["ts_code"],
+                "auction_pct": round(float(record["auction_pct"]) * 100, 4),
+                "total_score": round(float(record["total_score"]), 4),
+                "selected": bool(record["selected"]),
+                "components": {
+                    label: round(float(record[column]) * 100, 4)
+                    for column, label in component_names.items()
+                },
+            }
+        )
+    return {
+        "strategy": "auction-long-v1",
+        "date": date,
+        "top_n": top_n,
+        "universe_size": len(scored),
+        "weights": {
+            "auction_strength": 0.45,
+            "auction_amount": 0.20,
+            "volume_ratio": 0.15,
+            "turnover": 0.10,
+            "momentum": 0.10,
+        },
+        "rows": rows,
     }
 
 

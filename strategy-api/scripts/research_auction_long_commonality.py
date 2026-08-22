@@ -35,17 +35,45 @@ from data.tushare_client import TushareClient  # noqa: E402
 
 OUT = ROOT / "results" / "_auction_long_research"
 
-# 用户给的 6 个名称；「中海远控」在 stock_basic 无精确命中，暂用 中远海控 作候选并标注
-STOCKS: list[tuple[str, str]] = [
-    ("飞龙股份", "002536.SZ"),
-    ("晓程科技", "300139.SZ"),
-    ("广汇能源", "600256.SH"),
-    ("五洲交通", "600368.SH"),
-    ("经纬辉开", "300120.SZ"),
-    ("中远海控(疑似中海远控)", "601919.SH"),
-]
+# 用户提供的按信号日分组样本。中海远控暂未确认真实代码，保留原候选中远海控。
+SAMPLE_GROUPS: dict[str, list[tuple[str, str]]] = {
+    "20260819": [
+        ("恒逸石化", "000703.SZ"),
+        ("华绿生物", "300970.SZ"),
+        ("中国石油", "601857.SH"),
+        ("江苏银行", "600919.SH"),
+        ("世纪鼎利", "300050.SZ"),
+        ("杰恩股份", "300668.SZ"),
+    ],
+    "20260820": [
+        ("金房能源", "001210.SZ"),
+        ("凤凰航运", "000520.SZ"),
+        ("罗博特科", "300757.SZ"),
+        ("曼卡龙", "300945.SZ"),
+        ("金一文化", "002721.SZ"),
+        ("贵研铂业", "600459.SH"),
+    ],
+    "20260821": [
+        ("飞龙股份", "002536.SZ"),
+        ("晓程科技", "300139.SZ"),
+        ("广汇能源", "600256.SH"),
+        ("五洲交通", "600368.SH"),
+        ("经纬辉开", "300120.SZ"),
+        ("中远海控(疑似中海远控)", "601919.SH"),
+    ],
+}
+
+# 保持按代码去重，便于跨日期拉取行情；日期归属由 SAMPLE_GROUPS 决定。
+STOCKS: list[tuple[str, str]] = list(dict.fromkeys(
+    item for samples in SAMPLE_GROUPS.values() for item in samples
+))
 CODES = [c for _, c in STOCKS]
 LABEL = {c: n for n, c in STOCKS}
+SAMPLE_DATE_BY_CODE = {
+    code: trade_date
+    for trade_date, samples in SAMPLE_GROUPS.items()
+    for _, code in samples
+}
 
 # 默认排除规则（研究用，可在 summarize 调整）
 MIN_CIRC_MV_YI = 30.0  # 流通市值下限（亿元）；Tushare circ_mv 单位为万元
