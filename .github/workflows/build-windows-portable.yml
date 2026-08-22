@@ -50,7 +50,13 @@ jobs:
       - name: Inspect Tauri project
         working-directory: nextleek-v2/apps/desktop
         shell: pwsh
-        run: pnpm exec tauri info
+        run: |
+          rustc --version --verbose
+          cargo --version --verbose
+          Get-Location
+          Get-Content src-tauri\Cargo.toml
+          Get-Content src-tauri\tauri.conf.json
+          pnpm exec tauri info
 
       - name: Test and build frontend
         working-directory: nextleek-v2
@@ -66,6 +72,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG = 'true'
+          cargo build --manifest-path src-tauri\Cargo.toml --release --target x86_64-pc-windows-msvc -vv 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\cargo-build.log"
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:GITHUB_WORKSPACE\cargo-build.log"; exit $LASTEXITCODE }
           pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\tauri-build.log"
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:GITHUB_WORKSPACE\tauri-build.log"; exit $LASTEXITCODE }
 
@@ -74,7 +82,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nextleek-tauri-build-log
-          path: tauri-build.log
+          path: |
+            tauri-build.log
+            cargo-build.log
           if-no-files-found: ignore
 
       - name: Assemble portable directory
