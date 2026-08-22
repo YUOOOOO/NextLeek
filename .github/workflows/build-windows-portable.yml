@@ -1,0 +1,116 @@
+name: build-windows-portable
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64-portable:
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: nextleek-v2/pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nextleek-v2 -> nextleek-v2/target
+
+      - name: Install frontend dependencies
+        working-directory: nextleek-v2
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Test and build frontend
+        working-directory: nextleek-v2
+        shell: pwsh
+        run: |
+          pnpm test
+          pnpm typecheck
+          pnpm build
+
+      - name: Build Tauri executable
+        working-directory: nextleek-v2
+        shell: pwsh
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose --config apps/desktop/src-tauri/tauri.conf.json
+
+      - name: Assemble portable directory
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $portable = Join-Path $PWD 'artifact\NextLeek-portable-windows-x64'
+          New-Item -ItemType Directory -Force $portable | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $portable 'Data') | Out-Null
+          $exe = 'nextleek-v2\target\x86_64-pc-windows-msvc\release\nextleek-desktop.exe'
+          if (-not (Test-Path $exe)) { throw "Executable not found: $exe" }
+          Copy-Item $exe (Join-Path $portable 'NextLeek.exe')
+          @"
+          NextLeek Creator Windows x64 Portable
+
+          Extract this whole directory and run NextLeek.exe.
+          Keep the Data directory next to the executable.
+          WebView2 Evergreen Runtime is required by Tauri on Windows.
+          "@ | Set-Content -Encoding utf8 (Join-Path $portable 'README.txt')
+
+      - name: Verify PE architecture
+        shell: pwsh
+        run: |
+          $exe = 'artifact\NextLeek-portable-windows-x64\NextLeek.exe'
+          $stream = [System.IO.File]::OpenRead($exe)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            if ($reader.ReadUInt16() -ne 0x5A4D) { throw 'Not an MZ executable' }
+            $stream.Position = 0x3C
+            $peOffset = $reader.ReadInt32()
+            $stream.Position = $peOffset
+            if ($reader.ReadUInt32() -ne 0x00004550) { throw 'Invalid PE signature' }
+            if ($reader.ReadUInt16() -ne 0x8664) { throw 'Executable is not AMD64' }
+          } finally { $stream.Dispose() }
+
+      - name: Zip and verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = 'artifact\NextLeek-portable-windows-x64'
+          $zip = 'artifact\NextLeek-portable-windows-x64.zip'
+          Compress-Archive -Path $source -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  NextLeek-portable-windows-x64.zip" | Set-Content -Encoding ascii "$zip.sha256"
+          $verify = Join-Path $env:RUNNER_TEMP 'nextleek-zip-verify'
+          Expand-Archive $zip $verify -Force
+          if (-not (Test-Path "$verify\NextLeek-portable-windows-x64\NextLeek.exe")) { throw 'ZIP verification failed' }
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NextLeek-portable-windows-x64
+          path: |
+            artifact/NextLeek-portable-windows-x64.zip
+            artifact/NextLeek-portable-windows-x64.zip.sha256
+          if-no-files-found: error

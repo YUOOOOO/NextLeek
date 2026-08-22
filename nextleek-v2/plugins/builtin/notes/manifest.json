@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../schemas/plugin-manifest.schema.json",
+  "id": "com.nextleek.notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "entry": "ui/index.html",
+  "capabilities": ["notes.read", "notes.write"],
+  "permissions": ["storage:local"]
+}

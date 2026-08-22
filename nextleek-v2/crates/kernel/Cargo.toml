@@ -1,0 +1,15 @@
+[package]
+name = "nextleek-kernel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+semver.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

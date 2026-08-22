@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../schemas/plugin-manifest.schema.json",
+  "id": "com.nextleek.stocks",
+  "name": "Stocks",
+  "version": "1.0.0",
+  "entry": "ui/index.html",
+  "capabilities": ["stocks.quote.read", "stocks.watchlist"],
+  "permissions": ["network:https"]
+}

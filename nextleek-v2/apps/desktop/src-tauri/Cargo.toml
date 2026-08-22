@@ -1,0 +1,23 @@
+[package]
+name = "nextleek-desktop"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[lib]
+name = "nextleek_desktop"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+nextleek-kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tauri = { version = "2", features = [] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile.workspace = true

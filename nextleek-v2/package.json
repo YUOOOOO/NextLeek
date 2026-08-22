@@ -1,0 +1,16 @@
+{
+  "name": "nextleek-v2",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "dev": "pnpm --filter @nextleek/shell-ui dev",
+    "test": "pnpm --filter @nextleek/shell-ui test",
+    "typecheck": "pnpm --filter @nextleek/shell-ui typecheck",
+    "build": "pnpm --filter @nextleek/shell-ui build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0"
+  }
+}
