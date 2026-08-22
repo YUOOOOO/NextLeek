@@ -47,6 +47,11 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
+      - name: Inspect Tauri project
+        working-directory: nextleek-v2/apps/desktop
+        shell: pwsh
+        run: pnpm exec tauri info
+
       - name: Test and build frontend
         working-directory: nextleek-v2
         shell: pwsh
@@ -56,9 +61,9 @@ jobs:
           pnpm build
 
       - name: Build Tauri executable
-        working-directory: nextleek-v2
+        working-directory: nextleek-v2/apps/desktop
         shell: pwsh
-        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose --config apps/desktop/src-tauri/tauri.conf.json
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --verbose
 
       - name: Assemble portable directory
         shell: pwsh
@@ -67,8 +72,14 @@ jobs:
           $portable = Join-Path $PWD 'artifact\NextLeek-portable-windows-x64'
           New-Item -ItemType Directory -Force $portable | Out-Null
           New-Item -ItemType Directory -Force (Join-Path $portable 'Data') | Out-Null
-          $exe = 'nextleek-v2\target\x86_64-pc-windows-msvc\release\nextleek-desktop.exe'
-          if (-not (Test-Path $exe)) { throw "Executable not found: $exe" }
+          $candidates = @(
+            'nextleek-v2\target\x86_64-pc-windows-msvc\release\nextleek-desktop.exe',
+            'nextleek-v2\apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\nextleek-desktop.exe',
+            'nextleek-v2\target\release\nextleek-desktop.exe',
+            'nextleek-v2\apps\desktop\src-tauri\target\release\nextleek-desktop.exe'
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { throw "Executable not found. Checked: $($candidates -join ', ')" }
           Copy-Item $exe (Join-Path $portable 'NextLeek.exe')
           @"
           NextLeek Creator Windows x64 Portable
