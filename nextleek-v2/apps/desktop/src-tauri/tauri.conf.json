@@ -3,7 +3,7 @@
   "productName": "NextLeek Creator",
   "version": "0.1.0",
   "identifier": "com.nextleek.creator",
-  "build": {"beforeDevCommand":"pnpm --dir ../shell-ui dev","beforeBuildCommand":"pnpm --dir ../shell-ui build","frontendDist":"../../shell-ui/dist","devUrl":"http://localhost:5173"},
+  "build": {"beforeDevCommand":"pnpm --dir ../../shell-ui dev","beforeBuildCommand":"pnpm --dir ../../shell-ui build","frontendDist":"../../shell-ui/dist","devUrl":"http://localhost:5173"},
   "app": {"windows":[{"title":"NextLeek Creator","width":1180,"height":760}]},
   "bundle": {"active":false}
 }
