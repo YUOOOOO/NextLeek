@@ -23,7 +23,7 @@ pub struct PluginDraftInput { pub manifest: Manifest, pub files: BTreeMap<String
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePluginRequest { pub instruction: String, pub current_draft: PluginDraftInput, #[serde(default)] pub validation_errors: Vec<String> }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratePluginResponse { pub manifest: Manifest, pub files: BTreeMap<String, String>, pub explanation: String }
 
@@ -158,6 +158,7 @@ pub fn list_plugin_states(state: &AppState) -> Result<Vec<PluginState>, String> 
     for installed in state.store.list_installed().map_err(|error| error.to_string())? {
         let plugin_id = installed.manifest.id.clone();
         plugins.insert(
+            plugin_id.clone(),
             PluginState {
                 manifest: installed.manifest,
                 builtin: false,
@@ -251,6 +252,7 @@ pub fn install_market_plugin(state: &AppState, plugin: MarketPlugin) -> Result<P
     let installed = state
         .store
         .install_package(&bytes, Some(&plugin.sha256), CREATOR_VERSION)
+        .map_err(|error| error.to_string())?;
     Ok(PluginState {
         manifest: installed.manifest,
         builtin: false,
@@ -263,6 +265,7 @@ pub fn install_local_package(state: &AppState, bytes: Vec<u8>) -> Result<PluginS
     let installed = state
         .store
         .install_package(&bytes, None, CREATOR_VERSION)
+        .map_err(|error| error.to_string())?;
     Ok(PluginState {
         trusted: state.is_trusted(&installed.manifest.id)?,
         builtin: false,
