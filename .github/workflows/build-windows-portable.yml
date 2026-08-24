@@ -91,20 +91,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $targetRoot = 'nextleek-v2\target\x86_64-pc-windows-msvc\release'
-          $bundle = Join-Path $targetRoot 'bundle'
-          $exe = Join-Path $targetRoot 'nextleek-desktop.exe'
-          if (-not (Test-Path $exe)) { throw "Executable not found: $exe" }
-          if (-not (Test-Path $bundle)) { throw "Bundle directory not found: $bundle" }
+          $targetRoot = 'nextleek-v2\target'
+          $exe = Get-ChildItem $targetRoot -Recurse -File -Filter 'nextleek-desktop.exe' |
+            Where-Object { $_.FullName -match '\\release\\' } |
+            Select-Object -First 1
+          if (-not $exe) { throw "Executable not found under: $targetRoot" }
+          $bundle = Get-ChildItem $targetRoot -Recurse -Directory -Filter 'bundle' |
+            Where-Object { $_.FullName -match '\\release\\' } |
+            Select-Object -First 1
+          if (-not $bundle) { throw "Bundle directory not found under: $targetRoot" }
           $portable = 'artifact\NextLeek-portable-windows-x64'
           New-Item -ItemType Directory -Force "$portable\Data" | Out-Null
-          Copy-Item $exe "$portable\NextLeek.exe"
+          Copy-Item $exe.FullName "$portable\NextLeek.exe"
           "NextLeek Creator Windows x64 Portable`n`nExtract this directory and run NextLeek.exe.`nWebView2 Evergreen Runtime is required." | Set-Content -Encoding utf8 "$portable\README.txt"
-          $installer = Get-ChildItem "$bundle\nsis" -Filter '*.exe' | Select-Object -First 1
-          if (-not $installer) { throw 'NSIS installer not found' }
+          $installer = Get-ChildItem (Join-Path $bundle.FullName 'nsis') -Filter '*.exe' | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer not found under: $($bundle.FullName)" }
           Copy-Item $installer.FullName 'artifact\NextLeek-Creator-windows-x64-setup.exe'
-          $updater = Get-ChildItem $bundle -Recurse -File | Where-Object { $_.Name -in @('latest.json') -or $_.Extension -eq '.sig' }
-          if (-not $updater) { throw 'Updater artifacts not found' }
+          $updater = Get-ChildItem $bundle.FullName -Recurse -File | Where-Object { $_.Name -in @('latest.json') -or $_.Extension -eq '.sig' }
+          if (-not $updater) { throw "Updater artifacts not found under: $($bundle.FullName)" }
           $updater | ForEach-Object { Copy-Item $_.FullName (Join-Path 'artifact' $_.Name) }
           $source = 'artifact\NextLeek-portable-windows-x64'
           $zip = 'artifact\NextLeek-portable-windows-x64.zip'
