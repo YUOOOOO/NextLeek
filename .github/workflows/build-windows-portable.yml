@@ -85,11 +85,18 @@ jobs:
       - name: Inspect built artifacts
         shell: pwsh
         run: |
-          Get-ChildItem 'nextleek-v2\target' -Recurse -File |
-            Where-Object { $_.Extension -in @('.exe', '.json', '.sig') } |
-            Select-Object FullName, Length |
-            Format-Table -AutoSize |
-            Out-File -Encoding utf8 artifact-inventory.txt
+          $targetRoots = @(
+            'nextleek-v2\target'
+            'nextleek-v2\apps\desktop\src-tauri\target'
+          ) | Where-Object { Test-Path $_ }
+          "Target roots: $($targetRoots -join ', ')" | Set-Content -Encoding utf8 artifact-inventory.txt
+          if ($targetRoots) {
+            Get-ChildItem $targetRoots -Recurse -File |
+              Where-Object { $_.Extension -in @('.exe', '.json', '.sig') } |
+              Select-Object FullName, Length |
+              Format-Table -AutoSize |
+              Out-File -Append -Encoding utf8 artifact-inventory.txt
+          }
       - name: Upload artifact inventory
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,6 +109,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nextleek-tauri-build-log
+          path: tauri-build.log
+          if-no-files-found: warn
       - name: Assemble release artifacts
         shell: pwsh
         run: |
