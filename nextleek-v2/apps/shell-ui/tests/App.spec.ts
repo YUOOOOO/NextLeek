@@ -91,8 +91,7 @@ describe('desktop shell', () => {
     await wrapper.get('[data-test="save-market-settings"]').trigger('click')
     expect(saveMarket).toHaveBeenCalledWith('https://example.com/index.json')
   })
-})
-  it('keeps generated content pending until explicit apply', async () => {
+  it('applies generated content directly to the editor', async () => {
     const api = createApi()
     vi.spyOn(api, 'generatePlugin').mockResolvedValue({
       manifest: {...dashboard, id:'com.example.generated', name:'Generated'},
@@ -104,8 +103,6 @@ describe('desktop shell', () => {
     await wrapper.find('aside.ai-panel textarea').setValue('生成一个插件')
     await wrapper.get('[data-test="ai-generate"]').trigger('click')
     await flush()
-    expect(wrapper.get('textarea').element.value).toContain('Hello NextLeek')
-    await wrapper.get('[data-test="ai-apply"]').trigger('click')
     expect(wrapper.get('textarea').element.value).toContain('Generated')
   })
 
@@ -120,3 +117,4 @@ describe('desktop shell', () => {
     expect(wrapper.get('textarea').element.value).toContain('Hello NextLeek')
     expect(wrapper.text()).toContain('AI_REQUEST_FAILED')
   })
+})
