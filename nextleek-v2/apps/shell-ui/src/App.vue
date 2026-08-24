@@ -61,7 +61,16 @@ async function closeRuntime(){ if(runtime.value)await props.api.closePlugin(runt
 async function minimizeWindow(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().minimize() }
 async function toggleMaximize(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().toggleMaximize() }
 async function closeWindow(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().close() }
-async function startWindowDrag(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().startDragging() }
+function runtimeAsset(path:string, runtimeLaunch:NonNullable<typeof runtime.value>){ return runtimeLaunch.textAssets[path] ?? '' }
+function runtimeSrcdoc(runtimeLaunch:NonNullable<typeof runtime.value>){
+  let html=runtimeLaunch.entryHtml
+  const css=runtimeAsset('ui/style.css',runtimeLaunch)
+  const js=runtimeAsset('ui/main.js',runtimeLaunch)
+  const bridge=`\x3cscript>window.nextleek={runtimeSummary:()=>Promise.resolve(${JSON.stringify({pluginCount:plugins.value.length,mode:'dual-trust',version:settings.value?.version ?? '0.1.0'})})}\x3c/script>`
+  html=html.replace(/\x3clink[^>]+href=["']style\.css["'][^>]*>/i,`\x3cstyle>${css}\x3c/style>`)
+  html=html.replace(/\x3cscript[^>]+src=["']main\.js["'][^>]*>\x3c\/script>/i,`${bridge}\x3cscript>${js}\x3c/script>`)
+  return html
+}
 async function checkForUpdates(){
   if(!('__TAURI_INTERNALS__' in window)) return
   try {
@@ -84,19 +93,21 @@ watch(current,page=>{if(page==='插件市场'&&!market.value)loadMarket(); if(pa
 </script>
 <template>
 <div class="app-shell">
-<header class="titlebar" data-tauri-drag-region @dblclick="toggleMaximize">
-  <button class="titlebar-brand" data-tauri-drag-region @mousedown="startWindowDrag">NEXTLEEK <span>CREATOR</span></button>
-  <strong class="titlebar-title" data-tauri-drag-region>{{pageTitle}}</strong>
-  <div class="window-controls">
-    <button aria-label="设置" data-test="settings" @click="selectPage('设置')">⚙</button>
-    <button aria-label="最小化" @click="minimizeWindow">—</button>
-    <button aria-label="最大化" @click="toggleMaximize">□</button>
-    <button class="close-control" aria-label="关闭" @click="closeWindow">×</button>
+<header class="titlebar">
+  <div class="titlebar-drag" data-tauri-drag-region @dblclick="toggleMaximize">
+    <button class="titlebar-brand" tabindex="-1">NEXTLEEK <span>CREATOR</span></button>
+    <strong class="titlebar-title">{{pageTitle}}</strong>
+  </div>
+  <div class="window-controls" @dblclick.stop>
+    <button aria-label="设置" data-test="settings" @click.stop="selectPage('设置')">⚙</button>
+    <button aria-label="最小化" @click.stop="minimizeWindow">−</button>
+    <button aria-label="最大化" @click.stop="toggleMaximize">□</button>
+    <button class="close-control" aria-label="关闭" @click.stop="closeWindow">×</button>
   </div>
 </header>
 <div v-if="availableUpdate" class="update-banner" role="status"><span>发现新版本 v{{availableUpdate.version}}</span><button class="btn primary" @click="installUpdate">立即更新</button></div>
-<div class="shell"><aside><div class="brand">NEXTLEEK <span>CREATOR</span></div><nav aria-label="主导航"><button v-for="page in pages" :key="page" :data-page="page" :class="{active:current===page&&!runtime}" @click="selectPage(page)">{{page}}</button><button v-for="plugin in pluginNavItems" :key="plugin.manifest.id" class="plugin-nav" :data-page="plugin.manifest.name" :class="{active:runtime?.manifest.id===plugin.manifest.id}" @click="openPluginFromNavigation(plugin.manifest.id)">{{plugin.manifest.navigation?.label||plugin.manifest.name}}</button></nav><div class="sidebar-foot"><span data-test="version">v0.1.0</span></div></aside><main>
-<section v-if="runtime" class="runtime-view"><div class="runtime-frame" :data-trusted="runtime.trusted"><iframe :title="runtime.manifest.name" sandbox="allow-scripts" :srcdoc="runtime.entryHtml" /></div></section>
+<div class="shell"><aside><div class="brand">NEXTLEEK <span>CREATOR</span></div><nav aria-label="主导航"><button v-for="page in pages" :key="page" :data-page="page" :class="{active:current===page&&!runtime}" @click="selectPage(page)">{{page}}</button><button v-for="plugin in pluginNavItems" :key="plugin.manifest.id" class="plugin-nav" :data-page="plugin.manifest.name" :class="{active:runtime?.manifest.id===plugin.manifest.id}" @click="openPluginFromNavigation(plugin.manifest.id)">{{plugin.manifest.navigation?.label||plugin.manifest.name}}</button></nav><div class="sidebar-foot"><span data-test="version">v{{settings?.version||'0.1.0'}}</span><a class="github-link" href="https://github.com/YUOOOOO/NextLeek" target="_blank" rel="noopener" aria-label="打开 GitHub 项目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.24c0 4.52 2.87 8.35 6.84 9.7.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.22-3.37-1.22-.46-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.05 1.53 1.05.9 1.58 2.35 1.12 2.93.86.09-.67.35-1.12.64-1.38-2.22-.26-4.56-1.15-4.56-5.08 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.76 1.05a9.2 9.2 0 0 1 5.02 0c1.92-1.33 2.76-1.05 2.76-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.57 5.07.36.32.68.94.68 1.9v2.81c0 .27.18.59.69.49A10.25 10.25 0 0 0 22 12.24C22 6.58 17.52 2 12 2Z"/></svg></a></div></aside><main>
+<section v-if="runtime" class="runtime-view"><div class="runtime-frame" :data-trusted="runtime.trusted"><iframe :title="runtime.manifest.name" sandbox="allow-scripts" :srcdoc="runtimeSrcdoc(runtime)" /></div></section>
 <section v-else-if="current==='首页'" class="hero"><p class="eyebrow">RUST MICROKERNEL / TAURI 2</p><h1>欢迎使用 NextLeek Creator</h1><p>创建、验证并运行你的 JavaScript 插件。</p><div class="metrics"><article><b>{{plugins.length}}</b><span>已安装插件</span></article><article><b>0</b><span>原生 Sidecar</span></article><article><b>100%</b><span>声明式</span></article></div></section>
 <section v-else-if="current==='创造模式'" class="page-section"><p class="eyebrow">ISOLATED WORKSPACE</p><h1>创造模式</h1><div class="creator-layout"><article class="form-grid"><label>插件 ID<input v-model="draft.id"></label><label>名称<input v-model="draft.name"></label><label>版本<input v-model="draft.version"></label><label>作者<input v-model="draft.author"></label><label class="wide">描述<input v-model="draft.description"></label><label class="wide">HTML<textarea v-model="editors.html"></textarea></label><label class="wide">JavaScript<textarea v-model="editors.js"></textarea></label><label class="wide">CSS<textarea v-model="editors.css"></textarea></label><div class="button-row"><button data-test="create" class="btn primary" @click="create">保存并验证</button><button data-test="package" class="btn" @click="pack">生成 .nlplugin</button></div><strong v-if="status" class="success">{{status}}</strong><p v-if="error" class="error">{{error}}</p><pre v-if="packageArtifact" class="package-result">文件：{{packageArtifact.path}}
 SHA-256：{{packageArtifact.sha256}}
