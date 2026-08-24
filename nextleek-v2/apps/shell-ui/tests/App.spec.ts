@@ -14,6 +14,7 @@ const remote: MarketPlugin = {
 }
 
 function createApi(): KernelApi {
+  const ai = { enabled:true, baseUrl:'https://api.openai.com/v1', apiKey:'', model:'gpt-4.1-mini', temperature:0.2 }
   return {
     runtimeSummary: async () => ({ pluginCount:1, mode:'dual-trust', version:'0.1.0' }),
     listPlugins: async () => [{ manifest:notes, builtin:true, trusted:true }],
@@ -25,12 +26,14 @@ function createApi(): KernelApi {
     installMarketPlugin: async plugin => ({ manifest:{...plugin, entry:'ui/index.html', capabilities:[]}, builtin:false, trusted:false }),
     installLocalPackage: async () => ({ manifest:notes, builtin:false, trusted:false }),
     uninstallPlugin: async () => undefined,
-    readSettings: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[]},version:'0.1.0',dataDir:'Data' }),
-    setMarketUrl: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[]},version:'0.1.0',dataDir:'Data' }),
-    setPluginTrust: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[]},version:'0.1.0',dataDir:'Data' }),
+    readSettings: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
+    setMarketUrl: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
+    setAiSettings: async value => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai:value},version:'0.1.0',dataDir:'Data' }),
+    setPluginTrust: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
     launchPlugin: async () => ({ token:'token-1', manifest:notes, entryHtml:'<main><h1>Notes runtime</h1></main>', textAssets:{}, trusted:true }),
     pluginSdkCall: async () => null,
-    closePlugin: async () => undefined
+    closePlugin: async () => undefined,
+    generatePlugin: async request => ({ manifest:request.currentDraft.manifest, files:request.currentDraft.files, explanation:'generated' })
   }
 }
 
@@ -77,3 +80,31 @@ describe('desktop shell', () => {
     expect(uninstall).toHaveBeenCalledWith('com.example.clock')
   })
 })
+  it('keeps generated content pending until explicit apply', async () => {
+    const api = createApi()
+    vi.spyOn(api, 'generatePlugin').mockResolvedValue({
+      manifest: {...notes, id:'com.example.generated', name:'Generated'},
+      files: {'ui/index.html':'<main>Generated</main>', 'ui/main.js':'console.log(1)', 'ui/style.css':'main{color:red}'},
+      explanation:'generated safely'
+    })
+    const wrapper = mount(App, {props:{api}})
+    await wrapper.get('[data-page="创造模式"]').trigger('click')
+    await wrapper.find('aside.ai-panel textarea').setValue('生成一个插件')
+    await wrapper.get('[data-test="ai-generate"]').trigger('click')
+    await flush()
+    expect(wrapper.get('textarea').element.value).toContain('Hello NextLeek')
+    await wrapper.get('[data-test="ai-apply"]').trigger('click')
+    expect(wrapper.get('textarea').element.value).toContain('Generated')
+  })
+
+  it('preserves the editor when AI generation fails', async () => {
+    const api = createApi()
+    vi.spyOn(api, 'generatePlugin').mockRejectedValue(new Error('AI_REQUEST_FAILED'))
+    const wrapper = mount(App, {props:{api}})
+    await wrapper.get('[data-page="创造模式"]').trigger('click')
+    await wrapper.find('aside.ai-panel textarea').setValue('生成一个插件')
+    await wrapper.get('[data-test="ai-generate"]').trigger('click')
+    await flush()
+    expect(wrapper.get('textarea').element.value).toContain('Hello NextLeek')
+    expect(wrapper.text()).toContain('AI_REQUEST_FAILED')
+  })

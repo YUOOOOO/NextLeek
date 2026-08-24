@@ -16,6 +16,16 @@
     "icon":{"type":"string","pattern":"^assets/"},
     "minCreatorVersion":{"type":"string"},
     "capabilities":{"type":"array","items":{"type":"string"},"uniqueItems":true},
-    "permissions":{"type":"array","items":{"enum":["storage:local","network:https","filesystem:trusted"]},"uniqueItems":true}
+    "permissions":{"type":"array","items":{"enum":["storage:local","network:https","filesystem:trusted"]},"uniqueItems":true},
+    "navigation":{
+      "type":"object",
+      "additionalProperties":false,
+      "properties":{
+        "enabled":{"type":"boolean","default":false},
+        "label":{"type":"string","minLength":1},
+        "icon":{"type":"string","pattern":"^assets/"},
+        "order":{"type":"integer","default":100}
+      }
+    }
   }
 }

@@ -143,3 +143,13 @@ curl -X POST http://localhost:3000/api/strategy/jobs -H "Content-Type: applicati
 - AI 本轮 **未** 接策略 tools；数值以 strategy-api 为准。
 - 大文件与 `_tmp_etf_rot` 已 gitignore。
 - Tushare 上游偶发断连时 `update-data` 会重试；若全部来源失败，任务直接失败，不会生成旧数据冒充最新信号。
+
+---
+
+## NextLeek Creator
+
+桌面插件 Creator 位于 [`nextleek-v2/`](nextleek-v2/)，包含 Rust 微内核、Tauri 2 宿主和 Vue 3 Creator 界面。
+
+当前支持插件创建、Manifest 校验、`.nlplugin` 打包、市场安装、插件运行、插件侧边栏导航和来源标识。Windows x64 便携版由 [`.github/workflows/build-windows-portable.yml`](.github/workflows/build-windows-portable.yml) 构建；手动触发或推送 `v*` 标签即可运行。
+
+详细开发、Manifest、市场索引和 Actions 说明见 [`nextleek-v2/README.md`](nextleek-v2/README.md)。

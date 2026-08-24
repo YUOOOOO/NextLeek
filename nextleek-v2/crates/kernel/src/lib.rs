@@ -12,6 +12,26 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub order: i32,
+}
+
+impl Default for NavigationConfig {
+    fn default() -> Self {
+        Self { enabled: false, label: None, icon: None, order: 100 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -25,6 +45,8 @@ pub struct Manifest {
     pub author: Option<String>,
     #[serde(default)]
     pub icon: Option<String>,
+    #[serde(default)]
+    pub navigation: NavigationConfig,
     pub min_creator_version: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -44,6 +66,8 @@ pub enum ManifestError {
     InvalidCreatorVersion,
     #[error("unsafe plugin resource path")]
     UnsafeEntry,
+    #[error("invalid navigation configuration")]
+    InvalidNavigation,
     #[error("duplicate capability")]
     DuplicateCapability,
     #[error("permission is not allowed")]
@@ -77,6 +101,16 @@ impl Manifest {
             !safe_resource_path(icon) || !icon.starts_with("assets/")
         }) {
             return Err(ManifestError::UnsafeEntry);
+        }
+        if self.navigation.enabled {
+            if self.navigation.label.as_deref().is_some_and(str::is_empty) {
+                return Err(ManifestError::InvalidNavigation);
+            }
+            if self.navigation.icon.as_deref().is_some_and(|icon| {
+                !safe_resource_path(icon) || !icon.starts_with("assets/")
+            }) {
+                return Err(ManifestError::UnsafeEntry);
+            }
         }
         let unique: BTreeSet<_> = self.capabilities.iter().collect();
         if unique.len() != self.capabilities.len() {
