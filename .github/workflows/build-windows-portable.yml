@@ -82,6 +82,21 @@ jobs:
           pnpm exec tauri build --target x86_64-pc-windows-msvc --verbose 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\tauri-build.log"
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:GITHUB_WORKSPACE\tauri-build.log"; exit $LASTEXITCODE }
 
+      - name: Inspect built artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem 'nextleek-v2\target' -Recurse -File |
+            Where-Object { $_.Extension -in @('.exe', '.json', '.sig') } |
+            Select-Object FullName, Length |
+            Format-Table -AutoSize |
+            Out-File -Encoding utf8 artifact-inventory.txt
+      - name: Upload artifact inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextleek-artifact-inventory
+          path: artifact-inventory.txt
+          if-no-files-found: warn
       - name: Upload Tauri build log on failure
         if: failure()
         uses: actions/upload-artifact@v4
