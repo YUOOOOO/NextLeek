@@ -25,7 +25,6 @@ fn default_enabled() -> bool { true }
 fn default_base_url() -> String { "https://api.openai.com/v1".into() }
 fn default_model() -> String { "gpt-4.1-mini".into() }
 fn default_temperature() -> f32 { 0.2 }
-}
 
 impl Default for AiSettings {
     fn default() -> Self {
