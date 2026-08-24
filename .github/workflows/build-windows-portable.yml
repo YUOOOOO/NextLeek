@@ -106,21 +106,25 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $targetRoot = 'nextleek-v2\target'
-          $exe = Get-ChildItem $targetRoot -Recurse -File -Filter '*.exe' |
+          $targetRoots = @(
+            'nextleek-v2\target'
+            'nextleek-v2\apps\desktop\src-tauri\target'
+          ) | Where-Object { Test-Path $_ }
+          if (-not $targetRoots) { throw 'No Tauri target directory found' }
+          $exe = Get-ChildItem $targetRoots -Recurse -File -Filter '*.exe' |
             Where-Object { $_.FullName -notmatch '\\bundle\\' } |
             Sort-Object Length -Descending |
             Select-Object -First 1
-          if (-not $exe) { throw "Portable executable not found under: $targetRoot" }
-          $latest = Get-ChildItem $targetRoot -Recurse -File -Filter 'latest.json' | Select-Object -First 1
-          if (-not $latest) { throw "latest.json not found under: $targetRoot" }
+          if (-not $exe) { throw 'Portable executable not found in Tauri target directories' }
+          $latest = Get-ChildItem $targetRoots -Recurse -File -Filter 'latest.json' | Select-Object -First 1
+          if (-not $latest) { throw 'latest.json not found in Tauri target directories' }
           $bundle = $latest.Directory
           $portable = 'artifact\NextLeek-portable-windows-x64'
           New-Item -ItemType Directory -Force "$portable\Data" | Out-Null
           Copy-Item $exe.FullName "$portable\NextLeek.exe"
           "NextLeek Creator Windows x64 Portable`n`nExtract this directory and run NextLeek.exe.`nWebView2 Evergreen Runtime is required." | Set-Content -Encoding utf8 "$portable\README.txt"
-          $installer = Get-ChildItem $targetRoot -Recurse -File -Filter '*setup.exe' | Select-Object -First 1
-          if (-not $installer) { throw "NSIS installer not found under: $targetRoot" }
+          $installer = Get-ChildItem $targetRoots -Recurse -File -Filter '*setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found in Tauri target directories' }
           Copy-Item $installer.FullName 'artifact\NextLeek-Creator-windows-x64-setup.exe'
           $updater = Get-ChildItem $bundle.FullName -Recurse -File | Where-Object { $_.Name -eq 'latest.json' -or $_.Extension -eq '.sig' }
           $updater | ForEach-Object { Copy-Item $_.FullName (Join-Path 'artifact' $_.Name) }
