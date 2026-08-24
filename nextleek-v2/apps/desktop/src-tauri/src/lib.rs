@@ -514,43 +514,15 @@ fn close_plugin_command(state: State<'_, AppState>, token: String) -> Result<(),
 }
 
 fn builtin_plugins() -> BTreeMap<String, BuiltinPlugin> {
-    let notes = builtin_plugin(
-        include_str!("../../../../plugins/builtin/notes/manifest.json"),
+    let dashboard = builtin_plugin(
+        include_str!("../../../../plugins/builtin/dashboard/manifest.json"),
         [
-            (
-                "ui/index.html",
-                include_bytes!("../../../../plugins/builtin/notes/ui/index.html").as_slice(),
-            ),
-            (
-                "ui/main.js",
-                include_bytes!("../../../../plugins/builtin/notes/ui/main.js").as_slice(),
-            ),
-            (
-                "ui/style.css",
-                include_bytes!("../../../../plugins/builtin/notes/ui/style.css").as_slice(),
-            ),
+            ("ui/index.html", include_bytes!("../../../../plugins/builtin/dashboard/ui/index.html").as_slice()),
+            ("ui/main.js", include_bytes!("../../../../plugins/builtin/dashboard/ui/main.js").as_slice()),
+            ("ui/style.css", include_bytes!("../../../../plugins/builtin/dashboard/ui/style.css").as_slice()),
         ],
     );
-    let stocks = builtin_plugin(
-        include_str!("../../../../plugins/builtin/stocks/manifest.json"),
-        [
-            (
-                "ui/index.html",
-                include_bytes!("../../../../plugins/builtin/stocks/ui/index.html").as_slice(),
-            ),
-            (
-                "ui/main.js",
-                include_bytes!("../../../../plugins/builtin/stocks/ui/main.js").as_slice(),
-            ),
-            (
-                "ui/style.css",
-                include_bytes!("../../../../plugins/builtin/stocks/ui/style.css").as_slice(),
-            ),
-        ],
-    );
-    [(notes.manifest.id.clone(), notes), (stocks.manifest.id.clone(), stocks)]
-        .into_iter()
-        .collect()
+    [(dashboard.manifest.id.clone(), dashboard)].into_iter().collect()
 }
 
 fn builtin_plugin<const N: usize>(

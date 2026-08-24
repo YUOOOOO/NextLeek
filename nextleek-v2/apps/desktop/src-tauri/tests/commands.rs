@@ -7,26 +7,23 @@ use serde_json::json;
 use std::fs;
 
 fn builtins() -> Vec<Manifest> {
-    [
-        r#"{"id":"com.nextleek.notes","name":"Notes","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":["notes.read"],"permissions":["storage:local"]}"#,
-        r#"{"id":"com.nextleek.stocks","name":"Stocks","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":["stocks.quote.read"],"permissions":["network:https"]}"#,
-    ]
-    .iter()
-    .map(|json| Manifest::parse(json).unwrap())
-    .collect()
+    [r#"{"id":"com.nextleek.dashboard","name":"仪表盘","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":[],"permissions":[],"navigation":{"enabled":true,"label":"仪表盘","order":10}}"#]
+        .iter()
+        .map(|json| Manifest::parse(json).unwrap())
+        .collect()
 }
 
 #[test]
 fn commands_expose_builtins_and_real_creator_package() {
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(root.path(), builtins()).unwrap();
-    assert_eq!(runtime_summary(&state).unwrap().plugin_count, 2);
-    assert_eq!(list_plugins(&state).unwrap().len(), 2);
+    assert_eq!(runtime_summary(&state).unwrap().plugin_count, 1);
+    assert_eq!(list_plugins(&state).unwrap().len(), 1);
 
-    create_draft(&state, "my-notes".into(), builtins()[0].clone()).unwrap();
-    assert!(validate_draft(&state, "my-notes".into()).unwrap().valid);
-    let package = package_draft(&state, "my-notes".into()).unwrap();
-    assert_eq!(package.plugin_id, "com.nextleek.notes");
+    create_draft(&state, "my-dashboard".into(), builtins()[0].clone()).unwrap();
+    assert!(validate_draft(&state, "my-dashboard".into()).unwrap().valid);
+    let package = package_draft(&state, "my-dashboard".into()).unwrap();
+    assert_eq!(package.plugin_id, "com.nextleek.dashboard");
     assert!(package.path.is_file());
     assert_eq!(package.sha256.len(), 64);
 }
@@ -39,27 +36,20 @@ fn command_bridge_rejects_traversal() {
 }
 
 #[test]
-fn builtin_plugin_launches_offline_and_closed_token_stops_working() {
+fn builtin_dashboard_launches_offline_and_closed_token_stops_working() {
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(root.path(), builtins()).unwrap();
-    let launch = launch_plugin(&state, "com.nextleek.notes".into()).unwrap();
+    let launch = launch_plugin(&state, "com.nextleek.dashboard".into()).unwrap();
     assert!(launch.trusted);
-    assert!(launch.entry_html.contains("Notes"));
-    assert_ne!(launch.token, launch_plugin(&state, "com.nextleek.notes".into()).unwrap().token);
+    assert!(launch.entry_html.contains("仪表盘"));
+    assert_ne!(launch.token, launch_plugin(&state, "com.nextleek.dashboard".into()).unwrap().token);
 
-    plugin_sdk_call(
-        &state,
-        launch.token.clone(),
-        "storage.set".into(),
-        json!({"key":"draft","value":"hello"}),
-    )
-    .unwrap();
     close_plugin(&state, launch.token.clone()).unwrap();
     assert!(plugin_sdk_call(
         &state,
         launch.token,
-        "storage.get".into(),
-        json!({"key":"draft"}),
+        "runtime.summary".into(),
+        json!({}),
     )
     .is_err());
 }

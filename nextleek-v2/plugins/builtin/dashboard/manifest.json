@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../schemas/plugin-manifest.schema.json",
+  "id": "com.nextleek.dashboard",
+  "name": "仪表盘",
+  "version": "1.0.0",
+  "entry": "ui/index.html",
+  "description": "NextLeek Creator 基础运行仪表盘",
+  "author": "NextLeek",
+  "minCreatorVersion": "0.1.0",
+  "capabilities": [],
+  "permissions": [],
+  "navigation": {
+    "enabled": true,
+    "label": "仪表盘",
+    "order": 10
+  }
+}

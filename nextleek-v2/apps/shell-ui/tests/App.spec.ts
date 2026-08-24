@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import App from '../src/App.vue'
 import type { KernelApi, MarketPlugin, PluginManifest } from '../src/api'
 
-const notes: PluginManifest = {
-  id:'com.nextleek.notes', name:'Notes', version:'1.0.0', entry:'ui/index.html',
-  description:'安全保存本地笔记', author:'NextLeek', minCreatorVersion:'0.1.0',
-  capabilities:['notes.read'], permissions:['storage:local']
+const dashboard: PluginManifest = {
+  id:'com.nextleek.dashboard', name:'仪表盘', version:'1.0.0', entry:'ui/index.html',
+  description:'基础运行仪表盘', author:'NextLeek', minCreatorVersion:'0.1.0',
+  capabilities:[], permissions:[], navigation:{enabled:true,label:'仪表盘',order:10}
 }
 const remote: MarketPlugin = {
   id:'com.example.clock', name:'Clock', version:'1.0.0', description:'Clock plugin', author:'Community',
@@ -17,20 +17,20 @@ function createApi(): KernelApi {
   const ai = { enabled:true, baseUrl:'https://api.openai.com/v1', apiKey:'', model:'gpt-4.1-mini', temperature:0.2 }
   return {
     runtimeSummary: async () => ({ pluginCount:1, mode:'dual-trust', version:'0.1.0' }),
-    listPlugins: async () => [{ manifest:notes, builtin:true, trusted:true }],
+    listPlugins: async () => [{ manifest:dashboard, builtin:true, trusted:true }],
     createDraft: async () => undefined,
     writeDraftFile: async () => undefined,
     validateDraft: async () => ({ valid:true, errors:[] }),
     packageDraft: async () => ({ pluginId:'com.example.created', version:'0.1.0', path:'Data/creator-packages/demo.nlplugin', sha256:'b'.repeat(64), size:420, files:['manifest.json','ui/index.html','ui/main.js','ui/style.css'] }),
     refreshMarket: async () => ({ schemaVersion:1, updatedAt:'2026-08-24T00:00:00Z', plugins:[remote] }),
     installMarketPlugin: async plugin => ({ manifest:{...plugin, entry:'ui/index.html', capabilities:[]}, builtin:false, trusted:false }),
-    installLocalPackage: async () => ({ manifest:notes, builtin:false, trusted:false }),
+    installLocalPackage: async () => ({ manifest:dashboard, builtin:false, trusted:false }),
     uninstallPlugin: async () => undefined,
     readSettings: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
     setMarketUrl: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
     setAiSettings: async value => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai:value},version:'0.1.0',dataDir:'Data' }),
     setPluginTrust: async () => ({ settings:{marketUrl:'https://example.com/index.json',trustedPlugins:[],ai},version:'0.1.0',dataDir:'Data' }),
-    launchPlugin: async () => ({ token:'token-1', manifest:notes, entryHtml:'<main><h1>Notes runtime</h1></main>', textAssets:{}, trusted:true }),
+    launchPlugin: async () => ({ token:'token-1', manifest:dashboard, entryHtml:'<main><h1>仪表盘</h1></main>', textAssets:{}, trusted:true }),
     pluginSdkCall: async () => null,
     closePlugin: async () => undefined,
     generatePlugin: async request => ({ manifest:request.currentDraft.manifest, files:request.currentDraft.files, explanation:'generated' })
@@ -40,10 +40,10 @@ function createApi(): KernelApi {
 async function flush(){ await new Promise(resolve => setTimeout(resolve,0)) }
 
 describe('desktop shell', () => {
-  it('shows only the approved navigation and footer controls', async () => {
+  it('shows core navigation and installed plugin menu', async () => {
     const wrapper = mount(App, { props:{ api:createApi() } })
     await flush()
-    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['首页','创造模式','插件市场'])
+    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['首页','创造模式','插件市场','设置','仪表盘'])
     expect(wrapper.get('[data-test="version"]').text()).toContain('0.1.0')
     expect(wrapper.get('[data-test="settings"]').text()).toContain('设置')
   })
@@ -79,11 +79,23 @@ describe('desktop shell', () => {
     await wrapper.get('[data-test="uninstall-com.example.clock"]').trigger('click')
     expect(uninstall).toHaveBeenCalledWith('com.example.clock')
   })
+
+  it('opens settings as an in-page view and saves marketplace settings', async () => {
+    const api = createApi()
+    const saveMarket = vi.spyOn(api, 'setMarketUrl')
+    const wrapper = mount(App, {props:{api}})
+    await wrapper.get('[data-test="settings"]').trigger('click')
+    await flush()
+    expect(wrapper.find('.modal').exists()).toBe(false)
+    expect(wrapper.text()).toContain('CREATOR CONFIGURATION')
+    await wrapper.get('[data-test="save-market-settings"]').trigger('click')
+    expect(saveMarket).toHaveBeenCalledWith('https://example.com/index.json')
+  })
 })
   it('keeps generated content pending until explicit apply', async () => {
     const api = createApi()
     vi.spyOn(api, 'generatePlugin').mockResolvedValue({
-      manifest: {...notes, id:'com.example.generated', name:'Generated'},
+      manifest: {...dashboard, id:'com.example.generated', name:'Generated'},
       files: {'ui/index.html':'<main>Generated</main>', 'ui/main.js':'console.log(1)', 'ui/style.css':'main{color:red}'},
       explanation:'generated safely'
     })
