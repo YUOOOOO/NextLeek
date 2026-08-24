@@ -91,8 +91,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $bundle = 'nextleek-v2\target\x86_64-pc-windows-msvc\release\bundle'
-          $exe = 'nextleek-v2\target\x86_64-pc-windows-msvc\release\nextleek-desktop.exe'
+          $targetRoot = 'nextleek-v2\target\x86_64-pc-windows-msvc\release'
+          $bundle = Join-Path $targetRoot 'bundle'
+          $exe = Join-Path $targetRoot 'nextleek-desktop.exe'
           if (-not (Test-Path $exe)) { throw "Executable not found: $exe" }
           if (-not (Test-Path $bundle)) { throw "Bundle directory not found: $bundle" }
           $portable = 'artifact\NextLeek-portable-windows-x64'
