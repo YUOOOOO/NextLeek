@@ -127,6 +127,12 @@ impl Manifest {
         Ok(())
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationReport {
+    pub valid: bool,
+    pub errors: Vec<String>,
+}
 
 fn safe_resource_path(value: &str) -> bool {
     let path = Path::new(value);
