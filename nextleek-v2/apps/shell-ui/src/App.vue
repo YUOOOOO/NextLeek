@@ -20,6 +20,7 @@ const aiMessages = ref<AiMessage[]>([])
 const aiLoading = ref(false)
 const lastValidationErrors = ref<string[]>([])
 const settings = ref<SettingsView | null>(null)
+const availableUpdate = ref<{version:string; downloadAndInstall:()=>Promise<void>} | null>(null)
 const aiSettings = ref<AiSettings>({enabled:true,baseUrl:'https://api.openai.com/v1',apiKey:'',model:'gpt-4.1-mini',temperature:0.2})
 const draft: PluginManifest = { id:'com.example.created', name:'我的插件', version:'0.1.0', entry:'ui/index.html', description:'由 NextLeek Creator 创建的插件', author:'Me', minCreatorVersion:'0.1.0', capabilities:[], permissions:[], navigation:{enabled:false,order:100} }
 const editors = ref({html:'<main><h1>Hello NextLeek</h1></main>',js:'',css:'body{font-family:system-ui;padding:32px}'})
@@ -61,8 +62,24 @@ async function minimizeWindow(){ const { getCurrentWindow }=await import('@tauri
 async function toggleMaximize(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().toggleMaximize() }
 async function closeWindow(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().close() }
 async function startWindowDrag(){ const { getCurrentWindow }=await import('@tauri-apps/api/window'); await getCurrentWindow().startDragging() }
+async function checkForUpdates(){
+  if(!('__TAURI_INTERNALS__' in window)) return
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    availableUpdate.value = await check()
+  } catch { availableUpdate.value = null }
+}
+async function installUpdate(){
+  if(!availableUpdate.value) return
+  try {
+    status.value='正在下载更新…'
+    await availableUpdate.value.downloadAndInstall()
+    const { relaunch } = await import('@tauri-apps/plugin-process')
+    await relaunch()
+  } catch(cause) { error.value=`更新失败：${String(cause)}` }
+}
 function pluginAction(id:string){ return installedById.value.get(id) }
-onMounted(async()=>{ await loadPlugins(); try { settings.value=await props.api.readSettings(); aiSettings.value=settings.value.settings.ai } catch(cause){ error.value=String(cause) } })
+onMounted(async()=>{ await loadPlugins(); try { settings.value=await props.api.readSettings(); aiSettings.value=settings.value.settings.ai } catch(cause){ error.value=String(cause) }; await checkForUpdates() })
 watch(current,page=>{if(page==='插件市场'&&!market.value)loadMarket(); if(page==='设置'&&!settings.value)props.api.readSettings().then(value=>{settings.value=value; aiSettings.value=value.settings.ai})})
 </script>
 <template>
@@ -77,6 +94,7 @@ watch(current,page=>{if(page==='插件市场'&&!market.value)loadMarket(); if(pa
     <button class="close-control" aria-label="关闭" @click="closeWindow">×</button>
   </div>
 </header>
+<div v-if="availableUpdate" class="update-banner" role="status"><span>发现新版本 v{{availableUpdate.version}}</span><button class="btn primary" @click="installUpdate">立即更新</button></div>
 <div class="shell"><aside><div class="brand">NEXTLEEK <span>CREATOR</span></div><nav aria-label="主导航"><button v-for="page in pages" :key="page" :data-page="page" :class="{active:current===page&&!runtime}" @click="selectPage(page)">{{page}}</button><button v-for="plugin in pluginNavItems" :key="plugin.manifest.id" class="plugin-nav" :data-page="plugin.manifest.name" :class="{active:runtime?.manifest.id===plugin.manifest.id}" @click="openPluginFromNavigation(plugin.manifest.id)">{{plugin.manifest.navigation?.label||plugin.manifest.name}}</button></nav><div class="sidebar-foot"><span data-test="version">v0.1.0</span></div></aside><main>
 <section v-if="runtime" class="runtime-view"><div class="runtime-frame" :data-trusted="runtime.trusted"><iframe :title="runtime.manifest.name" sandbox="allow-scripts" :srcdoc="runtime.entryHtml" /></div></section>
 <section v-else-if="current==='首页'" class="hero"><p class="eyebrow">RUST MICROKERNEL / TAURI 2</p><h1>欢迎使用 NextLeek Creator</h1><p>创建、验证并运行你的 JavaScript 插件。</p><div class="metrics"><article><b>{{plugins.length}}</b><span>已安装插件</span></article><article><b>0</b><span>原生 Sidecar</span></article><article><b>100%</b><span>声明式</span></article></div></section>

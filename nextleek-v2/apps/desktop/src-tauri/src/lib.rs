@@ -545,6 +545,8 @@ pub fn run() {
         .expect("initialize NextLeek Creator");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             runtime_summary_command,

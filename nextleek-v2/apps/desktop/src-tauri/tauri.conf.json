@@ -5,5 +5,16 @@
   "identifier": "com.nextleek.creator",
   "build": {"beforeDevCommand":"pnpm --dir ../shell-ui dev","beforeBuildCommand":"pnpm --dir ../shell-ui build","frontendDist":"../../shell-ui/dist","devUrl":"http://localhost:5173"},
   "app": {"windows":[{"title":"NextLeek Creator","width":1180,"height":760,"decorations":false,"transparent":false}]},
-  "bundle": {"active":false}
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "windows": {"nsis": {"installMode":"currentUser"}}
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4NUUwNzREMTdGMjQ5MEIKUldRTFNmSVhUUWRlU0JwZWJDSVp5WjlMSWNFcWx2R3RoajFBVHAzM2NHRFEwbTRqdnB2dG9tQU8K",
+      "endpoints": ["https://github.com/YUOOOOO/NextLeek/releases/latest/download/latest.json"]
+    }
+  }
 }
