@@ -1,7 +1,7 @@
 use nextleek_kernel::{Manifest, ManifestError};
 
 fn valid_json() -> &'static str {
-    r#"{"id":"com.nextleek.notes","name":"Notes","version":"1.0.0","entry":"ui/index.html","capabilities":["notes.read","notes.write"],"permissions":["storage:local"]}"#
+    r#"{"id":"com.nextleek.notes","name":"Notes","version":"1.0.0","entry":"ui/index.html","description":"Notes plugin","author":"NextLeek","icon":"assets/icon.png","minCreatorVersion":"0.1.0","capabilities":["notes.read","notes.write"],"permissions":["storage:local"]}"#
 }
 
 #[test]
@@ -20,6 +20,14 @@ fn rejects_invalid_ids_versions_paths_duplicates_and_permissions() {
         (
             valid_json().replace("1.0.0", "latest"),
             ManifestError::InvalidVersion,
+        ),
+        (
+            valid_json().replace("\"minCreatorVersion\":\"0.1.0\"", "\"minCreatorVersion\":\"latest\""),
+            ManifestError::InvalidCreatorVersion,
+        ),
+        (
+            valid_json().replace("assets/icon.png", "../icon.png"),
+            ManifestError::UnsafeEntry,
         ),
         (
             valid_json().replace("ui/index.html", "../evil.exe"),

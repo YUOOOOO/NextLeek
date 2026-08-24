@@ -4,6 +4,9 @@
   "name": "Stocks",
   "version": "1.0.0",
   "entry": "ui/index.html",
+  "description": "查看示例股票自选列表",
+  "author": "NextLeek",
+  "minCreatorVersion": "0.1.0",
   "capabilities": ["stocks.quote.read", "stocks.watchlist"],
   "permissions": ["network:https"]
 }

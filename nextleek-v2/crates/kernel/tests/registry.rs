@@ -1,7 +1,7 @@
 use nextleek_kernel::{CapabilityRegistry, Manifest};
 
 fn plugin(id: &str, version: &str, capability: &str) -> Manifest {
-    Manifest::parse(&format!(r#"{{"id":"{id}","name":"Demo","version":"{version}","entry":"ui/index.html","capabilities":["{capability}"],"permissions":[]}}"#)).unwrap()
+    Manifest::parse(&format!(r#"{{"id":"{id}","name":"Demo","version":"{version}","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":["{capability}"],"permissions":[]}}"#)).unwrap()
 }
 
 #[test]

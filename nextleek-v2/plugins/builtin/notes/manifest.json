@@ -4,6 +4,9 @@
   "name": "Notes",
   "version": "1.0.0",
   "entry": "ui/index.html",
+  "description": "安全保存本地笔记",
+  "author": "NextLeek",
+  "minCreatorVersion": "0.1.0",
   "capabilities": ["notes.read", "notes.write"],
   "permissions": ["storage:local"]
 }

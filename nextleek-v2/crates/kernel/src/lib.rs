@@ -1,3 +1,9 @@
+pub mod package;
+pub mod store;
+
+pub use package::{build_package, inspect_package_bytes, PackageArtifact, PackageError};
+pub use store::{InstalledPlugin, PluginStore, StoreError};
+
 use regex::Regex;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -7,11 +13,19 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub id: String,
     pub name: String,
     pub version: String,
     pub entry: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    pub min_creator_version: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
     #[serde(default)]
@@ -26,11 +40,13 @@ pub enum ManifestError {
     InvalidId,
     #[error("invalid semantic version")]
     InvalidVersion,
-    #[error("unsafe entry path")]
+    #[error("invalid minimum Creator version")]
+    InvalidCreatorVersion,
+    #[error("unsafe plugin resource path")]
     UnsafeEntry,
     #[error("duplicate capability")]
     DuplicateCapability,
-    #[error("permission is not allowed in the declarative MVP")]
+    #[error("permission is not allowed")]
     UndeclaredPermission,
 }
 
@@ -51,32 +67,41 @@ impl Manifest {
         if Version::parse(&self.version).is_err() {
             return Err(ManifestError::InvalidVersion);
         }
-        let entry = Path::new(&self.entry);
-        if entry.is_absolute()
-            || self.entry.contains('\\')
-            || entry.components().any(|part| {
-                matches!(
-                    part,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-            || !self.entry.starts_with("ui/")
-        {
+        if Version::parse(&self.min_creator_version).is_err() {
+            return Err(ManifestError::InvalidCreatorVersion);
+        }
+        if !safe_resource_path(&self.entry) || !self.entry.starts_with("ui/") {
+            return Err(ManifestError::UnsafeEntry);
+        }
+        if self.icon.as_deref().is_some_and(|icon| {
+            !safe_resource_path(icon) || !icon.starts_with("assets/")
+        }) {
             return Err(ManifestError::UnsafeEntry);
         }
         let unique: BTreeSet<_> = self.capabilities.iter().collect();
         if unique.len() != self.capabilities.len() {
             return Err(ManifestError::DuplicateCapability);
         }
-        if self
-            .permissions
-            .iter()
-            .any(|p| !matches!(p.as_str(), "storage:local" | "network:https"))
-        {
+        if self.permissions.iter().any(|permission| {
+            !matches!(
+                permission.as_str(),
+                "storage:local" | "network:https" | "filesystem:trusted"
+            )
+        }) {
             return Err(ManifestError::UndeclaredPermission);
         }
         Ok(())
     }
+}
+
+fn safe_resource_path(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && !value.contains('\\')
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -149,23 +174,10 @@ pub enum CreatorError {
     #[error("invalid manifest: {0}")]
     InvalidManifest(String),
 }
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ValidationReport {
-    pub valid: bool,
-    pub errors: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PackageInventory {
-    pub plugin_id: String,
-    pub version: String,
-    pub files: Vec<String>,
-}
-
 pub struct CreatorWorkspace {
     drafts: PathBuf,
     installed: PathBuf,
+    packages: PathBuf,
 }
 
 impl CreatorWorkspace {
@@ -173,8 +185,17 @@ impl CreatorWorkspace {
         if drafts == installed || drafts.starts_with(&installed) || installed.starts_with(&drafts) {
             return Err(CreatorError::UnsafeDraftId);
         }
-        fs::create_dir_all(&drafts).map_err(|e| CreatorError::Io(e.to_string()))?;
-        Ok(Self { drafts, installed })
+        let packages = drafts
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("creator-packages");
+        fs::create_dir_all(&drafts).map_err(|error| CreatorError::Io(error.to_string()))?;
+        fs::create_dir_all(&packages).map_err(|error| CreatorError::Io(error.to_string()))?;
+        Ok(Self {
+            drafts,
+            installed,
+            packages,
+        })
     }
 
     fn safe_draft(&self, id: &str) -> Result<PathBuf, CreatorError> {
@@ -192,11 +213,14 @@ impl CreatorWorkspace {
     pub fn create(&self, id: &str, manifest: &Manifest) -> Result<PathBuf, CreatorError> {
         manifest
             .validate()
-            .map_err(|e| CreatorError::InvalidManifest(e.to_string()))?;
+            .map_err(|error| CreatorError::InvalidManifest(error.to_string()))?;
         let path = self.safe_draft(id)?;
-        fs::create_dir(&path).map_err(|e| CreatorError::Io(e.to_string()))?;
-        let bytes =
-            serde_json::to_vec_pretty(manifest).map_err(|e| CreatorError::Io(e.to_string()))?;
+        if path.exists() {
+            fs::remove_dir_all(&path).map_err(|error| CreatorError::Io(error.to_string()))?;
+        }
+        fs::create_dir(&path).map_err(|error| CreatorError::Io(error.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(manifest)
+            .map_err(|error| CreatorError::Io(error.to_string()))?;
         atomic_write(&path.join("manifest.json"), &bytes)?;
         Ok(path)
     }
@@ -213,14 +237,15 @@ impl CreatorWorkspace {
         }
         let relative_path = Path::new(relative);
         let unsafe_path = relative_path.is_absolute()
+            || relative.contains('\\')
             || relative_path
                 .components()
-                .any(|c| !matches!(c, Component::Normal(_)));
-        let forbidden = relative.ends_with(".exe")
-            || relative.ends_with(".dll")
-            || relative.ends_with(".so")
-            || relative.ends_with(".dylib")
-            || relative.contains("sidecar");
+                .any(|component| !matches!(component, Component::Normal(_)));
+        let lower = relative.to_ascii_lowercase();
+        let forbidden = [".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"]
+            .iter()
+            .any(|extension| lower.ends_with(extension))
+            || lower.contains("sidecar");
         if unsafe_path {
             return Err(CreatorError::UnsafeDraftId);
         }
@@ -229,7 +254,7 @@ impl CreatorWorkspace {
         }
         let target = root.join(relative_path);
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| CreatorError::Io(e.to_string()))?;
+            fs::create_dir_all(parent).map_err(|error| CreatorError::Io(error.to_string()))?;
         }
         atomic_write(&target, contents)
     }
@@ -237,14 +262,20 @@ impl CreatorWorkspace {
     pub fn read_manifest(&self, draft: &str) -> Result<Manifest, CreatorError> {
         let bytes = fs::read_to_string(self.safe_draft(draft)?.join("manifest.json"))
             .map_err(|_| CreatorError::NotFound)?;
-        Manifest::parse(&bytes).map_err(|e| CreatorError::InvalidManifest(e.to_string()))
+        Manifest::parse(&bytes).map_err(|error| CreatorError::InvalidManifest(error.to_string()))
     }
 
     pub fn validate(&self, draft: &str) -> Result<ValidationReport, CreatorError> {
         match self.read_manifest(draft) {
+            Ok(manifest) if self.safe_draft(draft)?.join(&manifest.entry).is_file() => {
+                Ok(ValidationReport {
+                    valid: true,
+                    errors: vec![],
+                })
+            }
             Ok(_) => Ok(ValidationReport {
-                valid: true,
-                errors: vec![],
+                valid: false,
+                errors: vec!["PLUGIN_ENTRY_MISSING".into()],
             }),
             Err(CreatorError::InvalidManifest(error)) => Ok(ValidationReport {
                 valid: false,
@@ -254,23 +285,13 @@ impl CreatorWorkspace {
         }
     }
 
-    pub fn package_inventory(&self, draft: &str) -> Result<PackageInventory, CreatorError> {
+    pub fn package(&self, draft: &str) -> Result<PackageArtifact, CreatorError> {
         let root = self.safe_draft(draft)?;
         let manifest = self.read_manifest(draft)?;
-        let mut files = Vec::new();
-        collect_files(&root, &root, &mut files)?;
-        files.sort();
-        if files
-            .iter()
-            .any(|file| file.ends_with(".exe") || file.contains("sidecar"))
-        {
-            return Err(CreatorError::ForbiddenArtifact);
-        }
-        Ok(PackageInventory {
-            plugin_id: manifest.id,
-            version: manifest.version,
-            files,
-        })
+        let output = self
+            .packages
+            .join(format!("{}-{}.nlplugin", manifest.id, manifest.version));
+        build_package(&root, &output).map_err(|error| CreatorError::Io(error.to_string()))
     }
 }
 
@@ -280,25 +301,6 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), CreatorError> {
     fs::rename(&temporary, path).map_err(|e| CreatorError::Io(e.to_string()))
 }
 
-fn collect_files(
-    root: &Path,
-    directory: &Path,
-    files: &mut Vec<String>,
-) -> Result<(), CreatorError> {
-    for entry in fs::read_dir(directory).map_err(|e| CreatorError::Io(e.to_string()))? {
-        let entry = entry.map_err(|e| CreatorError::Io(e.to_string()))?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files(root, &path, files)?;
-        } else {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|e| CreatorError::Io(e.to_string()))?;
-            files.push(relative.to_string_lossy().replace('\\', "/"));
-        }
-    }
-    Ok(())
-}
 
 pub fn load_manifests_from_dir(root: &Path) -> Result<Vec<Manifest>, CreatorError> {
     let mut directories = fs::read_dir(root)

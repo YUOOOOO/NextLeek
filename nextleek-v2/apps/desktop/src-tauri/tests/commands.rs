@@ -1,32 +1,115 @@
 use nextleek_desktop::{
-    create_draft, list_plugins, package_draft, runtime_summary, validate_draft, AppState,
+    close_plugin, create_draft, launch_plugin, list_plugins, package_draft, plugin_sdk_call,
+    runtime_summary, set_plugin_trust, validate_draft, AppState,
 };
-use nextleek_kernel::Manifest;
+use nextleek_kernel::{CreatorWorkspace, Manifest};
+use serde_json::json;
+use std::fs;
 
 fn builtins() -> Vec<Manifest> {
     [
-    r#"{"id":"com.nextleek.notes","name":"Notes","version":"1.0.0","entry":"ui/index.html","capabilities":["notes.read"],"permissions":["storage:local"]}"#,
-    r#"{"id":"com.nextleek.stocks","name":"Stocks","version":"1.0.0","entry":"ui/index.html","capabilities":["stocks.quote.read"],"permissions":["network:https"]}"#,
-  ].iter().map(|json| Manifest::parse(json).unwrap()).collect()
+        r#"{"id":"com.nextleek.notes","name":"Notes","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":["notes.read"],"permissions":["storage:local"]}"#,
+        r#"{"id":"com.nextleek.stocks","name":"Stocks","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":["stocks.quote.read"],"permissions":["network:https"]}"#,
+    ]
+    .iter()
+    .map(|json| Manifest::parse(json).unwrap())
+    .collect()
 }
 
 #[test]
-fn commands_expose_runtime_plugins_and_creator_flow() {
+fn commands_expose_builtins_and_real_creator_package() {
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(root.path(), builtins()).unwrap();
     assert_eq!(runtime_summary(&state).unwrap().plugin_count, 2);
     assert_eq!(list_plugins(&state).unwrap().len(), 2);
+
     create_draft(&state, "my-notes".into(), builtins()[0].clone()).unwrap();
     assert!(validate_draft(&state, "my-notes".into()).unwrap().valid);
-    assert_eq!(
-        package_draft(&state, "my-notes".into()).unwrap().plugin_id,
-        "com.nextleek.notes"
-    );
+    let package = package_draft(&state, "my-notes".into()).unwrap();
+    assert_eq!(package.plugin_id, "com.nextleek.notes");
+    assert!(package.path.is_file());
+    assert_eq!(package.sha256.len(), 64);
 }
 
 #[test]
-fn command_bridge_does_not_accept_traversal() {
+fn command_bridge_rejects_traversal() {
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(root.path(), builtins()).unwrap();
     assert!(create_draft(&state, "../escape".into(), builtins()[0].clone()).is_err());
+}
+
+#[test]
+fn builtin_plugin_launches_offline_and_closed_token_stops_working() {
+    let root = tempfile::tempdir().unwrap();
+    let state = AppState::new(root.path(), builtins()).unwrap();
+    let launch = launch_plugin(&state, "com.nextleek.notes".into()).unwrap();
+    assert!(launch.trusted);
+    assert!(launch.entry_html.contains("Notes"));
+    assert_ne!(launch.token, launch_plugin(&state, "com.nextleek.notes".into()).unwrap().token);
+
+    plugin_sdk_call(
+        &state,
+        launch.token.clone(),
+        "storage.set".into(),
+        json!({"key":"draft","value":"hello"}),
+    )
+    .unwrap();
+    close_plugin(&state, launch.token.clone()).unwrap();
+    assert!(plugin_sdk_call(
+        &state,
+        launch.token,
+        "storage.get".into(),
+        json!({"key":"draft"}),
+    )
+    .is_err());
+}
+
+#[test]
+fn market_plugin_defaults_to_sandbox_and_trust_can_be_revoked() {
+    let root = tempfile::tempdir().unwrap();
+    let state = AppState::new(root.path(), builtins()).unwrap();
+    let creator = CreatorWorkspace::new(
+        root.path().join("external-drafts"),
+        root.path().join("unused-installed"),
+    )
+    .unwrap();
+    let manifest = Manifest::parse(
+        r#"{"id":"com.example.files","name":"Files","version":"1.0.0","entry":"ui/index.html","minCreatorVersion":"0.1.0","capabilities":[],"permissions":["filesystem:trusted"]}"#,
+    )
+    .unwrap();
+    creator.create("files", &manifest).unwrap();
+    creator
+        .write_file("files", "ui/index.html", b"<main>Files</main>")
+        .unwrap();
+    let bytes = fs::read(creator.package("files").unwrap().path).unwrap();
+    nextleek_desktop::install_local_package(&state, bytes).unwrap();
+
+    let sandbox = launch_plugin(&state, manifest.id.clone()).unwrap();
+    assert!(!sandbox.trusted);
+    assert!(plugin_sdk_call(
+        &state,
+        sandbox.token,
+        "fs.listDir".into(),
+        json!({"path": root.path()}),
+    )
+    .is_err());
+
+    set_plugin_trust(&state, manifest.id.clone(), true).unwrap();
+    let trusted = launch_plugin(&state, manifest.id.clone()).unwrap();
+    assert!(trusted.trusted);
+    assert!(plugin_sdk_call(
+        &state,
+        trusted.token.clone(),
+        "fs.listDir".into(),
+        json!({"path": root.path()}),
+    )
+    .is_ok());
+    set_plugin_trust(&state, manifest.id, false).unwrap();
+    assert!(plugin_sdk_call(
+        &state,
+        trusted.token,
+        "fs.listDir".into(),
+        json!({"path": root.path()}),
+    )
+    .is_err());
 }
