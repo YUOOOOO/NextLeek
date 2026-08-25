@@ -8,7 +8,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": "v1Compatible",
     "windows": {"nsis": {"installMode":"currentUser"}}
   },
   "plugins": {

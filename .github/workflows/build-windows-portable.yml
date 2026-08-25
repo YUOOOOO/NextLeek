@@ -125,9 +125,10 @@ jobs:
             Sort-Object Length -Descending |
             Select-Object -First 1
           if (-not $exe) { throw 'Portable executable not found in Tauri target directories' }
-          $latest = Get-ChildItem $targetRoots -Recurse -File -Filter 'latest.json' | Select-Object -First 1
-          if (-not $latest) { Write-Warning 'latest.json not found; continuing without updater artifacts' }
-          $bundle = if ($latest) { $latest.Directory } else { $null }
+          $updaterZip = Get-ChildItem $targetRoots -Recurse -File -Filter '*.nsis.zip' | Select-Object -First 1
+          if (-not $updaterZip) { throw 'Signed NSIS updater ZIP not found' }
+          $updaterSig = Get-ChildItem $targetRoots -Recurse -File -Filter "$($updaterZip.Name).sig" | Select-Object -First 1
+          if (-not $updaterSig) { throw "Updater signature not found for $($updaterZip.Name)" }
           $portable = 'artifact\NextLeek-portable-windows-x64'
           New-Item -ItemType Directory -Force "$portable\Data" | Out-Null
           Copy-Item $exe.FullName "$portable\NextLeek.exe"
@@ -135,15 +136,31 @@ jobs:
           $installer = Get-ChildItem $targetRoots -Recurse -File -Filter '*setup.exe' | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer not found in Tauri target directories' }
           Copy-Item $installer.FullName 'artifact\NextLeek-windows-x64-setup.exe'
-          $updater = if ($bundle) { Get-ChildItem $bundle.FullName -Recurse -File | Where-Object { $_.Name -eq 'latest.json' -or $_.Extension -eq '.sig' } } else { @() }
-          $updater | ForEach-Object { Copy-Item $_.FullName (Join-Path 'artifact' $_.Name) }
-          if (-not (Test-Path 'artifact\latest.json')) { Write-Warning 'Updater latest.json was not copied' }
+          Copy-Item $updaterZip.FullName (Join-Path 'artifact' $updaterZip.Name)
+          Copy-Item $updaterSig.FullName (Join-Path 'artifact' $updaterSig.Name)
+          $version = if ('${{ github.ref }}'.StartsWith('refs/tags/v')) { '${{ github.ref_name }}'.TrimStart('v') } else { '0.1.0' }
+          $signature = Get-Content $updaterSig.FullName -Raw
+          $latest = [ordered]@{
+            version = $version
+            notes = "NextLeek v$version"
+            pub_date = [DateTime]::UtcNow.ToString('o')
+            platforms = [ordered]@{
+              'x86_64-pc-windows-msvc' = [ordered]@{
+                signature = $signature.Trim()
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($updaterZip.Name)"
+              }
+            }
+          }
+          $latestJson = $latest | ConvertTo-Json -Depth 10
+          [System.IO.File]::WriteAllText((Join-Path 'artifact' 'latest.json'), $latestJson, [System.Text.UTF8Encoding]::new($false))
           $source = 'artifact\NextLeek-portable-windows-x64'
           $zip = 'artifact\NextLeek-portable-windows-x64.zip'
           Compress-Archive -Path $source -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  NextLeek-portable-windows-x64.zip" | Set-Content -Encoding ascii "$zip.sha256"
-          if (-not (Test-Path 'artifact\latest.json')) { Write-Warning 'latest.json missing; release will not include updater metadata' }
+          if (-not (Test-Path 'artifact\latest.json')) { throw 'latest.json missing' }
+          if (-not (Test-Path (Join-Path 'artifact' $updaterZip.Name))) { throw 'Updater ZIP missing' }
+          if (-not (Test-Path (Join-Path 'artifact' $updaterSig.Name))) { throw 'Updater signature missing' }
           if (-not (Test-Path 'artifact\NextLeek-windows-x64-setup.exe')) { throw 'Installer missing' }
 
       - name: Upload release artifacts
