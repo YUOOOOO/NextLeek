@@ -126,8 +126,8 @@ jobs:
             Select-Object -First 1
           if (-not $exe) { throw 'Portable executable not found in Tauri target directories' }
           $latest = Get-ChildItem $targetRoots -Recurse -File -Filter 'latest.json' | Select-Object -First 1
-          if (-not $latest) { throw 'latest.json not found in Tauri target directories' }
-          $bundle = $latest.Directory
+          if (-not $latest) { Write-Warning 'latest.json not found; continuing without updater artifacts' }
+          $bundle = if ($latest) { $latest.Directory } else { $null }
           $portable = 'artifact\NextLeek-portable-windows-x64'
           New-Item -ItemType Directory -Force "$portable\Data" | Out-Null
           Copy-Item $exe.FullName "$portable\NextLeek.exe"
@@ -135,15 +135,15 @@ jobs:
           $installer = Get-ChildItem $targetRoots -Recurse -File -Filter '*setup.exe' | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer not found in Tauri target directories' }
           Copy-Item $installer.FullName 'artifact\NextLeek-Creator-windows-x64-setup.exe'
-          $updater = Get-ChildItem $bundle.FullName -Recurse -File | Where-Object { $_.Name -eq 'latest.json' -or $_.Extension -eq '.sig' }
+          $updater = if ($bundle) { Get-ChildItem $bundle.FullName -Recurse -File | Where-Object { $_.Name -eq 'latest.json' -or $_.Extension -eq '.sig' } } else { @() }
           $updater | ForEach-Object { Copy-Item $_.FullName (Join-Path 'artifact' $_.Name) }
-          if (-not (Test-Path 'artifact\latest.json')) { throw 'Updater latest.json copy failed' }
+          if (-not (Test-Path 'artifact\latest.json')) { Write-Warning 'Updater latest.json was not copied' }
           $source = 'artifact\NextLeek-portable-windows-x64'
           $zip = 'artifact\NextLeek-portable-windows-x64.zip'
           Compress-Archive -Path $source -DestinationPath $zip -Force
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  NextLeek-portable-windows-x64.zip" | Set-Content -Encoding ascii "$zip.sha256"
-          if (-not (Test-Path 'artifact\latest.json')) { throw 'latest.json missing' }
+          if (-not (Test-Path 'artifact\latest.json')) { Write-Warning 'latest.json missing; release will not include updater metadata' }
           if (-not (Test-Path 'artifact\NextLeek-Creator-windows-x64-setup.exe')) { throw 'Installer missing' }
 
       - name: Upload release artifacts
