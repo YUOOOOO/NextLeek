@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import type { AiSettings, GeneratePluginRequest, KernelApi, MarketCatalog, PackageArtifact, PluginManifest, PluginState, RuntimeLaunch, SettingsView } from './api'
+import type { Update } from '@tauri-apps/plugin-updater'
 
 interface AiMessage { role:'user'|'assistant'; content:string }
 interface CreatorFile { path:string; content:string }
@@ -21,7 +22,7 @@ const aiMessages = ref<AiMessage[]>([])
 const aiLoading = ref(false)
 const lastValidationErrors = ref<string[]>([])
 const settings = ref<SettingsView | null>(null)
-const availableUpdate = ref<{version:string; downloadAndInstall:()=>Promise<void>} | null>(null)
+const availableUpdate = shallowRef<Update | null>(null)
 const updateState = ref<'idle'|'checking'|'current'|'available'|'failed'>('idle')
 const updating = ref(false)
 const updateError = ref('')
