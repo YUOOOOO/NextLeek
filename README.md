@@ -146,7 +146,7 @@ curl -X POST http://localhost:3000/api/strategy/jobs -H "Content-Type: applicati
 
 ---
 
-## NextLeek Creator
+## NextLeek 桌面插件
 
 桌面插件 Creator 位于 [`nextleek-v2/`](nextleek-v2/)，包含 Rust 微内核、Tauri 2 宿主和 Vue 3 Creator 界面。
 

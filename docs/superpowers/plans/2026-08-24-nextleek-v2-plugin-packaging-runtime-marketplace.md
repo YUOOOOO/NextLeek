@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver real `.nlplugin` packaging, local/remote installation, marketplace lifecycle management, and in-app JavaScript plugin execution for NextLeek Creator.
+**Goal:** Deliver real `.nlplugin` packaging, local/remote installation, marketplace lifecycle management, and in-app JavaScript plugin execution for NextLeek.
 
 **Architecture:** Extend the Rust kernel with deterministic ZIP packages and an atomic installed-plugin store. Expose the store, GitHub marketplace client, runtime sessions, scoped SDK operations, and settings through Tauri commands; keep Vue responsible only for editing and presentation. Built-ins and remote packages share one manifest and runtime model, while trust is enforced in Rust.
 

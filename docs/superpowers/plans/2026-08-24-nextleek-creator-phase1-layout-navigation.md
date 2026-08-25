@@ -1,4 +1,4 @@
-# NextLeek Creator 第一阶段布局与插件导航实现计划
+# NextLeek 第一阶段布局与插件导航实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

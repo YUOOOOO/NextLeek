@@ -74,7 +74,7 @@ fn fetch_bounded(url: &str, limit: u64) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())?;
     let mut response = client
         .get(url)
-        .header(reqwest::header::USER_AGENT, "NextLeek-Creator/0.1")
+        .header(reqwest::header::USER_AGENT, "NextLeek/0.1")
         .send()
         .map_err(|error| format!("MARKET_UNAVAILABLE: {error}"))?;
     if !response.status().is_success() {

@@ -1,4 +1,4 @@
-# NextLeek Creator 第二阶段：创造模式内置 AI 插件生成设计
+# NextLeek 第二阶段：创造模式内置 AI 插件生成设计
 
 ## 目标
 

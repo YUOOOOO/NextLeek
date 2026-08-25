@@ -13,4 +13,5 @@ html::-webkit-scrollbar-thumb:hover,body::-webkit-scrollbar-thumb:hover,main::-w
 .github-link:hover{color:#64f29d;background:#153126}
 .github-link svg{width:18px;height:18px;fill:currentColor}
 .window-controls{position:relative;z-index:2}
+.settings-control svg{width:17px;height:17px;fill:currentColor;display:block;margin:auto}
 iframe{color-scheme:dark}

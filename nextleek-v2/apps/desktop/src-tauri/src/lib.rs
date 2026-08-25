@@ -331,7 +331,7 @@ pub fn generate_plugin(state: &AppState, request: GeneratePluginRequest) -> Resu
     if !ai.enabled { return Err("AI_DISABLED".into()); }
     settings::validate_ai(&ai)?;
     let endpoint = format!("{}/chat/completions", ai.base_url.trim_end_matches('/'));
-    let prompt = format!("You are NextLeek Creator plugin generator. Return only JSON with manifest, files, explanation. Required files: ui/index.html, ui/main.js, ui/style.css. Never use native code, shell, external scripts, or path traversal. User request: {}", request.instruction);
+    let prompt = format!("You are the NextLeek plugin generator. Return only JSON with manifest, files, explanation. Required files: ui/index.html, ui/main.js, ui/style.css. Never use native code, shell, external scripts, or path traversal. User request: {}", request.instruction);
     let body = serde_json::json!({"model":ai.model,"temperature":ai.temperature,"messages":[{"role":"system","content":prompt},{"role":"user","content":serde_json::to_string(&request.current_draft).unwrap_or_default()}]});
     let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(60)).build().map_err(|_| "AI_REQUEST_FAILED".to_string())?.post(endpoint).bearer_auth(ai.api_key).json(&body).send().map_err(|error| if error.is_timeout() { "AI_TIMEOUT".to_string() } else { "AI_REQUEST_FAILED".to_string() })?;
     if !response.status().is_success() { return Err("AI_REQUEST_FAILED".into()); }
@@ -542,7 +542,7 @@ pub fn run() {
     let executable = std::env::current_exe().expect("resolve executable path");
     let portable_root = executable.parent().expect("executable parent").join("Data");
     let state = AppState::with_builtins(&portable_root, builtin_plugins())
-        .expect("initialize NextLeek Creator");
+        .expect("initialize NextLeek");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())

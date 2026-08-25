@@ -43,9 +43,9 @@ describe('desktop shell', () => {
   it('shows core navigation and installed plugin menu', async () => {
     const wrapper = mount(App, { props:{ api:createApi() } })
     await flush()
-    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['首页','创造模式','插件市场','设置','仪表盘'])
+    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['首页','创造模式','插件市场','仪表盘'])
     expect(wrapper.get('[data-test="version"]').text()).toContain('0.1.0')
-    expect(wrapper.get('[data-test="settings"]').text()).toContain('设置')
+    expect(wrapper.get('[data-test="settings"]').attributes('aria-label')).toBe('设置')
   })
 
   it('creates validates and packages editable HTML CSS and JavaScript', async () => {

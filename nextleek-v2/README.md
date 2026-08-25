@@ -1,4 +1,4 @@
-# NextLeek Creator
+# NextLeek
 
 Rust 微内核 + Tauri 2 + Vue 3 的桌面插件创造与运行环境。
 
