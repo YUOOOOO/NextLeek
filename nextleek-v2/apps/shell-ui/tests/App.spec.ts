@@ -2,6 +2,15 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../src/App.vue'
 import type { KernelApi, MarketPlugin, PluginManifest } from '../src/api'
+const updaterMocks = vi.hoisted(() => ({
+  downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+  relaunch: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn().mockResolvedValue({version:'0.1.27', downloadAndInstall:updaterMocks.downloadAndInstall})
+}))
+vi.mock('@tauri-apps/plugin-process', () => ({relaunch:updaterMocks.relaunch}))
 
 const dashboard: PluginManifest = {
   id:'com.nextleek.dashboard', name:'仪表盘', version:'1.0.0', entry:'ui/index.html',
@@ -37,13 +46,14 @@ function createApi(): KernelApi {
   }
 }
 
-async function flush(){ await new Promise(resolve => setTimeout(resolve,0)) }
+async function flush(){ await new Promise(resolve => setTimeout(resolve,10)) }
 
+async function waitUntil(predicate:()=>boolean){ for(let attempt=0; attempt<20; attempt+=1){ if(predicate()) return; await flush() } }
 describe('desktop shell', () => {
   it('shows core navigation and installed plugin menu', async () => {
     const wrapper = mount(App, { props:{ api:createApi() } })
     await flush()
-    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['首页','创造模式','插件市场','仪表盘'])
+    expect(wrapper.findAll('nav button').map(button => button.text())).toEqual(['仪表盘','创造模式','插件市场'])
     expect(wrapper.get('[data-test="version"]').text()).toContain('0.1.0')
     expect(wrapper.get('[data-test="settings"]').attributes('aria-label')).toBe('设置')
   })
@@ -53,6 +63,7 @@ describe('desktop shell', () => {
     const write = vi.spyOn(api,'writeDraftFile')
     const wrapper = mount(App,{props:{api}})
     await wrapper.get('[data-page="创造模式"]').trigger('click')
+    await flush()
     await wrapper.get('[data-test="create"]').trigger('click')
     await wrapper.get('[data-test="package"]').trigger('click')
     await flush()
@@ -74,8 +85,8 @@ describe('desktop shell', () => {
     expect(wrapper.find('[data-test="open-com.example.clock"]').exists()).toBe(true)
     await wrapper.get('[data-test="open-com.example.clock"]').trigger('click')
     await flush()
-    expect(wrapper.text()).toContain('返回插件市场')
-    await wrapper.get('[data-test="runtime-back"]').trigger('click')
+    expect(wrapper.find('.runtime-frame iframe').exists()).toBe(true)
+    await wrapper.get('[data-page="插件市场"]').trigger('click')
     await wrapper.get('[data-test="uninstall-com.example.clock"]').trigger('click')
     expect(uninstall).toHaveBeenCalledWith('com.example.clock')
   })
@@ -100,6 +111,7 @@ describe('desktop shell', () => {
     })
     const wrapper = mount(App, {props:{api}})
     await wrapper.get('[data-page="创造模式"]').trigger('click')
+    await flush()
     await wrapper.find('aside.ai-panel textarea').setValue('生成一个插件')
     await wrapper.get('[data-test="ai-generate"]').trigger('click')
     await flush()
@@ -111,10 +123,24 @@ describe('desktop shell', () => {
     vi.spyOn(api, 'generatePlugin').mockRejectedValue(new Error('AI_REQUEST_FAILED'))
     const wrapper = mount(App, {props:{api}})
     await wrapper.get('[data-page="创造模式"]').trigger('click')
+    await flush()
     await wrapper.find('aside.ai-panel textarea').setValue('生成一个插件')
     await wrapper.get('[data-test="ai-generate"]').trigger('click')
     await flush()
     expect(wrapper.get('textarea').element.value).toContain('Hello NextLeek')
     expect(wrapper.text()).toContain('AI_REQUEST_FAILED')
   })
+  it('downloads installs and relaunches when an update is available', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {value:{}, configurable:true})
+    const wrapper = mount(App, {props:{api:createApi()}})
+    await wrapper.get('[data-test="settings"]').trigger('click')
+    await waitUntil(() => wrapper.find('[data-test="install-update"]').exists())
+    expect(wrapper.find('[data-test="install-update"]').exists()).toBe(true)
+    await wrapper.get('[data-test="install-update"]').trigger('click')
+    await flush()
+    expect(updaterMocks.downloadAndInstall).toHaveBeenCalledOnce()
+    expect(updaterMocks.relaunch).toHaveBeenCalledOnce()
+    delete (window as Window & {__TAURI_INTERNALS__?:unknown}).__TAURI_INTERNALS__
+  })
+
 })

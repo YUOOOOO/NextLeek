@@ -61,7 +61,7 @@ export async function createTauriApi(): Promise<KernelApi> {
   }
 }
 
-export function createMemoryApi(installed:PluginState[]):KernelApi {
+export function createMemoryApi(installed:PluginState[], pluginFiles:Record<string,Record<string,string>>={}):KernelApi {
   const drafts = new Map<string, PluginManifest>()
   const localInstalled = new Map(installed.map(plugin => [plugin.manifest.id, plugin]))
   const market:MarketPlugin = {id:'com.example.clock',name:'Clock',version:'1.0.0',description:'Clock plugin',author:'Community',packageUrl:'https://example.com/clock.nlplugin',sha256:'a'.repeat(64),minCreatorVersion:'0.1.0',permissions:[]}
@@ -81,7 +81,7 @@ export function createMemoryApi(installed:PluginState[]):KernelApi {
     setMarketUrl: async url => { settings.settings.marketUrl=url; return structuredClone(settings) },
     setAiSettings: async value => { settings.settings.ai=structuredClone(value); return structuredClone(settings) },
     setPluginTrust: async (id, trusted) => { settings.settings.trustedPlugins=trusted?[...new Set([...settings.settings.trustedPlugins,id])]:settings.settings.trustedPlugins.filter(value=>value!==id); const state=localInstalled.get(id); if(state) state.trusted=trusted; return structuredClone(settings) },
-    launchPlugin: async id => { const state=localInstalled.get(id); if(!state) throw new Error('plugin not installed'); return {token:`token-${id}`,manifest:state.manifest,entryHtml:`<main><h1>${state.manifest.name}</h1></main>`,textAssets:{},trusted:state.trusted} },
+    launchPlugin: async id => { const state=localInstalled.get(id); if(!state) throw new Error('plugin not installed'); const files=pluginFiles[id] ?? {}; return {token:`token-${id}`,manifest:state.manifest,entryHtml:files[state.manifest.entry] ?? `<main><h1>${state.manifest.name}</h1></main>`,textAssets:Object.fromEntries(Object.entries(files).filter(([path])=>path!==state.manifest.entry)),trusted:state.trusted} },
     pluginSdkCall: async () => null,
     closePlugin: async () => undefined,
     generatePlugin: async request => ({manifest:structuredClone(request.currentDraft.manifest),files:{...request.currentDraft.files},explanation:'已根据需求生成插件草稿'})
