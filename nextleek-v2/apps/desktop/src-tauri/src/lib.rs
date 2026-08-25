@@ -65,17 +65,20 @@ impl AppState {
         fs::create_dir_all(root).map_err(|error| error.to_string())?;
         Ok(Self {
             root: root.to_path_buf(),
-            creator: CreatorWorkspace::new(
-                root.join("creator-drafts"),
-                root.join("installed-plugins"),
-            )
-            .map_err(|error| error.to_string())?,
-            store: PluginStore::new(root.join("installed-plugins"))
-                .map_err(|error| error.to_string())?,
+            creator: CreatorWorkspace::new(root.join("creator-drafts"), root.join("installed-plugins")).map_err(|error| error.to_string())?,
+            store: PluginStore::new(root.join("installed-plugins")).map_err(|error| error.to_string())?,
             builtins,
             settings: Mutex::new(SettingsStore::load(root)?),
             runtime: Mutex::new(RuntimeManager::default()),
         })
+    }
+
+    fn with_editable_dashboard(root: &Path, dashboard: BuiltinPlugin) -> Result<Self, String> {
+        let state = Self::with_builtins(root, BTreeMap::new())?;
+        if state.store.active_plugin(&dashboard.manifest.id).is_err() {
+            state.store.install_files(&dashboard.manifest, &dashboard.files).map_err(|error| error.to_string())?;
+        }
+        Ok(state)
     }
 
     fn remote_is_active(&self, plugin_id: &str) -> bool {
@@ -162,8 +165,8 @@ pub fn list_plugin_states(state: &AppState) -> Result<Vec<PluginState>, String> 
             PluginState {
                 manifest: installed.manifest,
                 builtin: false,
-                trusted: trusted.contains(&plugin_id),
-                source: "official-market",
+                trusted: trusted.contains(&plugin_id) || plugin_id == "com.nextleek.dashboard",
+                source: if plugin_id == "com.nextleek.dashboard" { "user-created" } else { "official-market" },
             },
         );
     }
@@ -541,8 +544,8 @@ fn builtin_plugin<const N: usize>(
 pub fn run() {
     let executable = std::env::current_exe().expect("resolve executable path");
     let portable_root = executable.parent().expect("executable parent").join("Data");
-    let state = AppState::with_builtins(&portable_root, builtin_plugins())
-        .expect("initialize NextLeek");
+    let dashboard = builtin_plugins().remove("com.nextleek.dashboard").expect("bundled dashboard must exist");
+    let state = AppState::with_editable_dashboard(&portable_root, dashboard).expect("initialize NextLeek");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())

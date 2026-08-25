@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.nextleek.creator",
   "build": {"beforeDevCommand":"pnpm --dir ../shell-ui dev","beforeBuildCommand":"pnpm --dir ../shell-ui build","frontendDist":"../../shell-ui/dist","devUrl":"http://localhost:5173"},
-  "app": {"windows":[{"title":"NextLeek","width":1180,"height":760,"decorations":false,"transparent":false}]},
+  "app": {"windows":[{"title":"NextLeek","width":1180,"height":760,"minWidth":980,"minHeight":640,"decorations":false,"transparent":false}]},
   "bundle": {
     "active": true,
     "targets": ["nsis"],

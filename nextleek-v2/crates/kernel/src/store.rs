@@ -74,6 +74,28 @@ impl PluginStore {
         })
     }
 
+    pub fn install_files(
+        &self,
+        manifest: &Manifest,
+        files: &std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Result<InstalledPlugin, StoreError> {
+        let plugin_root = self.root.join(&manifest.id);
+        fs::create_dir_all(&plugin_root).map_err(|error| StoreError::Io(error.to_string()))?;
+        let target = plugin_root.join(&manifest.version);
+        if !target.exists() {
+            fs::create_dir_all(target.join("ui")).map_err(|error| StoreError::Io(error.to_string()))?;
+            fs::write(target.join("manifest.json"), serde_json::to_vec_pretty(manifest).map_err(|error| StoreError::Io(error.to_string()))?)
+                .map_err(|error| StoreError::Io(error.to_string()))?;
+            for (relative, content) in files {
+                let path = target.join(relative);
+                if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| StoreError::Io(error.to_string()))?; }
+                fs::write(path, content).map_err(|error| StoreError::Io(error.to_string()))?;
+            }
+        }
+        write_atomic_json(&plugin_root.join("active.json"), &ActiveVersion { version: manifest.version.clone() })?;
+        self.active_plugin(&manifest.id)
+    }
+
     pub fn active_plugin(&self, id: &str) -> Result<InstalledPlugin, StoreError> {
         validate_plugin_id(id)?;
         let plugin_root = self.root.join(id);
