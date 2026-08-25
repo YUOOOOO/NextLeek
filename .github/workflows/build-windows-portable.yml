@@ -144,16 +144,21 @@ jobs:
           Copy-Item $updaterSig.FullName (Join-Path 'artifact' $updaterSig.Name)
           $version = if ('${{ github.ref }}'.StartsWith('refs/tags/v')) { '${{ github.ref_name }}'.TrimStart('v') } else { '0.1.0' }
           $signature = Get-Content $updaterSig.FullName -Raw
+          $windowsUpdate = [ordered]@{
+            signature = $signature.Trim()
+            url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($updaterZip.Name)"
+          }
           $latest = [ordered]@{
             version = $version
             notes = "NextLeek v$version"
             pub_date = [DateTime]::UtcNow.ToString('o')
             platforms = [ordered]@{
-              'x86_64-pc-windows-msvc' = [ordered]@{
-                signature = $signature.Trim()
-                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($updaterZip.Name)"
-              }
+              'windows-x86_64-nsis' = $windowsUpdate
+              'windows-x86_64' = $windowsUpdate
             }
+          }
+          if (-not $latest.platforms.Contains('windows-x86_64-nsis') -or -not $latest.platforms.Contains('windows-x86_64')) {
+            throw 'latest.json must include Tauri Windows updater fallback platform keys'
           }
           $latestJson = $latest | ConvertTo-Json -Depth 10
           [System.IO.File]::WriteAllText((Join-Path 'artifact' 'latest.json'), $latestJson, [System.Text.UTF8Encoding]::new($false))
