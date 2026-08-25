@@ -79,8 +79,8 @@ jobs:
           $config = Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json
           $config.version = $version
           $config | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 src-tauri\tauri.conf.json
-          $cargoManifest = Get-Content src-tauri\Cargo.toml -Raw
-          $cargoManifest = $cargoManifest -replace '(?m)^version = "[^"]+"$', "version = `"$version`""
+          $cargoManifest = Get-Content src-tauri\Cargo.toml
+          $cargoManifest = $cargoManifest -replace '^version = "[^"]+"$', "version = `"$version`""
           $cargoManifest | Set-Content -Encoding utf8 src-tauri\Cargo.toml
           if (-not (Select-String -Path src-tauri\Cargo.toml -Pattern "^version = `"$([regex]::Escape($version))`"$")) { throw 'Cargo package version injection failed' }
           pnpm exec tauri build --target x86_64-pc-windows-msvc --verbose 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE\tauri-build.log"
