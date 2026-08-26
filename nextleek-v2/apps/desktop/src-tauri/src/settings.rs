@@ -87,6 +87,18 @@ impl SettingsStore {
 
 pub fn validate_ai(ai: &AiSettings) -> Result<(), String> {
     let parsed = url::Url::parse(&ai.base_url).map_err(|_| "AI_CONFIG_INVALID: base URL".to_string())?;
-    if parsed.scheme() != "https" || ai.base_url.len() > 2048 || ai.model.trim().is_empty() || ai.model.len() > 256 || ai.api_key.len() > 4096 || !ai.temperature.is_finite() || !(0.0..=2.0).contains(&ai.temperature) { return Err("AI_CONFIG_INVALID".into()); }
+    let local_http = parsed.scheme() == "http"
+        && parsed.host_str().is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+    let secure_remote = parsed.scheme() == "https";
+    if !(secure_remote || local_http)
+        || ai.base_url.len() > 2048
+        || ai.model.trim().is_empty()
+        || ai.model.len() > 256
+        || ai.api_key.len() > 4096
+        || !ai.temperature.is_finite()
+        || !(0.0..=2.0).contains(&ai.temperature)
+    {
+        return Err("AI_CONFIG_INVALID".into());
+    }
     Ok(())
 }
