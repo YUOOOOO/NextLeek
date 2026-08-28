@@ -1,141 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+const API = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'
 
-type FactorInfo = {
-  code: string
-  label: string
-  group?: string
-}
-
-type Universe = {
-  active_factors?: string[]
-  factor_catalog?: FactorInfo[]
-  factor_count?: number
-}
-
-type MockRow = {
+type PickRow = {
+  rank?: number
   code: string
   name: string
-  changePct: number
-  price: number
+  changePct: number | null
+  price: number | null
+  score?: number | null
 }
 
 type StrategyDef = {
   id: string
   name: string
-  factorCodes: string[]
-  rows: MockRow[]
+  principle?: string
+  factor_codes?: string[]
+  factor_labels?: string[]
+  date?: string
+  matched?: number
+  universe_size?: number
+  rows?: PickRow[]
+  error?: string
 }
 
-const FACTOR_LABEL: Record<string, string> = {
-  ADX_14D: '趋势强度 ADX',
-  AMIHUD_ILLIQUIDITY: '非流动性',
-  BREAKOUT_20D: '突破 20 日',
-  CALMAR_RATIO_60D: 'Calmar 比率',
-  CORRELATION_TO_MARKET_20D: '与市场相关性',
-  GK_VOL_RATIO_20D: 'GK 波动比',
-  MAX_DD_60D: '最大回撤 60 日',
-  MOM_20D: '动量 20 日',
-  OBV_SLOPE_10D: 'OBV 斜率',
-  PRICE_POSITION_20D: '价格位置 20 日',
-  PRICE_POSITION_120D: '价格位置 120 日',
-  PV_CORR_20D: '价量相关',
-  SHARPE_RATIO_20D: '夏普 20 日',
-  SLOPE_20D: '价格斜率',
-  UP_DOWN_VOL_RATIO_20D: '涨跌量比',
-  VOL_RATIO_20D: '波动率比',
-  VORTEX_14D: '涡旋指标',
-  SHARE_CHG_5D: '份额变化 5 日',
-  SHARE_CHG_10D: '份额变化 10 日',
-  SHARE_CHG_20D: '份额变化 20 日',
-  SHARE_ACCEL: '份额加速度',
-  MARGIN_CHG_10D: '融资变化 10 日',
-  MARGIN_BUY_RATIO: '融资买入比',
+type HistoryNav = {
+  dates?: string[]
+  current?: string | null
+  prev?: string | null
+  next?: string | null
+  index?: number | null
+  total?: number
 }
-
-/** 临时映射：流程走通用，对标 i.gushi.in 前可整表替换 */
-const STRATEGY_DEFS: StrategyDef[] = [
-  {
-    id: 'auction-long',
-    name: '竞价多头策略',
-    factorCodes: ['MOM_20D', 'BREAKOUT_20D', 'PV_CORR_20D'],
-    rows: [
-      { code: '600519', name: '贵州茅台', changePct: 1.26, price: 1688.0 },
-      { code: '300750', name: '宁德时代', changePct: 2.41, price: 198.5 },
-      { code: '601318', name: '中国平安', changePct: -0.52, price: 48.2 },
-    ],
-  },
-  {
-    id: 'premarket-strong',
-    name: '盘前强势量化',
-    factorCodes: ['PRICE_POSITION_20D', 'VOL_RATIO_20D', 'OBV_SLOPE_10D'],
-    rows: [
-      { code: '002594', name: '比亚迪', changePct: 3.12, price: 265.4 },
-      { code: '000858', name: '五粮液', changePct: 0.88, price: 142.3 },
-    ],
-  },
-  {
-    id: 'morning-star',
-    name: '晨星量化',
-    factorCodes: ['SHARPE_RATIO_20D', 'CALMAR_RATIO_60D', 'MAX_DD_60D'],
-    rows: [
-      { code: '600036', name: '招商银行', changePct: 0.35, price: 34.6 },
-      { code: '601012', name: '隆基绿能', changePct: -1.2, price: 18.9 },
-      { code: '002475', name: '立讯精密', changePct: 1.05, price: 32.1 },
-    ],
-  },
-  {
-    id: 'auction-alpha',
-    name: '竞价阿尔法',
-    factorCodes: ['SLOPE_20D', 'UP_DOWN_VOL_RATIO_20D', 'VORTEX_14D'],
-    rows: [
-      { code: '688981', name: '中芯国际', changePct: 2.08, price: 52.7 },
-      { code: '603259', name: '药明康德', changePct: -0.74, price: 61.3 },
-    ],
-  },
-  {
-    id: 'open-star',
-    name: '早盘之星',
-    factorCodes: ['MOM_20D', 'PRICE_POSITION_20D', 'BREAKOUT_20D'],
-    rows: [
-      { code: '000063', name: '中兴通讯', changePct: 4.55, price: 31.2 },
-      { code: '002230', name: '科大讯飞', changePct: 1.67, price: 48.9 },
-      { code: '300059', name: '东方财富', changePct: 0.92, price: 16.4 },
-    ],
-  },
-  {
-    id: 't1-flash',
-    name: 'T+1闪电',
-    factorCodes: ['MOM_20D', 'VOL_RATIO_20D', 'PV_CORR_20D'],
-    rows: [
-      { code: '601899', name: '紫金矿业', changePct: 2.33, price: 17.8 },
-      { code: '600276', name: '恒瑞医药', changePct: -0.41, price: 44.5 },
-    ],
-  },
-  {
-    id: 'gold-1430',
-    name: '金色2点半',
-    factorCodes: ['PRICE_POSITION_120D', 'SLOPE_20D', 'SHARPE_RATIO_20D'],
-    rows: [
-      { code: '600900', name: '长江电力', changePct: 0.21, price: 28.4 },
-      { code: '601088', name: '中国神华', changePct: 0.67, price: 39.1 },
-      { code: '600028', name: '中国石化', changePct: -0.18, price: 6.52 },
-    ],
-  },
-  {
-    id: 'large-cap',
-    name: '大市值',
-    factorCodes: ['AMIHUD_ILLIQUIDITY', 'CORRELATION_TO_MARKET_20D', 'MAX_DD_60D'],
-    rows: [
-      { code: '601398', name: '工商银行', changePct: 0.12, price: 5.81 },
-      { code: '601857', name: '中国石油', changePct: 0.45, price: 9.12 },
-      { code: '600000', name: '浦发银行', changePct: -0.33, price: 8.76 },
-      { code: '601166', name: '兴业银行', changePct: 0.28, price: 17.3 },
-    ],
-  },
-]
 
 const TABS = [
   { id: 'strategy', label: '策略显示' },
@@ -147,71 +44,107 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id']
 
 const activeTab = ref<TabId>('strategy')
-const selectedStrategyId = ref(STRATEGY_DEFS[0].id)
-const universe = ref<Universe | null>(null)
+const selectedStrategyId = ref('auction-long')
+const strategies = ref<StrategyDef[]>([])
+const asof = ref('')
+const history = ref<HistoryNav>({})
+const viewedDate = ref('')
+const loading = ref(false)
 const error = ref('')
 
-// 当前选中的策略定义（含临时因子与 mock 结果）
 const selectedStrategy = computed(
-  () => STRATEGY_DEFS.find((s) => s.id === selectedStrategyId.value) || STRATEGY_DEFS[0],
+  () => strategies.value.find((s) => s.id === selectedStrategyId.value) || strategies.value[0],
 )
 
-// 合并接口目录与本地兜底，得到因子 code→中文名
-const labelByCode = computed(() => {
-  const map: Record<string, string> = { ...FACTOR_LABEL }
-  for (const item of universe.value?.factor_catalog || []) {
-    if (item?.code) map[item.code] = item.label || item.code
-  }
-  return map
-})
-
-// 当前策略绑定的因子 chip 数据
 const boundFactors = computed(() => {
-  const labels = labelByCode.value
-  return selectedStrategy.value.factorCodes.map((code) => ({
-    code,
-    label: labels[code] || code,
-  }))
+  const s = selectedStrategy.value
+  if (!s) return []
+  const codes = s.factor_codes || []
+  const labels = s.factor_labels || []
+  return codes.map((code, i) => ({ code, label: labels[i] || code }))
 })
 
-// 当前策略对应的 mock 选股结果行
-const resultRows = computed(() => selectedStrategy.value.rows)
+const resultRows = computed(() => selectedStrategy.value?.rows || [])
+const canPrev = computed(() => Boolean(history.value.prev))
+const canNext = computed(() => Boolean(history.value.next))
+const pageText = computed(() => {
+  const h = history.value
+  if (!h.total) return ''
+  return `${h.index || 0}/${h.total}`
+})
+const asofText = computed(() => {
+  const raw = asof.value || viewedDate.value
+  if (!raw) return '—'
+  const s = String(raw).replace(/-/g, '')
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+  return String(raw)
+})
 
-// 请求 BFF JSON 接口
 async function api<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
 
-// 拉取因子池宇宙，失败时保留本地标签兜底
-async function refreshUniverse() {
+/** 拉 8 策略真实截面；date 有值则读历史日 */
+async function refreshPicks(date = viewedDate.value) {
+  loading.value = true
   error.value = ''
   try {
-    universe.value = await api<Universe>('/api/strategy/universe')
+    const q = new URLSearchParams({ top_n: '20' })
+    if (date) q.set('date', date)
+    const data = await api<{ date?: string; strategies?: StrategyDef[]; history?: HistoryNav }>(
+      `/api/strategy/stock-picks?${q}`,
+    )
+    asof.value = data.date || date || ''
+    viewedDate.value = String(data.history?.current || data.date || date || '')
+    history.value = data.history || {}
+    strategies.value = data.strategies || []
+    if (!strategies.value.some((s) => s.id === selectedStrategyId.value) && strategies.value[0]) {
+      selectedStrategyId.value = strategies.value[0].id
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    loading.value = false
   }
 }
 
-// 切换策略按钮选中项
+function goPrev() {
+  if (history.value.prev) void refreshPicks(history.value.prev)
+}
+
+function goNext() {
+  if (history.value.next) void refreshPicks(history.value.next)
+}
+
+function goLatest() {
+  viewedDate.value = ''
+  void refreshPicks('')
+}
+
 function selectStrategy(id: string) {
   selectedStrategyId.value = id
 }
 
-// 涨跌幅格式化为带符号百分比
-function formatPct(v: number): string {
+function formatPct(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—'
   const sign = v > 0 ? '+' : ''
   return `${sign}${v.toFixed(2)}%`
 }
 
-// 现价格式化为两位小数
-function formatPrice(v: number): string {
+function formatPrice(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—'
   return v.toFixed(2)
 }
 
+function formatScore(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  return v.toFixed(1)
+}
+
 onMounted(() => {
-  void refreshUniverse()
+  void refreshPicks()
 })
 </script>
 
@@ -233,9 +166,22 @@ onMounted(() => {
     </div>
 
     <section v-if="activeTab === 'strategy'" class="panel">
+      <div class="date-pager">
+        <button type="button" class="strategy-btn" :disabled="!canPrev || loading" @click="goPrev">前一日</button>
+        <span class="asof">{{ asofText }}</span>
+        <span v-if="pageText" class="pager-idx">{{ pageText }}</span>
+        <button type="button" class="strategy-btn" :disabled="!canNext || loading" @click="goNext">后一日</button>
+        <button
+          v-if="history.next"
+          type="button"
+          class="strategy-btn"
+          :disabled="loading"
+          @click="goLatest"
+        >最新</button>
+      </div>
       <div class="strategy-row">
         <button
-          v-for="s in STRATEGY_DEFS"
+          v-for="s in strategies"
           :key="s.id"
           type="button"
           class="strategy-btn"
@@ -245,39 +191,50 @@ onMounted(() => {
           {{ s.name }}
         </button>
       </div>
+      <p v-if="loading" class="muted">正在用真实截面打分…</p>
+      <p v-if="error" class="hint">{{ error }}</p>
 
-      <div class="factor-block">
-        <div class="block-label">当前策略绑定因子</div>
+      <div v-if="selectedStrategy" class="factor-block">
+        <div class="block-label">
+          {{ selectedStrategy.name }} · 截面 {{ asofText }}
+          <span v-if="selectedStrategy.matched != null"> · 观察池 {{ selectedStrategy.matched }} 只</span>
+          <span> · 综合得分 Top {{ resultRows.length || 20 }}</span>
+        </div>
+        <p class="principle">{{ selectedStrategy.principle }}</p>
+        <div class="block-label">绑定因子</div>
         <div v-if="boundFactors.length" class="factor-row">
           <span v-for="f in boundFactors" :key="f.code" class="factor-chip" :title="f.code">
             {{ f.label }}
           </span>
         </div>
         <p v-else class="muted">尚未绑定因子</p>
-        <p v-if="error" class="hint">因子池接口暂不可用（{{ error }}），已用本地标签兜底。</p>
       </div>
 
       <div class="table-card">
         <table class="result-table">
           <thead>
             <tr>
+              <th>排名</th>
               <th>代码</th>
               <th>名称</th>
               <th>涨跌幅</th>
-              <th>现价</th>
+              <th>收盘</th>
+              <th>综合得分</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in resultRows" :key="row.code">
+              <td class="mono">{{ row.rank ?? '—' }}</td>
               <td class="mono">{{ row.code }}</td>
               <td>{{ row.name }}</td>
-              <td :class="{ up: row.changePct > 0, down: row.changePct < 0 }">
+              <td :class="{ up: (row.changePct || 0) > 0, down: (row.changePct || 0) < 0 }">
                 {{ formatPct(row.changePct) }}
               </td>
               <td class="mono">{{ formatPrice(row.price) }}</td>
+              <td class="mono">{{ formatScore(row.score) }}</td>
             </tr>
             <tr v-if="!resultRows.length">
-              <td colspan="4" class="empty">暂无符合条件的标的</td>
+              <td colspan="6" class="empty">{{ loading ? '加载中…' : '暂无符合条件的标的' }}</td>
             </tr>
           </tbody>
         </table>
@@ -334,6 +291,20 @@ onMounted(() => {
   gap: 14px;
 }
 
+.date-pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.asof {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.pager-idx {
+  font-size: 0.78rem;
+  color: rgba(232, 234, 237, 0.55);
+}
 .strategy-row {
   display: flex;
   flex-wrap: wrap;
@@ -376,6 +347,12 @@ onMounted(() => {
   font-weight: 600;
   letter-spacing: 0.04em;
   color: rgba(232, 234, 237, 0.55);
+}
+.principle {
+  margin: 0 0 10px;
+  color: rgba(232, 234, 237, 0.78);
+  font-size: 0.88rem;
+  line-height: 1.55;
 }
 
 .factor-row {

@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { createChart, LineSeries } from 'lightweight-charts'
 import RightPanel from '../stock/components/RightPanel.vue'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'
 
 // ── 银行金价（顶栏）──────────────────────────────────────────
 interface BankItem {

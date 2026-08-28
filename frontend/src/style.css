@@ -14,6 +14,33 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  /* Firefox：细滑块、轨道透明 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 234, 237, 0.28) transparent;
+}
+
+/* Chromium：去掉滚动条灰色底，只留滑块 */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(232, 234, 237, 0.28);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 234, 237, 0.48);
+  background-clip: content-box;
 }
 
 body {

@@ -119,9 +119,24 @@ export async function getArtifact(req: Request, res: Response) {
   }
 }
 
-export async function getLatestSignal(_req: Request, res: Response) {
+export async function getLatestSignal(req: Request, res: Response) {
   try {
-    res.json(await strategyProxy('/api/signal/latest'))
+    const q = new URLSearchParams()
+    if (req.query.date) q.set('date', String(req.query.date))
+    const suffix = q.toString() ? `?${q}` : ''
+    res.json(await strategyProxy(`/api/signal/latest${suffix}`))
+  } catch (e: unknown) {
+    res.status(statusOf(e)).json({ error: errorMessage(e) })
+  }
+}
+
+export async function getStockPicks(req: Request, res: Response) {
+  try {
+    const q = new URLSearchParams()
+    if (req.query.date) q.set('date', String(req.query.date))
+    if (req.query.top_n) q.set('top_n', String(req.query.top_n))
+    const suffix = q.toString() ? `?${q}` : ''
+    res.json(await strategyProxy(`/api/stock-picks${suffix}`))
   } catch (e: unknown) {
     res.status(statusOf(e)).json({ error: errorMessage(e) })
   }

@@ -199,6 +199,23 @@ def _validate_signal_state(
     return problems
 
 
+def _top_rank_rows(scores: np.ndarray, tickers: list[str], k: int = 10) -> list[dict]:
+    """截面前 k 名，供轮动页默认展示（持仓仍是 pos_size）。"""
+    idx = _stable_topk_indices(scores, k)
+    rows: list[dict] = []
+    for rank, i in enumerate(idx, start=1):
+        if i < 0 or i >= len(tickers) or not np.isfinite(scores[i]):
+            continue
+        rows.append(
+            {
+                "symbol": str(tickers[i]),
+                "score": round(float(scores[i]), 6),
+                "rank": rank,
+            }
+        )
+    return rows
+
+
 def _stable_topk_indices(scores: np.ndarray, k: int) -> list[int]:
     # 与 stable_topk_indices(numba) 同逻辑：分数降序，分数相同索引升序
     # k 很小，直接 O(kN) 选择。
@@ -405,7 +422,7 @@ def main() -> int:
         if problems:
             for p in problems:
                 logger.warning(f"状态文件校验失败，冷启动: {p}")
-            print(f"⚠️  状态文件校验失败 ({len(problems)} 项)，冷启动（不使用旧 state）")
+            print(f"[warn] 状态文件校验失败 ({len(problems)} 项)，冷启动（不使用旧 state）")
             for p in problems:
                 print(f"   - {p}")
             prev_state = None  # cold start
@@ -829,6 +846,7 @@ def main() -> int:
                 "is_rebalance": is_rebalance_day,
                 "picks": s_picked_tickers,
                 "scores": s_picked_scores,
+                "rank_top": _top_rank_rows(s_scores, tickers, 10),
                 "timing_ratio": timing_ratio,
                 "regime_ratio": regime_ratio,
                 "hyst_kept": s_hyst_kept,
@@ -1037,7 +1055,7 @@ def main() -> int:
         "\n".join(md_lines) + "\n", encoding="utf-8"
     )
 
-    print(f"✅ wrote: {outdir}")
+    print(f"[ok] wrote: {outdir}")
     print(f"- {outdir / 'TODAY_SIGNAL.md'}")
     print(f"- {outdir / 'signals_per_strategy.csv'}")
     print(f"- {outdir / 'aggregate_weights.csv'}")

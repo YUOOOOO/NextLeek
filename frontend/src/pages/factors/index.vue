@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+const API = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'
 
 type FactorInfo = {
   code: string

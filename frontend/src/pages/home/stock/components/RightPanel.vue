@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'
 
 interface AgentResult { agentId: string; name: string; type: string; response: string; error?: boolean }
 interface StrategyItem { id: string; name: string }

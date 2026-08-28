@@ -111,6 +111,7 @@ def update_daily(
     start: str | None = None,
     end: str | None = None,
     progress: ProgressCb | None = None,
+    archive: bool = True,
 ) -> dict[str, Any]:
     ensure_data_dirs()
     cfg = load_config()
@@ -124,15 +125,40 @@ def update_daily(
     ok: list[str] = []
     failed: list[dict[str, str]] = []
     n = len(symbols)
+    end_ymd = _as_ymd(end, date.today().isoformat())
     for i, code in enumerate(symbols):
         if progress:
             progress(f"fetch {code}", (i / max(n, 1)) * 100)
+        path = RAW_DAILY_DIR / f"{parquet_stem(code)}.parquet"
+        old: pd.DataFrame | None = None
+        fetch_start = start
+        if path.exists():
+            try:
+                old = pd.read_parquet(path)
+                if old is not None and not old.empty and "trade_date" in old.columns:
+                    last = str(old["trade_date"].astype(str).str.replace("-", "").str[:8].max())
+                    if last >= end_ymd:
+                        ok.append(code)
+                        continue
+                    # 从本地最后一天重叠拉，合并写入，禁止整文件截断
+                    fetch_start = last
+            except Exception:
+                old = None
         try:
-            df = _fetch_etf_hist(code, start, end, client=client)
+            df = _fetch_etf_hist(code, fetch_start, end, client=client)
             if df.empty:
-                failed.append({"code": code, "error": "empty"})
+                if old is not None and not old.empty:
+                    ok.append(code)
+                else:
+                    failed.append({"code": code, "error": "empty"})
                 continue
-            path = RAW_DAILY_DIR / f"{parquet_stem(code)}.parquet"
+            if old is not None and not old.empty:
+                df = pd.concat([old, df], ignore_index=True)
+            df = (
+                df.drop_duplicates("trade_date", keep="last")
+                .sort_values("trade_date")
+                .reset_index(drop=True)
+            )
             df.to_parquet(path, index=False)
             ok.append(code)
         except Exception as exc:  # noqa: BLE001
@@ -147,7 +173,7 @@ def update_daily(
             f"Tushare update failed for all {len(failed)} symbols; "
             f"first failure {first['code']}: {first['error']}"
         )
-    return {
+    result = {
         "provider": client.provider,
         "ok_count": len(ok),
         "fail_count": len(failed),
@@ -157,6 +183,14 @@ def update_daily(
         "end": end,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    if archive:
+        try:
+            from ..history_store import archive_market_day
+
+            result["market_archive"] = archive_market_day(end)
+        except Exception as exc:  # noqa: BLE001
+            result["market_archive"] = {"ok": False, "error": str(exc)}
+    return result
 
 
 def update_fund_share(
@@ -358,7 +392,9 @@ def update_market_data(
     if include_daily:
         if progress:
             progress("daily", 5)
-        out["daily"] = update_daily(symbols=symbols, start=start, end=end, progress=progress)
+        out["daily"] = update_daily(
+            symbols=symbols, start=start, end=end, progress=progress, archive=False
+        )
     if include_share:
         if progress:
             progress("fund_share", 40)
@@ -374,4 +410,15 @@ def update_market_data(
     if progress:
         progress("done", 100)
     out["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    # 把当天截面再冻一份，回测对照用；主路径仍是 raw/ETF 增量湖
+    try:
+        from ..history_store import archive_market_day
+
+        stamp = None
+        daily = out.get("daily") or {}
+        if isinstance(daily, dict) and daily.get("end"):
+            stamp = str(daily.get("end"))
+        out["market_archive"] = archive_market_day(stamp)
+    except Exception as exc:  # noqa: BLE001
+        out["market_archive"] = {"ok": False, "error": str(exc)}
     return out

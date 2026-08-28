@@ -1,0 +1,60 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+      args:
+        VITE_API_BASE: ""
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: server
+    environment:
+      PORT: "3000"
+      STRATEGY_API_URL: http://strategy-api:8001
+      DATA_API_URL: http://data-api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - strategy-api
+      - data-api
+
+  strategy-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: strategy-api
+    environment:
+      TUSHARE_PROVIDER: ${TUSHARE_PROVIDER:-auto}
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
+      TUSHARE_PRO_URL: ${TUSHARE_PRO_URL:-}
+      TUSHARE_PROMAX_KEY: ${TUSHARE_PROMAX_KEY:-}
+      TUSHARE_PROMAX_URL: ${TUSHARE_PROMAX_URL:-}
+      DAILY_SCHEDULE_HOUR: ${DAILY_SCHEDULE_HOUR:-15}
+      DAILY_SCHEDULE_MINUTE: ${DAILY_SCHEDULE_MINUTE:-30}
+    ports:
+      - "8001:8001"
+    volumes:
+      - strategy-data:/app/data
+      - strategy-cache:/app/.cache
+      - strategy-results:/app/results
+
+  data-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: data-api
+    ports:
+      - "8000:8000"
+
+volumes:
+  strategy-data:
+  strategy-cache:
+  strategy-results:

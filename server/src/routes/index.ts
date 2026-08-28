@@ -28,6 +28,7 @@ import {
   getJobResult,
   getArtifact,
   getLatestSignal,
+  getStockPicks,
 } from '../controllers/strategy.controller'
 import goldRouter from '../controllers/gold.controller'
 
@@ -51,6 +52,7 @@ router.get('/strategy/jobs/:id', getJob)
 router.get('/strategy/jobs/:id/result', getJobResult)
 router.get('/strategy/artifacts/:id/:name', getArtifact)
 router.get('/strategy/signal/latest', getLatestSignal)
+router.get('/strategy/stock-picks', getStockPicks)
 
 router.post('/ai/chat', chat)
 router.get('/ai/strategies', listStrategies)

@@ -27,3 +27,9 @@ strategy-api/.cache/
 
 # local research clone (do not commit)
 _tmp_etf_rot/
+
+.pnpm-store/
+marketplace-upload/
+strategy-api/results/
+strategy-api/configs/backups/
+

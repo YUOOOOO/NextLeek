@@ -23,6 +23,8 @@ Browser → frontend (Vite :5173)
 
 `data-api` / `strategy-api` **不在** npm workspaces，需单独启动。
 
+Docker：`docker compose up --build`，浏览器打开 http://localhost:8080 。说明见 [`docs/docker.md`](docs/docker.md)。
+
 环境变量：
 
 - `DATA_API_URL`：server → data-api，默认 `http://localhost:8000`

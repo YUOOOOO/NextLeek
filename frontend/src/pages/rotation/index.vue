@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:3000'
+const API = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000'
+
+/** 日常测试日 YYYY-MM-DD；空字符串则用今天。测完改回 '' */
+const DAILY_TEST_ASOF = '2026-08-25'
 
 
 type FactorInfo = {
@@ -30,6 +33,13 @@ type Universe = {
     pos_size?: number
     hysteresis?: { delta_rank?: number; min_hold_days?: number }
   }
+  schedule?: {
+    enabled?: boolean
+    label?: string
+    next_run_text?: string
+    hour?: number
+    minute?: number
+  }
 }
 
 type Job = {
@@ -52,6 +62,18 @@ type SignalAction = {
   label: string
   reason: string
   hold_days?: number
+  since_date?: string | null
+  hold_return?: number | null
+  entry_close?: number | null
+  last_close?: number | null
+  price_date?: string | null
+  score?: number | null
+}
+
+type RankRow = {
+  symbol: string
+  score?: number | null
+  rank?: number
 }
 
 type SignalStrategy = {
@@ -67,6 +89,16 @@ type SignalStrategy = {
   combo?: string
   source?: string
   generated_at?: string | null
+  rank_top?: RankRow[]
+}
+
+type HistoryNav = {
+  dates?: string[]
+  current?: string | null
+  prev?: string | null
+  next?: string | null
+  index?: number | null
+  total?: number
 }
 
 type SignalPayload = {
@@ -74,6 +106,7 @@ type SignalPayload = {
   note?: string | null
   asof?: string | null
   version?: string
+  history?: HistoryNav
 }
 
 type SealedItem = {
@@ -208,6 +241,34 @@ const FACTOR_LABEL: Record<string, string> = {
   MARGIN_BUY_RATIO: '融资买入比',
 }
 
+const FACTOR_PRINCIPLE: Record<string, string> = {
+  ADX_14D: '平均趋向指数，衡量趋势强弱（不管涨跌方向）。高 ADX 更偏单边趋势，低 ADX 更像震荡。',
+  AMIHUD_ILLIQUIDITY:
+    'Amihud 非流动性：|收益|/成交额。越高冲击越大；截面常偏好更好成交的标的（low_is_good）。',
+  BREAKOUT_20D: '近 20 日突破信号：是否站上近期高点区间，捕捉趋势启动或加速。',
+  CALMAR_RATIO_60D: '约 60 日收益相对最大回撤的性价比，偏好「涨且回撤可控」的中期路径。',
+  CORRELATION_TO_MARKET_20D:
+    '与市场近 20 日相关性。过高≈纯贝塔；常偏好更独立的标的（low_is_good）。',
+  GK_VOL_RATIO_20D: '用高低开收估计的波动相对比值，刻画实现波动结构（微观/风险维）。',
+  MAX_DD_60D: '近 60 日最大回撤。回撤越小路径质量越好（low_is_good）。',
+  MOM_20D: '经典 20 日动量：涨得多的截面占优，ETF 轮动核心趋势维，但拥挤时回撤大。',
+  OBV_SLOPE_10D: 'OBV 近 10 日斜率：涨跌是否有累计成交量确认。',
+  PRICE_POSITION_20D: '收盘价在近 20 日高低点中的位置（0~1），短周期强弱态。',
+  PRICE_POSITION_120D: '收盘价在近 120 日高低点中的位置，中期结构高低，与 20 日互补。',
+  PV_CORR_20D: '价量相关性。价涨放量更健康，价涨缩量则趋势质量打折。',
+  SHARPE_RATIO_20D: '近 20 日风险调整动量，惩罚大起大落的上涨。',
+  SLOPE_20D: '近 20 日价格时间回归斜率，平滑版趋势方向与速度。',
+  UP_DOWN_VOL_RATIO_20D: '上涨日量/下跌日量，买盘量能是否占优。',
+  VOL_RATIO_20D: '近端波动相对更长窗是否升温，风险/状态维。',
+  VORTEX_14D: '涡旋指标：正/反向趋势运动相对优势，与动量同族但构造不同。',
+  SHARE_CHG_5D: 'ETF 5 日份额变化（申赎）。历史常作逆向拥挤度（low_is_good）。',
+  SHARE_CHG_10D: '10 日份额变化，份额类里较稳的一档，偏资金流逆向解读。',
+  SHARE_CHG_20D: '20 日份额变化，看中等周期申赎是否持续。',
+  SHARE_ACCEL: '份额变化加速度，捕捉申赎节奏拐点，与水平变化率不完全同号。',
+  MARGIN_CHG_10D: '融资余额 10 日变化，杠杆加减仓代理；过热时常逆向（low_is_good）。',
+  MARGIN_BUY_RATIO: '融资买入占比，杠杆买盘活跃度；过高偏投机拥挤（low_is_good）。',
+}
+
 /** 日常优先；研究步骤沉底 */
 const PIPELINE_STEPS: PipelineStep[] = [
   {
@@ -265,6 +326,8 @@ const universe = ref<Universe | null>(null)
 const sealed = ref<SealedPayload | null>(null)
 const jobs = ref<Job[]>([])
 const signal = ref<SignalPayload | null>(null)
+/** 空=看最新；有值则翻历史日，轮询不再覆盖 */
+const viewedSignalDate = ref('')
 const result = ref<unknown>(null)
 const error = ref('')
 const busy = ref(false)
@@ -272,9 +335,14 @@ const lastJobId = ref('')
 const sealNotice = ref('')
 const publishBusy = ref(false)
 const showResearch = ref(false)
+/** 正在拉取某一任务的 result.json，避免卡片空白闪一下 */
+const resultLoading = ref(false)
 /** wfo=自动枚举；manual=本层手选因子后进 VEC/BT */
 const researchMode = ref<'wfo' | 'manual'>('wfo')
 const selectedFactorCodes = ref<string[]>([])
+const detailFactorCode = ref<string | null>(null)
+const detailOpen = ref(false)
+const modalRootRef = ref<HTMLElement | null>(null)
 
 let timer: number | undefined
 
@@ -305,6 +373,7 @@ const factorPool = computed((): FactorInfo[] => {
       ...item,
       label: item.label || factorText(item.code),
       group: item.group || (OHLCV_FACTOR_CODES.has(item.code) ? '行情类' : '份额/融资类'),
+      principle: item.principle || FACTOR_PRINCIPLE[item.code] || item.summary || '',
     }))
   }
   const codes = universe.value?.active_factors || Object.keys(FACTOR_LABEL)
@@ -312,6 +381,8 @@ const factorPool = computed((): FactorInfo[] => {
     code,
     label: factorText(code),
     group: OHLCV_FACTOR_CODES.has(code) ? '行情类' : '份额/融资类',
+    principle: FACTOR_PRINCIPLE[code] || '',
+    summary: factorText(code),
   }))
 })
 
@@ -327,11 +398,43 @@ const manualSelectOk = computed(() => {
 
 const tradeableCount = computed(() => universe.value?.tradeable?.length ?? 0)
 const symbolCount = computed(() => universe.value?.symbols?.length ?? 0)
-const signalDate = computed(() => formatDate(signal.value?.asof || undefined))
+const signalDate = computed(() => formatDate(signal.value?.asof || viewedSignalDate.value || undefined))
+const signalHistory = computed(() => signal.value?.history || {})
+const canPrevSignal = computed(() => Boolean(signalHistory.value.prev))
+const canNextSignal = computed(() => Boolean(signalHistory.value.next))
+const signalPageText = computed(() => {
+  const h = signalHistory.value
+  if (!h.total) return ''
+  return `${h.index || 0}/${h.total}`
+})
 const posSize = computed(() => universe.value?.backtest?.pos_size ?? 2)
 const rebalanceDays = computed(() => universe.value?.backtest?.freq ?? 5)
+const scheduleLabel = computed(
+  () => universe.value?.schedule?.label || '每个交易日 15:30（北京时间）',
+)
+const nextScheduleText = computed(() => universe.value?.schedule?.next_run_text || '')
+const scheduleHour = computed(() => universe.value?.schedule?.hour ?? 15)
+const scheduleMinute = computed(() => universe.value?.schedule?.minute ?? 30)
 const deltaRank = computed(() => universe.value?.backtest?.hysteresis?.delta_rank ?? 0.1)
 const minHoldDays = computed(() => universe.value?.backtest?.hysteresis?.min_hold_days ?? 9)
+
+/** 顶栏「当前任务」只看任务执行态，不看信号日 */
+const currentTask = computed(() => {
+  const active = jobs.value.find((j) => j.status === 'running' || j.status === 'queued')
+  if (busy.value || active) {
+    const job = active || latestJob.value
+    return { label: '进行中', extra: job ? jobTypeLabel(job.type) : '' }
+  }
+  const job = latestJob.value
+  if (!job) return { label: '无', extra: '' }
+  if (job.status === 'failed') {
+    return { label: '未完成', extra: jobTypeLabel(job.type) }
+  }
+  if (job.status === 'succeeded') {
+    return { label: '已完成', extra: jobTypeLabel(job.type) }
+  }
+  return { label: '无', extra: '' }
+})
 
 const strategies = computed(() => {
   const fromSignal = signal.value?.strategies || []
@@ -461,6 +564,38 @@ function factorText(code: string): string {
   return FACTOR_LABEL[code] || code
 }
 
+const detailFactor = computed(() => {
+  const code = detailFactorCode.value
+  if (!code) return null
+  return (
+    factorPool.value.find((f) => f.code === code) || {
+      code,
+      label: factorText(code),
+      group: OHLCV_FACTOR_CODES.has(code) ? '行情类' : '份额/融资类',
+      principle: FACTOR_PRINCIPLE[code] || '',
+      summary: factorText(code),
+    }
+  )
+})
+
+function setBodyScrollLocked(locked: boolean) {
+  document.body.style.overflow = locked ? 'hidden' : ''
+}
+
+/** 点击因子胶囊：打开原理弹窗 */
+async function openFactorDetail(code: string) {
+  detailFactorCode.value = code
+  detailOpen.value = true
+  setBodyScrollLocked(true)
+  await nextTick()
+  modalRootRef.value?.focus()
+}
+
+function closeFactorDetail() {
+  detailOpen.value = false
+  setBodyScrollLocked(false)
+}
+
 function isFactorSelected(code: string): boolean {
   return selectedFactorSet.value.has(code)
 }
@@ -553,6 +688,19 @@ function formatDate(raw?: string | null): string {
   return String(raw).slice(0, 10)
 }
 
+/** 任务最后操作时间：优先 updated_at，否则 created_at */
+function formatJobTime(job: Job): string {
+  const raw = job.updated_at || job.created_at
+  if (!raw) return '—'
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) {
+    const text = String(raw).replace('T', ' ')
+    return text.length >= 16 ? text.slice(0, 16) : text
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function sourceText(source?: string): string {
   if (!source) return ''
   if (source.includes('shadow')) return '正式信号'
@@ -570,6 +718,30 @@ function displayActions(strategy: SignalStrategy): SignalAction[] {
     reason: '历史信号，无本期买卖明细',
     hold_days: strategy.hold_days?.[symbol],
   }))
+}
+
+const SCORE_TOP_N = 10
+
+/** 评分默认前 10；持仓代码打标，方便对照 */
+function displayScoreRows(strategy: SignalStrategy): RankRow[] {
+  const held = new Set(strategy.holdings || [])
+  const fromSnap = (strategy.rank_top || []).filter((r) => r.symbol)
+  if (fromSnap.length) {
+    return fromSnap
+      .slice()
+      .sort((a, b) => (a.rank || 99) - (b.rank || 99) || (b.score || 0) - (a.score || 0))
+      .slice(0, SCORE_TOP_N)
+  }
+  // 旧快照没有 rank_top 时，用持仓评分凑一列，不够 10 就只展示已有的
+  return displayActions(strategy)
+    .filter((a) => a.score != null || held.has(a.symbol))
+    .sort((a, b) => (b.score || -Infinity) - (a.score || -Infinity))
+    .slice(0, SCORE_TOP_N)
+    .map((a, i) => ({ symbol: a.symbol, score: a.score ?? null, rank: i + 1 }))
+}
+
+function isHolding(strategy: SignalStrategy, symbol: string): boolean {
+  return (strategy.holdings || []).includes(symbol)
 }
 
 function jobTypeLabel(type?: string): string {
@@ -643,6 +815,289 @@ function pickMetrics(data: Record<string, unknown>): Record<string, unknown> | u
   return Object.keys(out).length ? out : undefined
 }
 
+type EquityPoint = { date: string; equity: number }
+
+type MetricItem = {
+  key: string
+  label: string
+  text: string
+  tone: 'pos' | 'neg' | 'neu'
+}
+
+type ComboRow = {
+  key: string
+  factors: string[]
+  score?: number
+  ic?: number
+  totalReturn?: number
+  sharpe?: number
+  maxDrawdown?: number
+  trades?: number
+  trainReturn?: number
+}
+
+type ResultKind = 'backtest' | 'wfo' | 'signal' | 'update' | 'generic'
+
+type ParsedResult = {
+  kind: ResultKind
+  title: string
+  engine?: string
+  factors: string[]
+  metrics: MetricItem[]
+  extra: { label: string; text: string }[]
+  equity: EquityPoint[]
+  combos: ComboRow[]
+  comboCaption?: string
+}
+
+/** 把未知 JSON 收成对象；数组/空值直接丢掉 */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value)
+  }
+  return undefined
+}
+
+/** 收益/回撤一类比例：0.123 → +12.30% */
+function formatPct(value: unknown, digits = 2): string {
+  const n = asNumber(value)
+  if (n == null) return '—'
+  return `${n >= 0 ? '+' : ''}${(n * 100).toFixed(digits)}%`
+}
+
+function formatNum(value: unknown, digits = 2): string {
+  const n = asNumber(value)
+  if (n == null) return '—'
+  return n.toFixed(digits)
+}
+
+function formatInt(value: unknown): string {
+  const n = asNumber(value)
+  if (n == null) return '—'
+  return String(Math.round(n))
+}
+
+/** 净值点数：带千分位，保留最多 2 位 */
+function formatPoints(value: unknown): string {
+  const n = asNumber(value)
+  if (n == null) return '—'
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
+}
+
+function metricTone(value: unknown, invert = false): 'pos' | 'neg' | 'neu' {
+  const n = asNumber(value)
+  if (n == null || n === 0) return 'neu'
+  const pos = invert ? n < 0 : n > 0
+  return pos ? 'pos' : 'neg'
+}
+
+function parseEquityCurve(raw: unknown): EquityPoint[] {
+  if (!Array.isArray(raw)) return []
+  const out: EquityPoint[] = []
+  for (const item of raw) {
+    const row = asRecord(item)
+    if (!row) continue
+    const equity = asNumber(row.equity ?? row.value ?? row.nav)
+    if (equity == null) continue
+    out.push({ date: String(row.date ?? row.trade_date ?? ''), equity })
+  }
+  return out
+}
+
+function parseComboRows(raw: unknown, limit = 12): ComboRow[] {
+  if (!Array.isArray(raw)) return []
+  const out: ComboRow[] = []
+  for (let i = 0; i < raw.length && out.length < limit; i++) {
+    const item = raw[i]
+    let factors: string[] = []
+    let score: number | undefined
+    let ic: number | undefined
+    let totalReturn: number | undefined
+    let sharpe: number | undefined
+    let maxDrawdown: number | undefined
+    let trades: number | undefined
+    let trainReturn: number | undefined
+    if (typeof item === 'string') {
+      factors = dedupeFactors(normalizeFactorList(item))
+    } else {
+      const row = asRecord(item)
+      if (!row) continue
+      factors = dedupeFactors([
+        ...normalizeFactorList(row.factors),
+        ...normalizeFactorList(row.combo),
+      ])
+      score = asNumber(row.score)
+      ic = asNumber(row.ic)
+      totalReturn = asNumber(row.total_return ?? row.bt_return ?? row.vec_return)
+      sharpe = asNumber(row.sharpe ?? row.sharpe_ratio ?? row.bt_sharpe_ratio ?? row.train_sharpe)
+      maxDrawdown = asNumber(row.max_drawdown ?? row.train_maxdd ?? row.bt_max_drawdown)
+      trades = asNumber(row.trades)
+      trainReturn = asNumber(row.train_return)
+    }
+    if (!factors.length && totalReturn == null && sharpe == null) continue
+    out.push({
+      key: `${factors.join('+') || 'row'}-${i}`,
+      factors,
+      score,
+      ic,
+      totalReturn,
+      sharpe,
+      maxDrawdown,
+      trades,
+      trainReturn,
+    })
+  }
+  return out
+}
+
+function extractFactorsFromPayload(data: Record<string, unknown>): string[] {
+  let factors = dedupeFactors([
+    ...normalizeFactorList(data.factors),
+    ...normalizeFactorList(data.requested_factors),
+    ...normalizeFactorList(data.combo),
+    ...normalizeFactorList(data.best_combo),
+    ...normalizeFactorList(data.manual_combo),
+  ])
+  if (factors.length < 2) {
+    const firstCombo = parseComboRows(
+      data.candidates || data.vec_top || data.top_combos || data.winners,
+      1,
+    )[0]
+    if (firstCombo?.factors.length) factors = firstCombo.factors
+  }
+  return factors
+}
+
+/** 按任务类型把 result.json 收成页面能画的结构 */
+function parseJobResult(data: unknown, job?: Job | null): ParsedResult | null {
+  const rec = asRecord(data)
+  if (!rec) return null
+  const type = job?.type || String(rec.engine || rec.type || '')
+  const factors = extractFactorsFromPayload(rec)
+  const extra: ParsedResult['extra'] = []
+  const metrics: MetricItem[] = []
+
+  const pushMetric = (key: string, label: string, text: string, tone: MetricItem['tone'] = 'neu') => {
+    if (text === '—') return
+    metrics.push({ key, label, text, tone })
+  }
+
+  if (type === 'update-data' || rec.updated != null || rec.files_written != null) {
+    const updated = asNumber(rec.updated ?? rec.n_updated ?? rec.symbol_count)
+    const written = asNumber(rec.files_written ?? rec.wrote)
+    if (updated != null) extra.push({ label: '更新标的', text: formatInt(updated) })
+    if (written != null) extra.push({ label: '写入文件', text: formatInt(written) })
+    if (rec.message) extra.push({ label: '说明', text: String(rec.message) })
+    return { kind: 'update', title: '行情已写入本地', factors, metrics, extra, equity: [], combos: [] }
+  }
+
+  if (type === 'signal' || rec.runtime === 'canonical') {
+    extra.push({ label: '信号日', text: formatDate(String(rec.asof || '')) })
+    extra.push({ label: '执行日', text: formatDate(String(rec.trade_date || '')) })
+    if (rec.runtime) extra.push({ label: '引擎', text: String(rec.runtime) })
+    return {
+      kind: 'signal',
+      title: '今日信号已生成',
+      engine: String(rec.runtime || 'canonical'),
+      factors,
+      metrics,
+      extra,
+      equity: [],
+      combos: [],
+    }
+  }
+
+  const totalReturn = asNumber(rec.total_return ?? rec.bt_return ?? rec.vec_return)
+  const sharpe = asNumber(rec.sharpe ?? rec.sharpe_ratio ?? rec.bt_sharpe_ratio)
+  const maxDd = asNumber(rec.max_drawdown ?? rec.maxdd ?? rec.bt_max_drawdown)
+  const annual = asNumber(rec.annual_return ?? rec.bt_annual_return)
+  const calmar = asNumber(rec.calmar_ratio ?? rec.calmar)
+  const holdout = asNumber(rec.holdout_return ?? rec.bt_holdout_return)
+  const trades = asNumber(rec.trades)
+  const days = asNumber(rec.days)
+  const equity = parseEquityCurve(rec.equity_curve)
+  const isBacktest =
+    type === 'vec' ||
+    type === 'bt' ||
+    rec.engine === 'vec' ||
+    rec.engine === 'bt' ||
+    totalReturn != null ||
+    equity.length > 0
+
+  if (isBacktest && (totalReturn != null || sharpe != null || equity.length)) {
+    pushMetric('return', '总收益', formatPct(totalReturn), metricTone(totalReturn))
+    pushMetric('annual', '年化', formatPct(annual), metricTone(annual))
+    pushMetric('sharpe', '夏普', formatNum(sharpe), metricTone(sharpe))
+    pushMetric('maxdd', '最大回撤', formatPct(maxDd), metricTone(maxDd, true))
+    pushMetric('calmar', 'Calmar', formatNum(calmar), metricTone(calmar))
+    pushMetric('holdout', '样本外收益', formatPct(holdout), metricTone(holdout))
+    if (trades != null) extra.push({ label: '交易次数', text: formatInt(trades) })
+    if (days != null) extra.push({ label: '回测天数', text: formatInt(days) })
+    const startDate = formatDate(String(equity[0]?.date || rec.start || ''))
+    const endDate = formatDate(String(equity[equity.length - 1]?.date || rec.end || ''))
+    const startPts = equity.length ? formatPoints(equity[0].equity) : ''
+    const endPts = equity.length ? formatPoints(equity[equity.length - 1].equity) : ''
+    extra.push({
+      label: '起始',
+      text: startPts ? `${startDate} · ${startPts}` : startDate,
+    })
+    extra.push({
+      label: '结束',
+      text: endPts ? `${endDate} · ${endPts}` : endDate,
+    })
+    if (rec.n_symbols != null) extra.push({ label: '标的数', text: formatInt(rec.n_symbols) })
+    extra.push({ label: '引擎', text: String(rec.engine || type || '回测').toUpperCase() })
+    return {
+      kind: 'backtest',
+      title: type === 'bt' || rec.engine === 'bt' ? 'BT 真实回测结果' : 'VEC 快速回测结果',
+      engine: String(rec.engine || type || ''),
+      factors,
+      metrics,
+      extra: extra.filter((x) => x.text && x.text !== '— ~ —'),
+      equity,
+      combos: parseComboRows(rec.top_combos || rec.winners, 8),
+      comboCaption: '候选组合',
+    }
+  }
+
+  if (type === 'wfo' || rec.candidates || rec.combo_count_tested != null) {
+    extra.push({ label: '测过组合', text: formatInt(rec.combo_count_tested) })
+    extra.push({ label: '通过', text: formatInt(rec.combo_count_passed) })
+    extra.push({ label: '样本切分日', text: formatDate(String(rec.split_date || '')) })
+    const candidates = parseComboRows(rec.candidates, 10)
+    const vecTop = parseComboRows(rec.vec_top, 8)
+    return {
+      kind: 'wfo',
+      title: 'WFO 筛选结果',
+      factors,
+      metrics,
+      extra: extra.filter((x) => x.text !== '—'),
+      equity: [],
+      combos: vecTop.length ? vecTop : candidates,
+      comboCaption: vecTop.length ? 'VEC 初筛前列' : '训练期候选',
+    }
+  }
+
+  extra.push({ label: '任务', text: jobTypeLabel(type) })
+  if (rec.message) extra.push({ label: '说明', text: String(rec.message) })
+  return {
+    kind: 'generic',
+    title: '任务结果',
+    factors,
+    metrics,
+    extra,
+    equity: [],
+    combos: parseComboRows(rec.top_combos || rec.winners || rec.candidates, 8),
+  }
+}
+
 function extractCandidateFromPayload(data: unknown, jobId?: string, label = '研究结果'): PublishCandidate | null {
   if (!data || typeof data !== 'object') return null
   const o = data as Record<string, unknown>
@@ -696,6 +1151,49 @@ const researchCandidate = computed(() => {
   if (fromResult) return fromResult
   return null
 })
+
+/** 当前正在展示的那条任务（用来写标题来源） */
+const resultJob = computed(() => jobs.value.find((j) => j.job_id === lastJobId.value) || null)
+
+/** 把原始 result.json 收成指标 / 净值 / 候选表 */
+const parsedResult = computed(() => parseJobResult(result.value, resultJob.value))
+
+/** 用 SVG path 画净值，不另引图表库 */
+const equityChart = computed(() => {
+  const points = parsedResult.value?.equity || []
+  if (points.length < 2) return null
+  const values = points.map((p) => p.equity)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || Math.abs(max) || 1
+  const w = 640
+  const h = 168
+  const padX = 8
+  const padY = 10
+  const coords = points.map((p, i) => {
+    const x = padX + (i / (points.length - 1)) * (w - padX * 2)
+    const y = padY + (1 - (p.equity - min) / span) * (h - padY * 2)
+    return { x, y }
+  })
+  const line = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ')
+  const area = `${line} L${coords[coords.length - 1].x.toFixed(1)} ${h - 2} L${coords[0].x.toFixed(1)} ${h - 2} Z`
+  const up = points[points.length - 1].equity >= points[0].equity
+  return {
+    w,
+    h,
+    line,
+    area,
+    up,
+    start: formatDate(points[0].date),
+    end: formatDate(points[points.length - 1].date),
+    startEquity: formatPoints(points[0].equity),
+    endEquity: formatPoints(points[points.length - 1].equity),
+  }
+})
+
+function comboFactorsText(factors: string[]): string {
+  return factors.map((f) => factorText(f)).join(' + ') || '—'
+}
 
 const sealedPrimaryCombo = computed(() => {
   const list = sealed.value?.sealed || []
@@ -793,28 +1291,90 @@ async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   return data as T
 }
 
+/** 拉取任务结果；silent 用于刷新时的自动回填，失败不刷红字 */
+async function loadJobResult(id: string, silent = false) {
+  if (!id) return
+  resultLoading.value = true
+  try {
+    result.value = await api(`/api/strategy/jobs/${id}/result`)
+    lastJobId.value = id
+  } catch (e) {
+    if (!silent) error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    resultLoading.value = false
+  }
+}
+
+async function openJobResult(job: Job) {
+  if (job.status !== 'succeeded') return
+  error.value = ''
+  await loadJobResult(job.job_id)
+}
+
+function goSignalDate(stamp?: string | null) {
+  viewedSignalDate.value = stamp ? String(stamp).replace(/-/g, '') : ''
+  void refreshMeta(true)
+}
+
+function goPrevSignal() {
+  if (signalHistory.value.prev) goSignalDate(signalHistory.value.prev)
+}
+
+function goNextSignal() {
+  if (signalHistory.value.next) goSignalDate(signalHistory.value.next)
+}
+
+function goLatestSignal() {
+  goSignalDate('')
+}
+
+function pickLatestDisplayJob(list: Job[]): Job | null {
+  const prefer = ['bt', 'vec', 'wfo', 'pipeline', 'signal', 'update-data']
+  for (const type of prefer) {
+    const hit = list.find((j) => j.type === type && j.status === 'succeeded')
+    if (hit) return hit
+  }
+  return list.find((j) => j.status === 'succeeded') || null
+}
+
 async function refreshMeta(preserveError = false) {
   if (!preserveError) error.value = ''
   try {
+    const signalPath = viewedSignalDate.value
+      ? `/api/strategy/signal/latest?date=${viewedSignalDate.value}`
+      : '/api/strategy/signal/latest'
     const [u, s, sig, jl] = await Promise.all([
       api<Universe>('/api/strategy/universe'),
       api<SealedPayload>('/api/strategy/sealed'),
-      api<SignalPayload>('/api/strategy/signal/latest'),
+      api<SignalPayload>(signalPath),
       api<{ items: Job[] }>('/api/strategy/jobs?limit=20'),
     ])
     universe.value = u
     sealed.value = s
     signal.value = sig
     jobs.value = jl.items || []
+    // 刷新后若还没有结果，自动带出最近一次成功的研究/回测
+    if (!result.value && !busy.value) {
+      const current = lastJobId.value
+        ? jobs.value.find((j) => j.job_id === lastJobId.value && j.status === 'succeeded')
+        : null
+      const fallback = current || pickLatestDisplayJob(jobs.value)
+      if (fallback) await loadJobResult(fallback.job_id, true)
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
-async function startJob(type: string, params: Record<string, unknown> = {}) {
+async function startJob(
+  type: string,
+  params: Record<string, unknown> = {},
+  opts: { keepResult?: boolean } = {},
+) {
   busy.value = true
   error.value = ''
-  result.value = null
+  // 日常自动拉数不要冲掉下面的回测卡
+  if (!opts.keepResult) result.value = null
   try {
     const r = await api<{ job_id: string }>('/api/strategy/jobs', {
       method: 'POST',
@@ -827,6 +1387,82 @@ async function startJob(type: string, params: Record<string, unknown> = {}) {
   } finally {
     busy.value = false
     await refreshMeta(true)
+  }
+}
+
+/** 真实日历日 YYYYMMDD，用来判断今天是否已经自动跑过 */
+function todayStamp(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+}
+
+function dailyJobParams(type: string): Record<string, unknown> {
+  if (!DAILY_TEST_ASOF) return {}
+  // 行情始终拉到今天，测试日只钉信号 asof，避免把 26 号收盘截掉
+  if (type === 'update-data') return {}
+  if (type === 'signal') {
+    return { asof: DAILY_TEST_ASOF, trade_date: DAILY_TEST_ASOF.replace(/-/g, '') }
+  }
+  return {}
+}
+
+function jobDayStamp(job: Job): string {
+  const raw = job.updated_at || job.created_at
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) {
+    const digits = String(raw).replace(/\D/g, '')
+    return digits.slice(0, 8)
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+}
+
+function hasSucceededToday(type: string): boolean {
+  const today = todayStamp()
+  return jobs.value.some(
+    (j) => j.type === type && j.status === 'succeeded' && jobDayStamp(j) === today,
+  )
+}
+
+/** 过了定时点（默认 15:30）且当天还没跑完，打开页面时补跑。 */
+function pastDailySchedule(): boolean {
+  const now = new Date()
+  return now.getHours() > scheduleHour.value || (
+    now.getHours() === scheduleHour.value && now.getMinutes() >= scheduleMinute.value
+  )
+}
+
+async function ensureDailyPipeline() {
+  if (busy.value) return
+  const active = jobs.value.find(
+    (j) =>
+      (j.status === 'running' || j.status === 'queued') &&
+      (j.type === 'update-data' || j.type === 'signal'),
+  )
+  if (active) {
+    busy.value = true
+    try {
+      await pollJob(active.job_id)
+    } finally {
+      busy.value = false
+      await refreshMeta(true)
+    }
+  }
+
+  if (!pastDailySchedule()) return
+
+  const needUpdate = !hasSucceededToday('update-data')
+  const needSignal = !hasSucceededToday('signal')
+  if (!needUpdate && !needSignal) return
+
+  if (needUpdate) {
+    await startJob('update-data', dailyJobParams('update-data'), { keepResult: true })
+    if (error.value) return
+  }
+  if (needUpdate || needSignal) {
+    await startJob('signal', dailyJobParams('signal'), { keepResult: true })
   }
 }
 
@@ -850,12 +1486,14 @@ async function pollJob(id: string) {
   error.value = '等待超时，请稍后点刷新查看任务状态'
 }
 
-onMounted(() => {
-  refreshMeta()
+onMounted(async () => {
+  await refreshMeta()
+  await ensureDailyPipeline()
   timer = window.setInterval(() => refreshMeta(true), 15000)
 })
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
+  setBodyScrollLocked(false)
 })
 </script>
 
@@ -869,6 +1507,17 @@ onUnmounted(() => {
       <div class="stat">
         <span class="stat-label">信号日</span>
         <strong>{{ signalDate }}</strong>
+        <div class="date-pager">
+          <button type="button" class="btn ghost sm" :disabled="!canPrevSignal" @click="goPrevSignal">前一日</button>
+          <span v-if="signalPageText" class="pager-idx">{{ signalPageText }}</span>
+          <button type="button" class="btn ghost sm" :disabled="!canNextSignal" @click="goNextSignal">后一日</button>
+          <button
+            v-if="viewedSignalDate"
+            type="button"
+            class="btn ghost sm"
+            @click="goLatestSignal"
+          >最新</button>
+        </div>
       </div>
       <div class="stat">
         <span class="stat-label">可交易</span>
@@ -880,11 +1529,8 @@ onUnmounted(() => {
       </div>
       <div class="stat">
         <span class="stat-label">当前任务</span>
-        <strong v-if="busy || latestJob">
-          {{ busy ? '执行中…' : jobStatusLabel(latestJob?.status) }}
-        </strong>
-        <strong v-else>—</strong>
-        <span v-if="latestJob" class="stat-extra">{{ jobTypeLabel(latestJob.type) }}</span>
+        <strong>{{ currentTask.label }}</strong>
+        <span v-if="currentTask.extra" class="stat-extra">{{ currentTask.extra }}</span>
       </div>
     </section>
 
@@ -895,13 +1541,14 @@ onUnmounted(() => {
         <div>
           <h2>今日操作</h2>
           <div class="howto compact">
-            <p>1. 点「更新行情」，把最新价格写进本地。</p>
-            <p>2. 点「生成今日信号」，刷新持仓结论。</p>
+            <p>定时：{{ scheduleLabel }}，先更新行情再生成信号。</p>
+            <p v-if="nextScheduleText">下次：{{ nextScheduleText }}</p>
+            <p>strategy-api 需保持运行。过点后打开本页会补跑；失败再用右边按钮。</p>
           </div>
         </div>
         <div class="row tight">
-          <button class="btn" :disabled="busy" @click="startJob('update-data')">更新行情</button>
-          <button class="btn primary" :disabled="busy" @click="startJob('signal')">生成今日信号</button>
+          <button class="btn" :disabled="busy" @click="startJob('update-data', dailyJobParams('update-data'))">更新行情</button>
+          <button class="btn primary" :disabled="busy" @click="startJob('signal', dailyJobParams('signal'))">生成今日信号</button>
         </div>
       </div>
 
@@ -939,6 +1586,22 @@ onUnmounted(() => {
 
           <p class="signal-summary">{{ strategy.summary || '暂无说明' }}</p>
 
+          <div v-if="displayScoreRows(strategy).length" class="scoreboard">
+            <p class="factor-heading">评分前 {{ SCORE_TOP_N }}</p>
+            <ol class="score-list">
+              <li
+                v-for="row in displayScoreRows(strategy)"
+                :key="row.symbol"
+                :class="{ held: isHolding(strategy, row.symbol) }"
+              >
+                <span class="rank">{{ row.rank }}</span>
+                <strong class="symbol">{{ etfLabel(row.symbol) }}</strong>
+                <span class="score">{{ row.score == null ? '—' : formatNum(row.score, 3) }}</span>
+                <span v-if="isHolding(strategy, row.symbol)" class="held-tag">持仓</span>
+              </li>
+            </ol>
+          </div>
+
           <div v-if="displayActions(strategy).length" class="signal-actions">
             <p class="factor-heading">今日持仓</p>
             <div
@@ -951,7 +1614,17 @@ onUnmounted(() => {
                 <strong class="symbol">{{ etfLabel(item.symbol) }}</strong>
                 <span class="reason">{{ item.reason }}</span>
               </div>
-              <span v-if="item.hold_days" class="days">已持 {{ item.hold_days }} 天</span>
+              <div class="hold-meta">
+                <span v-if="item.score != null" class="score">评分 {{ formatNum(item.score, 3) }}</span>
+                <span v-if="item.since_date" class="days">本轮 {{ formatDate(item.since_date) }}</span>
+                <span v-if="item.hold_days != null" class="days">已持 {{ item.hold_days }} 天</span>
+                <span
+                  v-if="item.hold_return != null"
+                  class="hold-pnl"
+                  :class="metricTone(item.hold_return)"
+                >{{ formatPct(item.hold_return) }}</span>
+                <span v-else class="days">收益 —</span>
+              </div>
             </div>
           </div>
           <p v-else class="empty">还没有持仓结论。</p>
@@ -960,12 +1633,15 @@ onUnmounted(() => {
           <div v-if="strategy.factors?.length" class="strategy-factors">
             <p class="factor-heading">锁定因子 · {{ strategy.factors.length }} 个</p>
             <div class="factor-row">
-              <span
+              <button
                 v-for="f in strategy.factors"
                 :key="f"
-                class="factor-chip"
+                type="button"
+                class="factor-chip clickable"
+                :class="{ active: detailOpen && detailFactorCode === f }"
                 :title="f"
-              >{{ factorText(f) }}</span>
+                @click="openFactorDetail(f)"
+              >{{ factorText(f) }}</button>
             </div>
           </div>
 
@@ -982,15 +1658,21 @@ onUnmounted(() => {
         <div>
           <h2>最近任务</h2>
           <div class="howto compact">
-            <p>这里只看任务有没有跑完。</p>
+            <p>已完成的任务可点开查看结果。</p>
           </div>
         </div>
       </div>
       <ul v-if="recentJobs.length" class="jobs">
-        <li v-for="j in recentJobs" :key="j.job_id">
+        <li
+          v-for="j in recentJobs"
+          :key="j.job_id"
+          :class="{ clickable: j.status === 'succeeded', active: j.job_id === lastJobId }"
+          @click="openJobResult(j)"
+        >
           <span class="job-type">{{ jobTypeLabel(j.type) }}</span>
           <span :class="['st', j.status]">{{ jobStatusLabel(j.status) }}</span>
           <span class="job-progress">{{ Math.round(j.pct || 0) }}%</span>
+          <span class="job-time">{{ formatJobTime(j) }}</span>
           <span class="job-msg">{{ jobMessage(j) }}</span>
         </li>
       </ul>
@@ -1190,6 +1872,164 @@ onUnmounted(() => {
         <p v-if="lastJobId" class="hint last-job">最近任务编号：{{ lastJobId }}</p>
       </div>
     </section>
+
+    <section v-if="parsedResult || resultLoading" class="card result-card">
+      <div class="section-head">
+        <div>
+          <h2>{{ parsedResult?.title || '任务结果' }}</h2>
+          <div class="howto compact">
+            <p>回测是历史成绩，不是今天该买哪只。</p>
+            <p v-if="resultJob">来源：{{ jobTypeLabel(resultJob.type) }} · {{ resultJob.job_id }}</p>
+          </div>
+        </div>
+      </div>
+
+      <p v-if="resultLoading" class="empty">正在读取结果…</p>
+
+      <template v-else-if="parsedResult">
+        <div v-if="parsedResult.metrics.length" class="metric-grid">
+          <div
+            v-for="m in parsedResult.metrics"
+            :key="m.key"
+            class="metric"
+            :class="m.tone"
+          >
+            <span class="stat-label">{{ m.label }}</span>
+            <strong>{{ m.text }}</strong>
+          </div>
+        </div>
+
+        <p v-if="parsedResult.extra.length" class="result-extra">
+          <span v-for="item in parsedResult.extra" :key="item.label">
+            {{ item.label }} {{ item.text }}
+          </span>
+        </p>
+
+        <div v-if="parsedResult.factors.length" class="strategy-factors">
+          <p class="factor-heading">本次因子 · {{ parsedResult.factors.length }} 个</p>
+          <div class="factor-row">
+            <button
+              v-for="f in parsedResult.factors"
+              :key="f"
+              type="button"
+              class="factor-chip clickable"
+              :class="{ active: detailOpen && detailFactorCode === f }"
+              :title="f"
+              @click="openFactorDetail(f)"
+            >{{ factorText(f) }}</button>
+          </div>
+        </div>
+
+        <div v-if="equityChart" class="equity-box">
+          <div class="equity-head">
+            <p class="factor-heading">净值曲线</p>
+            <p class="equity-range">
+              {{ equityChart.start }} → {{ equityChart.end }}
+              · {{ equityChart.startEquity }} → {{ equityChart.endEquity }}
+            </p>
+          </div>
+          <svg
+            class="equity-svg"
+            :viewBox="`0 0 ${equityChart.w} ${equityChart.h}`"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="回测净值曲线"
+          >
+            <path :d="equityChart.area" :class="['equity-area', equityChart.up ? 'up' : 'down']" />
+            <path :d="equityChart.line" :class="['equity-line', equityChart.up ? 'up' : 'down']" />
+          </svg>
+        </div>
+
+        <div v-if="parsedResult.combos.length" class="combo-box">
+          <p class="factor-heading">{{ parsedResult.comboCaption || '候选组合' }}</p>
+          <div class="combo-table-wrap">
+            <table class="combo-table">
+              <thead>
+                <tr>
+                  <th>因子</th>
+                  <th>收益</th>
+                  <th>夏普</th>
+                  <th>回撤</th>
+                  <th>其它</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in parsedResult.combos" :key="row.key">
+                  <td>{{ comboFactorsText(row.factors) }}</td>
+                  <td :class="metricTone(row.totalReturn ?? row.trainReturn)">
+                    {{ formatPct(row.totalReturn ?? row.trainReturn) }}
+                  </td>
+                  <td :class="metricTone(row.sharpe)">{{ formatNum(row.sharpe) }}</td>
+                  <td :class="metricTone(row.maxDrawdown, true)">{{ formatPct(row.maxDrawdown) }}</td>
+                  <td>
+                    <template v-if="row.score != null">分 {{ formatNum(row.score, 3) }}</template>
+                    <template v-else-if="row.ic != null">IC {{ formatNum(row.ic, 3) }}</template>
+                    <template v-else-if="row.trades != null">{{ formatInt(row.trades) }} 笔</template>
+                    <template v-else>—</template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p v-if="parsedResult.kind === 'signal'" class="hint">
+          持仓结论在上方「今日操作」。这里只确认信号任务跑完了。
+        </p>
+      </template>
+    </section>
+    <div
+      v-if="detailOpen && detailFactor"
+      ref="modalRootRef"
+      class="modal-root"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="detailFactor.label"
+      tabindex="-1"
+      @keydown.esc.prevent="closeFactorDetail"
+    >
+      <div class="modal-mask" @click="closeFactorDetail" />
+      <div class="modal-panel" @click.stop>
+        <div class="detail-head">
+          <div>
+            <p class="detail-kicker">因子详情</p>
+            <h2>{{ detailFactor.label }}</h2>
+            <code class="detail-code">{{ detailFactor.code }}</code>
+          </div>
+          <button type="button" class="btn ghost sm" @click="closeFactorDetail">关闭</button>
+        </div>
+        <dl class="meta-grid">
+          <div>
+            <dt>分组</dt>
+            <dd>{{ detailFactor.group || '—' }}</dd>
+          </div>
+          <div>
+            <dt>分桶</dt>
+            <dd>{{ detailFactor.bucket_label || detailFactor.bucket || '未分桶' }}</dd>
+          </div>
+          <div>
+            <dt>方向</dt>
+            <dd>{{ detailFactor.direction || '—' }}</dd>
+          </div>
+          <div>
+            <dt>数据源</dt>
+            <dd>{{ detailFactor.source || '—' }}</dd>
+          </div>
+        </dl>
+        <p v-if="detailFactor.direction_note" class="note">{{ detailFactor.direction_note }}</p>
+        <p
+          v-if="detailFactor.summary && detailFactor.summary !== detailFactor.principle"
+          class="summary"
+        >{{ detailFactor.summary }}</p>
+        <div class="principle-box">
+          <h3>原理</h3>
+          <p>{{ detailFactor.principle || '暂无原理说明。' }}</p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn primary sm" @click="closeFactorDetail">知道了</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1211,6 +2051,16 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+.date-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pager-idx {
+  font-size: 0.75rem;
+  color: rgba(232, 234, 237, 0.55);
 }
 .howto {
   margin: 10px 0 0;
@@ -1699,10 +2549,116 @@ button.factor-chip:disabled {
   font-weight: 500;
   gap: 6px;
 }
+button.factor-chip.clickable {
+  cursor: pointer;
+  font: inherit;
+}
+button.factor-chip.clickable:hover {
+  filter: brightness(1.08);
+}
+button.factor-chip.clickable.active {
+  box-shadow: 0 0 0 1px rgba(105, 240, 174, 0.45);
+  border-color: rgba(105, 240, 174, 0.55);
+}
 .factor-chip.alt {
   color: #ffd54f;
   background: rgba(255, 213, 79, 0.1);
   border-color: rgba(255, 213, 79, 0.22);
+}
+.modal-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  outline: none;
+}
+.modal-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+.modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #151a24;
+  padding: 18px 18px 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.detail-kicker {
+  margin: 0 0 4px;
+  color: rgba(232, 234, 237, 0.5);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.detail-head h2 {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+}
+.detail-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: rgba(232, 234, 237, 0.55);
+}
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.meta-grid dt {
+  margin: 0;
+  color: rgba(232, 234, 237, 0.48);
+  font-size: 0.75rem;
+}
+.meta-grid dd {
+  margin: 2px 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.note,
+.summary {
+  margin: 0 0 10px;
+  color: rgba(232, 234, 237, 0.62);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.principle-box {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(130, 177, 255, 0.08);
+  border: 1px solid rgba(130, 177, 255, 0.16);
+}
+.principle-box h3 {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: rgba(232, 234, 237, 0.7);
+}
+.principle-box p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: rgba(232, 234, 237, 0.9);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 .signal-actions {
   display: flex;
@@ -1717,6 +2673,67 @@ button.factor-chip:disabled {
   padding: 10px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
+}
+.hold-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  white-space: nowrap;
+}
+.hold-pnl {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.hold-meta .score {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #90caf9;
+}
+.scoreboard {
+  margin: 8px 0 12px;
+}
+.score-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.score-list li {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.score-list li.held {
+  background: rgba(105, 240, 174, 0.08);
+}
+.score-list .rank {
+  font-variant-numeric: tabular-nums;
+  color: rgba(232, 234, 237, 0.45);
+  font-size: 0.78rem;
+}
+.score-list .score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #90caf9;
+  font-size: 0.86rem;
+}
+.held-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #69f0ae;
+}
+.hold-pnl.pos {
+  color: #69f0ae;
+}
+.hold-pnl.neg {
+  color: #ff8a80;
 }
 .symbol-block {
   display: flex;
@@ -1834,7 +2851,7 @@ button.factor-chip:disabled {
 }
 .jobs li {
   display: grid;
-  grid-template-columns: minmax(120px, 1.2fr) 72px 48px 1.6fr;
+  grid-template-columns: minmax(120px, 1.1fr) 72px 40px minmax(132px, 0.9fr) 1.4fr;
   gap: 8px;
   align-items: center;
   font-size: 0.85rem;
@@ -1847,6 +2864,11 @@ button.factor-chip:disabled {
 }
 .job-progress {
   color: rgba(232, 234, 237, 0.55);
+}
+.job-time {
+  color: rgba(232, 234, 237, 0.58);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .job-msg {
   color: rgba(232, 234, 237, 0.62);
@@ -1864,6 +2886,115 @@ button.factor-chip:disabled {
 .st.queued {
   color: #82b1ff;
 }
+.result-card {
+  border-color: rgba(130, 177, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(130, 177, 255, 0.06) inset;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.metric {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.metric strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.12rem;
+}
+.metric.pos strong,
+td.pos {
+  color: #69f0ae;
+}
+.metric.neg strong,
+td.neg {
+  color: #ff8a80;
+}
+.result-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+  color: rgba(232, 234, 237, 0.62);
+  font-size: 0.8rem;
+}
+.equity-box {
+  margin: 4px 0 14px;
+}
+.equity-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+.equity-range {
+  margin: 0;
+  color: rgba(232, 234, 237, 0.5);
+  font-size: 0.78rem;
+}
+.equity-svg {
+  width: 100%;
+  height: 168px;
+  display: block;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.equity-area.up {
+  fill: rgba(105, 240, 174, 0.14);
+}
+.equity-area.down {
+  fill: rgba(255, 138, 128, 0.14);
+}
+.equity-line {
+  fill: none;
+  stroke-width: 2;
+}
+.equity-line.up {
+  stroke: #69f0ae;
+}
+.equity-line.down {
+  stroke: #ff8a80;
+}
+.combo-box {
+  margin-top: 4px;
+}
+.combo-table-wrap {
+  overflow-x: auto;
+}
+.combo-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.combo-table th,
+.combo-table td {
+  text-align: left;
+  padding: 8px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.combo-table th {
+  color: rgba(232, 234, 237, 0.5);
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+.combo-table td:first-child {
+  min-width: 180px;
+}
+.jobs li.clickable {
+  cursor: pointer;
+}
+.jobs li.clickable:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.jobs li.active {
+  outline: 1px solid rgba(130, 177, 255, 0.35);
+}
 @media (max-width: 960px) {
   .status-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1880,6 +3011,7 @@ button.factor-chip:disabled {
     grid-template-columns: 1fr 72px;
   }
   .job-progress,
+  .job-time,
   .job-msg {
     grid-column: 1 / -1;
   }

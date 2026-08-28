@@ -59,6 +59,20 @@ async function loadPlugins(){
  }
 }
 async function loadMarket(){ loading.value=true; error.value=''; try { market.value=await props.api.refreshMarket() } catch(cause) { error.value=String(cause) } finally { loading.value=false } }
+async function importLocalPackage(event:Event){
+  const input=event.target as HTMLInputElement
+  const file=input.files?.[0]
+  input.value=''
+  if(!file)return
+  error.value=''; status.value=''
+  if(!file.name.toLowerCase().endsWith('.nlplugin')){ error.value='请选择 .nlplugin 插件包'; return }
+  try {
+    const bytes=Array.from(new Uint8Array(await file.arrayBuffer()))
+    await props.api.installLocalPackage(bytes)
+    await loadPlugins()
+    status.value=`已导入本地插件：${file.name}`
+  } catch(cause) { error.value=String(cause) }
+}
 async function create(){ status.value=''; error.value=''; try { await props.api.createDraft('creator-draft',draft); for(const [path,content] of Object.entries(creatorFiles.value)) await props.api.writeDraftFile('creator-draft',path,content); const report=await props.api.validateDraft('creator-draft'); lastValidationErrors.value=report.errors; status.value=report.valid?'验证通过':report.errors.join(', ') } catch(cause) { error.value=String(cause) } }
 async function pack(){ try { packageArtifact.value=await props.api.packageDraft('creator-draft'); status.value='已生成插件包' } catch(cause) { error.value=String(cause) } }
 function currentDraft():GeneratePluginRequest['currentDraft'] { return {manifest:{...draft,navigation:draft.navigation ? {...draft.navigation} : undefined,capabilities:[...draft.capabilities],permissions:[...draft.permissions]},files:{...creatorFiles.value}} }
@@ -161,6 +175,7 @@ watch(current,page=>{if(page==='插件市场'&&!market.value)loadMarket(); if(pa
 </script>
 <template>
 <div class="app-shell">
+<div v-if="current==='插件市场'" class="local-plugin-import"><label class="btn">导入本地插件<input data-test="import-local-plugin" type="file" accept=".nlplugin,application/octet-stream" hidden @change="importLocalPackage"></label></div>
 <header class="titlebar">
   <div class="titlebar-drag" data-tauri-drag-region @mousedown="startDragging" @dblclick="toggleMaximize">
     <button class="titlebar-brand" tabindex="-1">NEXTLEEK</button>
