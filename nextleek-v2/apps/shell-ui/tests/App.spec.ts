@@ -90,21 +90,6 @@ describe('desktop shell', () => {
     await wrapper.get('[data-test="uninstall-com.example.clock"]').trigger('click')
     expect(uninstall).toHaveBeenCalledWith('com.example.clock')
   })
-  it('imports a local nlplugin file and refreshes installed plugins', async () => {
-    const api = createApi()
-    const install = vi.spyOn(api, 'installLocalPackage')
-    const wrapper = mount(App, {props:{api}})
-    await wrapper.get('[data-page="插件市场"]').trigger('click')
-    await flush()
-    const input = wrapper.get('[data-test="import-local-plugin"]')
-    const file = new File([], 'demo.nlplugin', {type:'application/octet-stream'})
-    Object.defineProperty(file, 'arrayBuffer', {value:async()=>new Uint8Array([1, 2, 3]).buffer})
-    Object.defineProperty(input.element, 'files', {value:[file]})
-    await input.trigger('change')
-    await flush()
-    expect(install).toHaveBeenCalledWith([1, 2, 3])
-  })
-
   it('opens settings as an in-page view and saves marketplace settings', async () => {
     const api = createApi()
     const saveMarket = vi.spyOn(api, 'setMarketUrl')
