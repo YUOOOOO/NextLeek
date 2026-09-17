@@ -9,6 +9,11 @@ export const SETTINGS_TABS = [
     end: true,
   },
   {
+    to: "/settings/data",
+    label: "数据源",
+    desc: "TickFlow Key、能力路由、自定义 YAML 源与插件。",
+  },
+  {
     to: "/settings/users",
     label: "用户",
     desc: "管理员创建账号。用户不能自助注册。",
@@ -67,7 +72,7 @@ export function GeneralSettings() {
       </div>
       <div className="kv-row">
         <span className="kv-key">数据源 / 策略 / 回测</span>
-        <span className="kv-val">后续模块接入</span>
+        <span className="kv-val">数据获取已接入，策略与回测后续模块</span>
       </div>
     </section>
   );

@@ -484,6 +484,29 @@ select {
 .btn-primary:hover:not(:disabled) {
   background: #e5e7eb;
 }
+.btn-ghost {
+  background: var(--ds-color-bg-surface-2);
+  color: var(--ds-color-text-primary);
+  border-color: var(--ds-color-border-default);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--ds-color-bg-hover);
+}
+
+.btn-danger {
+  background: transparent;
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.field.h-56 {
+  height: 14rem;
+}
 
 .btn-quiet {
   background: transparent;

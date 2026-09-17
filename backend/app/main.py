@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,9 +12,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app import __version__, auth as auth_service
 from app.api.auth import router as auth_router
+from app.api.data import router as data_router
+from app.api.ext_data import router as ext_data_router
+from app.api.financials import router as financials_router
+from app.api.indices import router as indices_router
+from app.api.kline import router as kline_router
+from app.api.pipeline import router as pipeline_router
+from app.api.settings import router as settings_router
 from app.api.users import router as users_router
 from app.config import get_settings
 from app.db import create_database_engine, create_session_factory, init_database, session_scope
+from app.tickflow.capabilities import CapabilityDenied
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +32,160 @@ logger = logging.getLogger(__name__)
 
 _AUTH_WHITELIST_PREFIX = ("/api/auth/status", "/api/auth/setup", "/api/auth/login")
 _AUTH_WHITELIST_EXACT = ("/health", "/api/health", "/openapi.json", "/docs", "/redoc")
+
+
+def _setup_backend_file_log(data_dir: Path) -> None:
+    if getattr(sys, "frozen", False):
+        return
+    try:
+        from logging.handlers import RotatingFileHandler
+
+        data_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            data_dir / "backend.log",
+            maxBytes=8 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        logging.getLogger().addHandler(handler)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("文件日志初始化失败, 仅输出到终端: %s", exc)
+
+
+async def _start_market_data(app: FastAPI) -> None:
+    """TSP 数据层启动: 仓库、能力探测、盘后管道、实时/分钟增量。"""
+    from app.jobs import daily_pipeline
+    from app.services.quote_service import QuoteService
+    from app.tickflow.client import current_mode
+    from app.tickflow.policy import detect_capabilities
+    from app.tickflow.repository import DataStore, KlineRepository
+
+    settings = get_settings()
+    _setup_backend_file_log(settings.data_dir)
+    logger.info("market data starting (mode=%s)", current_mode())
+
+    store = DataStore(settings.data_dir)
+    repo = KlineRepository(store)
+    app.state.datastore = store
+    app.state.repo = repo
+    app.state.indicators_ready = False
+    repo._on_warmup_done = lambda: setattr(app.state, "indicators_ready", True)  # noqa: SLF001
+    repo.refresh_cache(background=True)
+
+    try:
+        from app.data_providers import custom as custom_sources
+
+        custom_sources.load_all()
+        logger.info("custom data sources loaded: %d", len(custom_sources.list_sources()))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("custom data sources init failed: %s", exc)
+
+    capset = detect_capabilities()
+    app.state.capabilities = capset
+    logger.info("ready; %d capabilities active", len(capset.all()))
+
+    qs = QuoteService()
+    app.state.quote_service = qs
+    qs.set_repo(repo)
+    qs.boot_check()
+
+    from app.strategy.monitor import StrategyMonitorService
+
+    strategy_monitor = StrategyMonitorService()
+    app.state.strategy_monitor = strategy_monitor
+    qs.set_app_state(app.state)
+
+    from app.services.depth_service import DepthService
+
+    depth_service = DepthService()
+    depth_service.set_repo(repo)
+    depth_service.set_app_state(app.state)
+    app.state.depth_service = depth_service
+
+    try:
+        daily_pipeline.set_app_state(app.state)
+        scheduler = daily_pipeline.start_scheduler(repo, capset)
+        app.state.scheduler = scheduler
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("scheduler not started: %s", exc)
+        app.state.scheduler = None
+
+    try:
+        depth_service.boot_check()
+        depth_service.start_polling()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("depth_service init failed: %s", exc)
+
+    try:
+        from app.services.minute_refresh import MinuteRefreshService
+
+        minute_refresh = MinuteRefreshService(repo)
+        minute_refresh.set_app_state(app.state)
+        app.state.minute_refresh = minute_refresh
+        minute_refresh.start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("minute_refresh init failed: %s", exc)
+
+    try:
+        import threading
+
+        from app.services.data_integrity import boot_integrity_check
+
+        timer = threading.Timer(30.0, boot_integrity_check, args=(app.state,))
+        timer.daemon = True
+        timer.start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("integrity boot check scheduling failed: %s", exc)
+
+    try:
+        from app.services.ext_presets import ensure_builtin_presets
+
+        await ensure_builtin_presets(store.data_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("内置扩展表初始化失败 (不影响启动): %s", exc)
+
+    from app.services.ext_pull import pull_scheduler
+
+    pull_scheduler.start(store.data_dir)
+    pull_scheduler.refresh(store.data_dir)
+    app.state.pull_scheduler = pull_scheduler
+
+    from app.services.financial_sync import financial_scheduler
+
+    financial_scheduler.start(store.data_dir, capset)
+    app.state.financial_scheduler = financial_scheduler
+
+    from app.watchdog import start_watchdog
+
+    app.state.watchdog = start_watchdog(app.state, repo)
+
+
+async def _stop_market_data(app: FastAPI) -> None:
+    repo = getattr(app.state, "repo", None)
+    if repo is not None:
+        repo._on_refresh_done = None  # noqa: SLF001
+    wd = getattr(app.state, "watchdog", None)
+    if wd:
+        await wd.stop()
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler:
+        scheduler.shutdown(wait=False)
+    ps = getattr(app.state, "pull_scheduler", None)
+    if ps:
+        ps.stop()
+    fsc = getattr(app.state, "financial_scheduler", None)
+    if fsc:
+        fsc.stop()
+    qs = getattr(app.state, "quote_service", None)
+    if qs:
+        qs.stop()
+    dsvc = getattr(app.state, "depth_service", None)
+    if dsvc:
+        dsvc.stop_polling()
+    mrs = getattr(app.state, "minute_refresh", None)
+    if mrs:
+        mrs.stop()
 
 
 @asynccontextmanager
@@ -39,10 +202,13 @@ async def lifespan(app: FastAPI):
         if admin is not None:
             logger.info("bootstrapped admin user %s", admin.email)
     logger.info("NextLeek v%s starting", __version__)
+    await _start_market_data(app)
     try:
         yield
     finally:
+        await _stop_market_data(app)
         engine.dispose()
+        logger.info("shutdown")
 
 
 settings = get_settings()
@@ -79,8 +245,20 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
 
+@app.exception_handler(CapabilityDenied)
+async def capability_denied_handler(request: Request, exc: CapabilityDenied) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(data_router)
+app.include_router(pipeline_router)
+app.include_router(kline_router)
+app.include_router(indices_router)
+app.include_router(financials_router)
+app.include_router(settings_router)
+app.include_router(ext_data_router)
 
 _static = Path(settings.static_dir)
 if _static.exists():

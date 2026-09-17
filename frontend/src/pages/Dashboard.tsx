@@ -7,7 +7,7 @@ export function Dashboard() {
       <div className="page-head">
         <div>
           <h1 className="page-title">看板</h1>
-          <p className="page-desc">多用户认证框架已就绪。后续选股、监控、回测模块将接入同一会话。</p>
+          <p className="page-desc">多用户会话已就绪。数据获取走 TickFlow / 自定义源盘后管道，策略与回测后续接入。</p>
         </div>
         <span className="badge badge-on">框架就绪</span>
       </div>
@@ -28,7 +28,11 @@ export function Dashboard() {
       </div>
 
       <section className="card">
-        <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">后续模块</div>
+        <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">模块</div>
+        <div className="kv-row">
+          <span className="kv-key">数据</span>
+          <span className="kv-val">盘后管道 / 维表 / 日K / 除权 / Enriched</span>
+        </div>
         <div className="kv-row">
           <span className="kv-key">选股</span>
           <span className="kv-val">待接入</span>

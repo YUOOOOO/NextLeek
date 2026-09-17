@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  Database,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -26,6 +27,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/", label: "看板", icon: LayoutDashboard, end: true },
+  { to: "/data", label: "数据", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
