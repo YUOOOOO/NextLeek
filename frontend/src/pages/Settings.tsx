@@ -11,13 +11,19 @@ export const SETTINGS_TABS = [
   {
     to: "/settings/data",
     label: "数据源",
-    desc: "TickFlow Key、能力路由、自定义 YAML 源与插件。",
+    desc: "TickFlow Key、能力路由、自定义 YAML 源与插件。仅管理员可改。",
+    admin: true,
+  },
+  {
+    to: "/settings/ai",
+    label: "AI",
+    desc: "OpenAI 兼容接口。用来生成因子和策略公式。",
+    admin: true,
   },
   {
     to: "/settings/users",
     label: "用户",
-    desc: "管理员创建账号。用户不能自助注册。",
-    admin: true,
+    desc: "修改自己的密码。创建账号和用户列表仅管理员可见。",
   },
 ];
 
@@ -71,8 +77,8 @@ export function GeneralSettings() {
         <span className="kv-val">CSRF</span>
       </div>
       <div className="kv-row">
-        <span className="kv-key">数据源 / 策略 / 回测</span>
-        <span className="kv-val">数据获取已接入，策略与回测后续模块</span>
+        <span className="kv-key">数据源 / 策略 / 因子</span>
+        <span className="kv-val">数据已接入。策略和因子用公式定义，AI 生成走设置页。</span>
       </div>
     </section>
   );

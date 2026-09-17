@@ -9,4 +9,10 @@ export const queryKeys = {
   preferences: ["settings", "preferences"] as const,
   dataSources: ["settings", "data-sources"] as const,
   capabilityMatrix: ["settings", "capability-matrix"] as const,
+  overviewMarket: (asOf?: string) => ["overview", "market", asOf ?? "latest"] as const,
+  strategies: ["strategies"] as const,
+  strategyOptions: ["strategies", "options"] as const,
+  factors: ["factors"] as const,
+  factorOptions: ["factors", "options"] as const,
+
 };

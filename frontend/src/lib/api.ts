@@ -51,10 +51,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type TableStats = {
   rows?: number;
   symbols?: number;
+  symbols_covered?: number;
+  trading_days?: number;
+  earliest_date?: string | null;
+  latest_date?: string | null;
+  latest_as_of?: string | null;
   min_date?: string | null;
   max_date?: string | null;
   days?: number;
-  fields?: string[];
+  fields?: number | string[];
   [key: string]: unknown;
 } | null;
 
@@ -94,6 +99,81 @@ export type PipelineJob = {
   finished_at?: string | null;
 };
 
+export type OverviewIndex = {
+  symbol: string;
+  name: string;
+  last_price: number | null;
+  change_pct: number | null;
+  change_amount: number | null;
+};
+
+export type OverviewStock = {
+  symbol: string;
+  name?: string | null;
+  close: number | null;
+  change_pct: number | null;
+  amount: number | null;
+  turnover_rate: number | null;
+  board?: string;
+};
+
+export type OverviewRankItem = {
+  name: string;
+  count: number;
+  avg_pct: number;
+  leader?: { symbol?: string | null; name?: string | null; change_pct?: number | null };
+};
+
+export type OverviewMarket = {
+  as_of: string | null;
+  quote_status: {
+    enabled?: boolean;
+    running?: boolean;
+    quote_age_ms?: number | null;
+    is_trading_hours?: boolean;
+    mode?: string;
+  };
+  indices: OverviewIndex[];
+  breadth: {
+    total: number;
+    up: number;
+    down: number;
+    flat: number;
+    up_pct: number;
+    down_pct: number;
+    avg_pct?: number | null;
+    median_pct?: number | null;
+    strong_up?: number;
+    strong_down?: number;
+  };
+  amount: { total: number; avg: number };
+  limit: {
+    limit_up: number;
+    broken: number;
+    limit_down: number;
+    max_boards: number;
+    seal_rate?: number;
+    tiers: Array<{ boards: number; count: number; stocks?: Array<{ symbol: string; name?: string }> }>;
+  };
+  distribution: Array<{ label: string; count: number; pct: number }>;
+  trend: {
+    above_ma5_pct: number;
+    above_ma20_pct: number;
+    above_ma60_pct: number;
+    new_high: number;
+    new_low: number;
+  };
+  activity: { avg_turnover: number; high_turnover: number; high_vol_ratio: number; vol_ratio: number };
+  radar: Array<{ key: string; label: string; value: number }>;
+  emotion: { score: number; label: string };
+  top_gainers: OverviewStock[];
+  top_losers: OverviewStock[];
+  turnover_leaders: OverviewStock[];
+  active_leaders: OverviewStock[];
+  concept_rank: { leading: OverviewRankItem[]; lagging: OverviewRankItem[] };
+  industry_rank: { leading: OverviewRankItem[]; lagging: OverviewRankItem[] };
+};
+
 export type TickflowSettings = {
   mode: string;
   tickflow_api_key_masked: string;
@@ -103,6 +183,15 @@ export type TickflowSettings = {
   probe_log: string[];
   missing_caps: string[];
   extras_caps: string[];
+  ai_provider?: string;
+  ai_base_url?: string;
+  ai_api_key_masked?: string;
+  has_ai_key?: boolean;
+  ai_configured?: boolean;
+  ai_model?: string;
+  ai_openai_model?: string;
+  ai_max_output_tokens?: number;
+  ai_context_window?: number;
 };
 
 export type DataProviders = {
@@ -127,15 +216,188 @@ export type CustomSourceConfig = {
   datasets?: Record<string, Record<string, unknown>>;
 };
 
+export type StrategyStatus = "draft" | "published";
+
+export type StrategyCondition = {
+  left: string;
+  op: string;
+  right: string | number;
+  leftDays?: number;
+  rightDays?: number;
+};
+
+export type StrategyBasicFilter = {
+  price_min: number | null;
+  price_max: number | null;
+  market_cap_min: number | null;
+  amount_min: number | null;
+  exclude_st: boolean;
+  boards: string[];
+};
+
+export type StrategyKind = "formula" | "conditions" | "composite";
+
+export type StrategyChild = {
+  strategy_id: string;
+  name?: string;
+  weight?: number;
+};
+
+export type StrategyWrite = {
+  name: string;
+  description: string;
+  kind?: StrategyKind;
+  formula?: string;
+  conditions: StrategyCondition[];
+  children?: StrategyChild[];
+  merge_mode?: "union" | "intersect";
+  min_confirm?: number;
+  basic_filter: StrategyBasicFilter;
+  order_by: string;
+  descending: boolean;
+  limit: number;
+};
+
+export type Strategy = {
+  id: string;
+  name: string;
+  description: string;
+  status: StrategyStatus;
+  kind: StrategyKind;
+  formula?: string;
+  conditions: StrategyCondition[];
+  children: StrategyChild[];
+  merge_mode: "union" | "intersect";
+  min_confirm: number;
+  basic_filter: StrategyBasicFilter;
+  order_by: string;
+  descending: boolean;
+  limit: number;
+  owner_id: string;
+  owner_username: string;
+  subscriber_count: number;
+  subscribed: boolean;
+  is_owner: boolean;
+  monitoring: boolean;
+  version: number;
+  has_unpublished_changes: boolean;
+  update_available: boolean;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+};
+
+export type StrategyCatalog = {
+  mine: Strategy[];
+  subscribed: Strategy[];
+  market: Strategy[];
+};
+
+export type StrategyFieldGroup = {
+  key: string;
+  label: string;
+  fields: Array<{ key: string; label: string }>;
+};
+
+export type FormulaExample = {
+  label: string;
+  formula: string;
+  kind?: "factor" | "strategy";
+  code?: string;
+};
+
+export type StrategyOptions = {
+  fields: Array<{ key: string; label: string }>;
+  groups: StrategyFieldGroup[];
+  maxDays: number;
+  operators: string[];
+  stringOperators: string[];
+  formula_operators?: string[];
+  base_columns?: string[];
+  examples?: FormulaExample[];
+};
+
+export type FormulaPreview = {
+  ok: boolean;
+  formula: string;
+  warmup_bars: number;
+  dependencies: string[];
+  errors: Array<{ code?: string; message: string }>;
+};
+
+export type FactorStatus = "draft" | "published";
+
+export type Factor = {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  formula: string;
+  direction: "high" | "low" | "none";
+  status: FactorStatus;
+  owner_id: string;
+  owner_username: string;
+  subscriber_count: number;
+  subscribed: boolean;
+  is_owner: boolean;
+  version: number;
+  warmup_bars: number;
+  has_unpublished_changes: boolean;
+  update_available: boolean;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+};
+
+export type FactorCatalog = {
+  mine: Factor[];
+  subscribed: Factor[];
+  market: Factor[];
+};
+
+export type FactorWrite = {
+  name: string;
+  code?: string;
+  description: string;
+  formula: string;
+  direction: "high" | "low" | "none";
+};
+
+export type ResearchResult = {
+  ok: boolean;
+  warning?: string;
+  formula?: string;
+  days?: number;
+  horizon?: number;
+  ic?: number;
+  ir?: number;
+  avg_return?: number;
+  hit_rate?: number;
+  avg_names?: number;
+  items?: Array<Record<string, unknown>>;
+};
+
+export type StrategyRunResult = {
+  as_of: string | null;
+  strategy_id: string;
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  elapsed_ms: number;
+  warnings: string[];
+};
+
+
 export const api = {
   health: () => request<{ status: string; version: string }>("/api/health"),
   authStatus: () => request<SetupStatus>("/api/auth/status"),
   me: () => request<User>("/api/auth/me"),
   setup: (body: { email: string; username: string; password: string }) =>
     request<{ user: User }>("/api/auth/setup", { method: "POST", body: JSON.stringify(body) }),
-  login: (body: { email: string; password: string }) =>
+  login: (body: { account: string; password: string }) =>
     request<{ user: User }>("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    request<User>("/api/auth/password", { method: "POST", body: JSON.stringify(body) }),
   listUsers: () => request<User[]>("/api/users"),
   createUser: (body: { email: string; username: string; password: string; role: UserRole }) =>
     request<User>("/api/users", { method: "POST", body: JSON.stringify(body) }),
@@ -149,11 +411,12 @@ export const api = {
   dataClear: () => request<{ deleted_files: number }>("/api/data/clear", { method: "POST" }),
   dataSchema: (table: string) => request<Array<{ name: string; type: string; desc?: string }>>(`/api/data/schema/${table}`),
   dataRefreshCache: () => request<{ ok: boolean }>("/api/data/refresh-cache", { method: "POST" }),
-
   pipelineRun: () => request<{ job_id: string; reused: boolean }>("/api/pipeline/run", { method: "POST" }),
   pipelineJobs: (limit = 15) => request<{ jobs: PipelineJob[] }>(`/api/pipeline/jobs?limit=${limit}`),
   pipelineJob: (id: string) => request<PipelineJob>(`/api/pipeline/jobs/${id}`),
   pipelineJobCancel: (id: string) => request<{ cancelled: string }>(`/api/pipeline/jobs/${id}/cancel`, { method: "POST" }),
+  overviewMarket: (asOf?: string) =>
+    request<OverviewMarket>(asOf ? `/api/overview/market?as_of=${asOf}` : "/api/overview/market"),
 
   extendHistory: (value: number, unit: "day" | "month" | "year") =>
     request<{ status: string; job_id: string }>("/api/kline/extend_history", {
@@ -228,8 +491,75 @@ export const api = {
       body: JSON.stringify(body),
     }),
   updateRealtimeQuotes: (realtime_quotes_enabled: boolean) =>
-    request<unknown>("/api/settings/preferences/realtime-quotes", {
-      method: "PUT",
-      body: JSON.stringify({ realtime_quotes_enabled }),
-    }),
+    request<{ realtime_quotes_enabled: boolean; realtime_allowed?: boolean }>(
+      "/api/settings/preferences/realtime-quotes",
+      {
+        method: "PUT",
+        body: JSON.stringify({ realtime_quotes_enabled }),
+      },
+    ),
+
+  strategyOptions: () => request<StrategyOptions>("/api/strategies/options"),
+  listStrategies: () => request<StrategyCatalog>("/api/strategies"),
+  createStrategy: (body: StrategyWrite) =>
+    request<Strategy>("/api/strategies", { method: "POST", body: JSON.stringify(body) }),
+  updateStrategy: (id: string, body: Partial<StrategyWrite>) =>
+    request<Strategy>(`/api/strategies/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteStrategy: (id: string) => request<void>(`/api/strategies/${id}`, { method: "DELETE" }),
+  publishStrategy: (id: string) => request<Strategy>(`/api/strategies/${id}/publish`, { method: "POST" }),
+  unpublishStrategy: (id: string) => request<Strategy>(`/api/strategies/${id}/unpublish`, { method: "POST" }),
+  subscribeStrategy: (id: string) => request<Strategy>(`/api/strategies/${id}/subscription`, { method: "POST" }),
+  updateStrategySubscription: (id: string) =>
+    request<Strategy>(`/api/strategies/${id}/subscription/update`, { method: "POST" }),
+  unsubscribeStrategy: (id: string) => request<void>(`/api/strategies/${id}/subscription`, { method: "DELETE" }),
+  runStrategy: (id: string) => request<StrategyRunResult>(`/api/strategies/${id}/run`, { method: "POST" }),
+  startStrategyMonitor: (id: string) =>
+    request<Strategy>(`/api/strategies/${id}/monitor`, { method: "POST" }),
+  stopStrategyMonitor: (id: string) =>
+    request<void>(`/api/strategies/${id}/monitor`, { method: "DELETE" }),
+  compileStrategy: (formula: string) =>
+    request<FormulaPreview>("/api/strategies/compile", { method: "POST", body: JSON.stringify({ formula }) }),
+  generateStrategy: (prompt: string) =>
+    request<{ name: string; formula: string; description: string; warmup_bars?: number; dependencies?: string[] }>(
+      "/api/strategies/generate",
+      { method: "POST", body: JSON.stringify({ prompt }) },
+    ),
+  mineStrategies: (body: { days?: number; horizon?: number } = {}) =>
+    request<ResearchResult>("/api/strategies/mine", { method: "POST", body: JSON.stringify(body) }),
+  researchStrategy: (id: string, body: { days?: number; horizon?: number } = {}) =>
+    request<ResearchResult>(`/api/strategies/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
+
+  factorOptions: () => request<{ operators: string[]; base_columns: string[]; examples: FormulaExample[] }>("/api/factors/options"),
+  listFactors: () => request<FactorCatalog>("/api/factors"),
+  createFactor: (body: FactorWrite) => request<Factor>("/api/factors", { method: "POST", body: JSON.stringify(body) }),
+  updateFactor: (id: string, body: Partial<FactorWrite>) =>
+    request<Factor>(`/api/factors/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteFactor: (id: string) => request<void>(`/api/factors/${id}`, { method: "DELETE" }),
+  publishFactor: (id: string) => request<Factor>(`/api/factors/${id}/publish`, { method: "POST" }),
+  unpublishFactor: (id: string) => request<Factor>(`/api/factors/${id}/unpublish`, { method: "POST" }),
+  subscribeFactor: (id: string) => request<Factor>(`/api/factors/${id}/subscription`, { method: "POST" }),
+  updateFactorSubscription: (id: string) =>
+    request<Factor>(`/api/factors/${id}/subscription/update`, { method: "POST" }),
+  unsubscribeFactor: (id: string) => request<void>(`/api/factors/${id}/subscription`, { method: "DELETE" }),
+  compileFactor: (formula: string) =>
+    request<FormulaPreview>("/api/factors/compile", { method: "POST", body: JSON.stringify({ formula }) }),
+  generateFactor: (prompt: string) =>
+    request<{ name: string; formula: string; description: string; code?: string; direction?: string; warmup_bars?: number; dependencies?: string[] }>(
+      "/api/factors/generate",
+      { method: "POST", body: JSON.stringify({ prompt }) },
+    ),
+  mineFactors: (body: { days?: number; horizon?: number } = {}) =>
+    request<ResearchResult>("/api/factors/mine", { method: "POST", body: JSON.stringify(body) }),
+  researchFactor: (id: string, body: { days?: number; horizon?: number } = {}) =>
+    request<ResearchResult>(`/api/factors/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
+
+  saveAiSettings: (body: {
+    provider: string;
+    base_url?: string;
+    api_key?: string | null;
+    model?: string;
+    max_output_tokens?: number;
+    context_window?: number;
+  }) => request<TickflowSettings>("/api/settings/ai", { method: "POST", body: JSON.stringify(body) }),
+  clearAiSettings: () => request<{ ok: boolean }>("/api/settings/ai", { method: "DELETE" }),
 };

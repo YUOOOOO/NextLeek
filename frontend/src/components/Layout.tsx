@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Database,
@@ -7,7 +7,9 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  ScanSearch,
   Settings,
+  Sigma,
   X,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -27,31 +29,43 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/", label: "看板", icon: LayoutDashboard, end: true },
+  { to: "/strategies", label: "策略", icon: ScanSearch },
+  { to: "/factors", label: "因子", icon: Sigma },
   { to: "/data", label: "数据", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
 ];
 
-function formatBJT(date: Date) {
-  const stamp = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
-  return `${stamp}BJT`;
+function beijingClock(now: Date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Shanghai",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(now)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const time = `${parts.hour}:${parts.minute}:${parts.second}`;
+  const weekday = parts.weekday !== "Sat" && parts.weekday !== "Sun";
+  const seconds = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+  const open =
+    weekday &&
+    ((seconds >= 9 * 3600 + 30 * 60 && seconds <= 11 * 3600 + 30 * 60) ||
+      (seconds >= 13 * 3600 && seconds <= 15 * 3600));
+  return { time, open };
 }
 
 function useBeijingClock() {
-  const [now, setNow] = useState(() => formatBJT(new Date()));
+  const [clock, setClock] = useState(() => beijingClock(new Date()));
   useEffect(() => {
-    const id = window.setInterval(() => setNow(formatBJT(new Date())), 1000);
+    const id = window.setInterval(() => setClock(beijingClock(new Date())), 1000);
     return () => window.clearInterval(id);
   }, []);
-  return now;
+  return clock;
 }
 
 export function Layout() {
@@ -62,6 +76,17 @@ export function Layout() {
   const clock = useBeijingClock();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === "1");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [accountOpen]);
 
   const logout = useMutation({
     mutationFn: api.logout,
@@ -189,9 +214,34 @@ export function Layout() {
             )}
           </nav>
           <div className="wb-topbar-right">
-            <div className="wb-clock">{clock}</div>
-            <div className="wb-userchip">
-              {me.data.username} · {me.data.role === "admin" ? "管理员" : "用户"}
+            <div className="wb-clock">
+              <span className={`wb-market-dot${clock.open ? " is-open" : ""}`} />
+              <span>{clock.open ? "开市" : "休市"}</span>
+              <span>{clock.time}</span>
+            </div>
+            <div className="wb-account" ref={accountRef}>
+              <button
+                type="button"
+                className="wb-userchip"
+                aria-expanded={accountOpen}
+                onClick={() => setAccountOpen((open) => !open)}
+              >
+                {me.data.username}
+              </button>
+              {accountOpen && (
+                <div className="wb-account-pop">
+                  <div className="wb-account-name">{me.data.username}</div>
+                  <div className="wb-account-email">{me.data.email}</div>
+                  <button
+                    type="button"
+                    className="wb-account-logout"
+                    onClick={() => logout.mutate()}
+                    disabled={logout.isPending}
+                  >
+                    退出登录
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
