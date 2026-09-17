@@ -92,10 +92,15 @@ def bootstrap_admin(database: Session, settings: Settings) -> User | None:
     )
 
 
-def authenticate(database: Session, email: str, password: str) -> User:
-    user = get_user_by_email(database, email)
+def authenticate(database: Session, account: str, password: str) -> User:
+    ident = account.strip()
+    user = (
+        get_user_by_email(database, ident)
+        if "@" in ident
+        else get_user_by_username(database, ident)
+    )
     if user is None or not verify_password(password, user.password_hash):
-        raise AuthError("invalid_credentials", "邮箱或密码错误")
+        raise AuthError("invalid_credentials", "用户名、邮箱或密码错误")
     if not user.is_active:
         raise AuthError("inactive", "账号已被停用")
     if password_needs_rehash(user.password_hash):
@@ -177,6 +182,27 @@ def reset_password(database: Session, user: User, password: str) -> User:
     database.flush()
     for session in list(user.sessions):
         database.delete(session)
+    database.commit()
+    database.refresh(user)
+    return user
+
+
+def change_password(
+    database: Session,
+    user: User,
+    current_password: str,
+    new_password: str,
+    keep_session: UserSession | None = None,
+) -> User:
+    if not verify_password(current_password, user.password_hash):
+        raise AuthError("invalid_password", "当前密码不正确")
+    if current_password == new_password:
+        raise AuthError("same_password", "新密码不能与当前密码相同")
+    user.password_hash = hash_password(new_password)
+    database.flush()
+    for session in list(user.sessions):
+        if keep_session is None or session.id != keep_session.id:
+            database.delete(session)
     database.commit()
     database.refresh(user)
     return user

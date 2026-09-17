@@ -10,10 +10,11 @@ from app.deps import (
     get_database,
     optional_session,
     require_csrf,
+    require_session,
     require_user,
 )
 from app.models import User, UserSession
-from app.schemas import AuthResponse, LoginRequest, SetupStatus, UserCreate, UserRead
+from app.schemas import AuthResponse, LoginRequest, PasswordChange, SetupStatus, UserCreate, UserRead
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -60,6 +61,9 @@ def setup(
         _, token, csrf_token = auth_service.create_session(database, user, settings)
     except auth_service.AuthError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    from app.services.market_catalog import seed_market_strategies
+
+    seed_market_strategies(database)
     _set_auth_cookies(response, settings, token, csrf_token)
     return AuthResponse(user=UserRead.model_validate(user))
 
@@ -72,7 +76,7 @@ def login(
     settings: Settings = Depends(current_settings),
 ) -> AuthResponse:
     try:
-        user = auth_service.authenticate(database, payload.email, payload.password)
+        user = auth_service.authenticate(database, payload.account, payload.password)
         _, token, csrf_token = auth_service.create_session(database, user, settings)
     except auth_service.AuthError as exc:
         status_code = (
@@ -98,3 +102,28 @@ def logout(
 @router.get("/me", response_model=UserRead)
 def me(user: User = Depends(require_user)) -> UserRead:
     return UserRead.model_validate(user)
+
+
+@router.post("/password", response_model=UserRead, dependencies=[Depends(require_csrf)])
+def change_password(
+    payload: PasswordChange,
+    user: User = Depends(require_user),
+    session: UserSession = Depends(require_session),
+    database: Session = Depends(get_database),
+) -> UserRead:
+    try:
+        updated = auth_service.change_password(
+            database,
+            user,
+            payload.current_password,
+            payload.new_password,
+            keep_session=session,
+        )
+    except auth_service.AuthError as exc:
+        status_code = (
+            status.HTTP_400_BAD_REQUEST
+            if exc.code in {"invalid_password", "same_password"}
+            else status.HTTP_401_UNAUTHORIZED
+        )
+        raise HTTPException(status_code=status_code, detail=exc.message) from exc
+    return UserRead.model_validate(updated)

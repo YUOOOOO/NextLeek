@@ -57,6 +57,17 @@ def test_login_and_logout(client: TestClient) -> None:
     assert client.get("/api/auth/me").status_code == 200
 
 
+
+def test_login_with_username(client: TestClient) -> None:
+    setup_admin(client)
+    client.post("/api/auth/logout", headers=csrf_headers(client))
+    login = client.post(
+        "/api/auth/login",
+        json={"account": ADMIN["username"], "password": ADMIN["password"]},
+    )
+    assert login.status_code == 200
+    assert client.get("/api/auth/me").json()["username"] == ADMIN["username"]
+
 def test_admin_creates_user_and_user_cannot_list(client: TestClient) -> None:
     setup_admin(client)
     created = client.post("/api/users", json={**USER, "role": "user"}, headers=csrf_headers(client))
@@ -73,6 +84,37 @@ def test_admin_creates_user_and_user_cannot_list(client: TestClient) -> None:
     assert login.status_code == 200
     forbidden = client.get("/api/users")
     assert forbidden.status_code == 403
+
+
+def test_user_can_change_own_password(client: TestClient) -> None:
+    setup_admin(client)
+    created = client.post("/api/users", json={**USER, "role": "user"}, headers=csrf_headers(client))
+    assert created.status_code == 201, created.text
+    client.post("/api/auth/logout", headers=csrf_headers(client))
+    login = client.post("/api/auth/login", json={"email": USER["email"], "password": USER["password"]})
+    assert login.status_code == 200
+
+    wrong = client.post(
+        "/api/auth/password",
+        json={"current_password": "not-the-old-one", "new_password": "alice-password-2"},
+        headers=csrf_headers(client),
+    )
+    assert wrong.status_code == 400
+
+    changed = client.post(
+        "/api/auth/password",
+        json={"current_password": USER["password"], "new_password": "alice-password-2"},
+        headers=csrf_headers(client),
+    )
+    assert changed.status_code == 200, changed.text
+    assert client.get("/api/auth/me").status_code == 200
+    assert client.get("/api/users").status_code == 403
+
+    client.post("/api/auth/logout", headers=csrf_headers(client))
+    old_login = client.post("/api/auth/login", json={"email": USER["email"], "password": USER["password"]})
+    assert old_login.status_code == 401
+    new_login = client.post("/api/auth/login", json={"email": USER["email"], "password": "alice-password-2"})
+    assert new_login.status_code == 200
 
 
 def test_mutating_requires_csrf(client: TestClient) -> None:

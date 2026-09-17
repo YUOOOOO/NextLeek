@@ -14,6 +14,7 @@ export function Auth() {
   const configured = status.data?.configured ?? false;
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("admin");
+  const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
@@ -22,7 +23,7 @@ export function Auth() {
       if (!configured) {
         return api.setup({ email, username, password });
       }
-      return api.login({ email, password });
+      return api.login({ account, password });
     },
     onSuccess: async (result) => {
       queryClient.setQueryData(queryKeys.me, result.user);
@@ -54,16 +55,31 @@ export function Auth() {
             </p>
           </div>
         </div>
-        <label className="block text-xs text-[var(--ds-color-text-placeholder)]">
-          邮箱
-          <input
-            className="field mt-1"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-        </label>
+        {configured ? (
+          <label className="block text-xs text-[var(--ds-color-text-placeholder)]">
+            账号
+            <input
+              className="field mt-1"
+              type="text"
+              autoComplete="username"
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
+              required
+              placeholder="用户名或邮箱"
+            />
+          </label>
+        ) : (
+          <label className="block text-xs text-[var(--ds-color-text-placeholder)]">
+            邮箱
+            <input
+              className="field mt-1"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </label>
+        )}
         {!configured && (
           <label className="block text-xs text-[var(--ds-color-text-placeholder)]">
             用户名
