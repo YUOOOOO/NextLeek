@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nextleek
+      POSTGRES_PASSWORD: nextleek
+      POSTGRES_DB: nextleek
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextleek"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "3018:3018"
+    environment:
+      NEXTLEEK_DATABASE_URL: postgresql+psycopg://nextleek:nextleek@db:5432/nextleek
+      NEXTLEEK_STATIC_DIR: /app/static
+      NEXTLEEK_COOKIE_SECURE: "false"
+    volumes:
+      - appdata:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  appdata:
