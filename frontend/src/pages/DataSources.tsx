@@ -1,7 +1,9 @@
 import { FormEvent, useMemo, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, CustomSourceConfig, DataProviders } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { useCurrentUser } from "../lib/useAuth";
 
 const PROVIDER_FIELDS: Array<{ key: keyof DataProviders; label: string }> = [
   { key: "daily_data_provider", label: "日K" },
@@ -39,6 +41,7 @@ const EMPTY_SOURCE: CustomSourceConfig = {
 };
 
 export function DataSources() {
+  const me = useCurrentUser();
   const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
@@ -50,7 +53,6 @@ export function DataSources() {
   const settings = useQuery({ queryKey: queryKeys.settings, queryFn: api.tickflowSettings });
   const prefs = useQuery({ queryKey: queryKeys.preferences, queryFn: api.preferences });
   const sources = useQuery({ queryKey: queryKeys.dataSources, queryFn: api.dataSources });
-  const matrix = useQuery({ queryKey: queryKeys.capabilityMatrix, queryFn: api.capabilityMatrix });
 
   const providerOptions = useMemo(() => {
     const names: Record<string, true> = { tickflow: true };
@@ -148,6 +150,9 @@ export function DataSources() {
     event.preventDefault();
     saveKey.mutate();
   }
+  if (!me.data || me.data.role !== "admin") {
+    return me.isLoading ? null : <Navigate to="/settings" replace />;
+  }
 
   return (
     <div className="space-y-5">
@@ -212,17 +217,11 @@ export function DataSources() {
             </label>
           ))}
         </div>
-        {matrix.data && (
-          <pre className="text-[11px] text-[var(--ds-color-text-placeholder)] whitespace-pre-wrap max-h-48 overflow-auto">
-            {JSON.stringify(matrix.data, null, 2)}
-          </pre>
-        )}
+
       </section>
 
       <section className="card overflow-hidden">
-        <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">
-          已加载源 · {sources.data?.config_dir}
-        </div>
+        <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">已加载源</div>
         <table className="data-table">
           <thead>
             <tr>

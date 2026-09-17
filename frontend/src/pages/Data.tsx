@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, DataStatus, PipelineJob, TableStats } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { useCurrentUser } from "../lib/useAuth";
 
 const TABLES: Array<{ key: keyof DataStatus; label: string }> = [
   { key: "instruments", label: "个股维表" },
@@ -26,21 +27,30 @@ function fmt(value: unknown) {
 
 function tableRows(stats: TableStats) {
   if (!stats) return "无数据";
-  if (typeof stats.rows === "number") return stats.rows.toLocaleString();
+  if (stats.trading_days) {
+    const symbols = stats.symbols_covered ?? stats.symbols;
+    if (symbols) return `${symbols.toLocaleString()} 只 · ${stats.trading_days} 日`;
+    return `${stats.trading_days} 日`;
+  }
+  if (typeof stats.rows === "number" && stats.rows > 0) return stats.rows.toLocaleString();
+  if (typeof stats.symbols_covered === "number") return `${stats.symbols_covered.toLocaleString()} 只`;
   if (typeof stats.symbols === "number") return `${stats.symbols.toLocaleString()} 只`;
+  if (typeof stats.rows === "number") return stats.rows.toLocaleString();
   return "有";
 }
 
 function tableRange(stats: TableStats) {
   if (!stats) return "—";
-  const min = stats.min_date ?? stats.days;
-  const max = stats.max_date;
-  if (min && max) return `${fmt(min)} → ${fmt(max)}`;
+  const min = stats.earliest_date ?? stats.min_date ?? stats.latest_as_of;
+  const max = stats.latest_date ?? stats.max_date;
+  if (min && max && min !== max) return `${fmt(min)} → ${fmt(max)}`;
   if (min) return fmt(min);
+  if (max) return fmt(max);
   return "—";
 }
 
 export function Data() {
+  const me = useCurrentUser();
   const qc = useQueryClient();
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [extendValue, setExtendValue] = useState(6);
@@ -142,8 +152,13 @@ export function Data() {
   });
   const updateRealtime = useMutation({
     mutationFn: api.updateRealtimeQuotes,
-    onSuccess: async () => {
+    onSuccess: async (payload, enabled) => {
       await qc.invalidateQueries({ queryKey: queryKeys.preferences });
+      if (enabled && !payload.realtime_quotes_enabled) {
+        setError(payload.realtime_allowed === false ? "当前档位无实时行情权限" : "实时行情未能开启");
+        return;
+      }
+      setError("");
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -168,6 +183,14 @@ export function Data() {
     minute: 10,
   };
   const storage = status.data?.storage as Record<string, number | string> | undefined;
+  const hasLocalQuotes =
+    (status.data?.daily?.trading_days ?? 0) > 0 || (status.data?.enriched?.trading_days ?? 0) > 0;
+  const realtimeBlocked =
+    prefs.data?.realtime_allowed === false
+      ? "当前档位无实时行情权限"
+      : status.data && !hasLocalQuotes
+        ? "请先同步日K后再开启"
+        : "";
   const latestLog = useMemo(() => {
     const logs = job.data?.log ?? [];
     return logs.length ? logs[logs.length - 1] : null;
@@ -181,9 +204,11 @@ export function Data() {
           <p className="page-desc">盘后管道、历史扩展、修正与本地 Parquet 画像。逻辑与 TSP 一致，未裁剪取数阶段。</p>
         </div>
         <div className="flex gap-2">
-          <Link to="/settings/data" className="btn btn-ghost">
-            数据源
-          </Link>
+          {me.data?.role === "admin" && (
+            <Link to="/settings/data" className="btn btn-ghost">
+              数据源
+            </Link>
+          )}
           <button className="btn btn-primary" disabled={startSync.isPending} onClick={() => startSync.mutate()}>
             {startSync.isPending ? "启动中…" : "同步"}
           </button>
@@ -294,13 +319,17 @@ export function Data() {
             />
             分钟K
           </label>
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-2" title={realtimeBlocked || undefined}>
             <input
               type="checkbox"
+              disabled={Boolean(realtimeBlocked) || updateRealtime.isPending}
               checked={Boolean(prefs.data?.realtime_quotes_enabled ?? false)}
               onChange={(event) => updateRealtime.mutate(event.target.checked)}
             />
             实时行情
+            {realtimeBlocked && (
+              <span className="text-xs text-[var(--ds-color-text-placeholder)]">{realtimeBlocked}</span>
+            )}
           </label>
         </div>
         <div className="grid gap-3 md:grid-cols-2">

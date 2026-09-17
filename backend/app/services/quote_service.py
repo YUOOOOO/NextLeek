@@ -1308,6 +1308,13 @@ class QuoteService:
             if rule_events:
                 self._maybe_send_webhook(rule_events, engine)
 
+            user_monitor = getattr(self._app_state, "user_strategy_monitor", None)
+            if user_monitor is not None and stock_ready:
+                try:
+                    user_monitor.evaluate(self._app_state, enriched_today, enriched_date)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("用户策略监控失败: %s", e)
+
         except Exception as e:  # noqa: BLE001
             logger.warning("监控评估失败: %s", e)
 
