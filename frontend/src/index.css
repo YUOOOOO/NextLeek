@@ -139,24 +139,6 @@ select {
   padding: 12px 8px;
 }
 
-.wb-group + .wb-group {
-  margin-top: 12px;
-}
-
-.wb-group-label {
-  padding: 4px 10px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--ds-color-text-placeholder);
-}
-
-.wb-group-sep {
-  height: 1px;
-  margin: 8px 8px;
-  background: var(--ds-color-border-default);
-}
 
 .wb-item {
   display: flex;
@@ -411,6 +393,33 @@ select {
   font-size: 18px;
   letter-spacing: -0.02em;
   color: var(--ds-color-text-primary);
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--ds-color-border-default);
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--ds-color-text-placeholder);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.settings-tab:hover {
+  color: var(--ds-color-text-primary);
+}
+
+.settings-tab.is-active {
+  color: var(--ds-color-text-primary);
+  border-bottom-color: var(--ds-color-brand);
 }
 
 .kv-row {

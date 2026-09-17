@@ -53,7 +53,7 @@ export function Users() {
   });
 
   if (me.data && me.data.role !== "admin") {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/settings" replace />;
   }
 
   function onSubmit(event: FormEvent) {
@@ -63,14 +63,6 @@ export function Users() {
 
   return (
     <div className="space-y-5">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">用户管理</h1>
-          <p className="page-desc">管理员创建账号。用户不能自助注册。</p>
-        </div>
-        <span className="badge">{users.data?.length ?? 0} 个账号</span>
-      </div>
-
       <form onSubmit={onSubmit} className="card grid gap-3 p-4 md:grid-cols-5">
         <input
           className="field"

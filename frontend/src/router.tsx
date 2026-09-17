@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Auth } from "./pages/Auth";
 import { Dashboard } from "./pages/Dashboard";
-import { Settings } from "./pages/Settings";
+import { GeneralSettings, Settings } from "./pages/Settings";
 import { Users } from "./pages/Users";
 
 export const router = createBrowserRouter([
@@ -12,8 +12,15 @@ export const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { index: true, element: <Dashboard /> },
-      { path: "users", element: <Users /> },
-      { path: "settings", element: <Settings /> },
+      {
+        path: "settings",
+        element: <Settings />,
+        children: [
+          { index: true, element: <GeneralSettings /> },
+          { path: "users", element: <Users /> },
+        ],
+      },
+      { path: "users", element: <Navigate to="/settings/users" replace /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },

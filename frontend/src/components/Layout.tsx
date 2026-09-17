@@ -7,7 +7,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
-  Users,
   X,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -23,25 +22,11 @@ type NavItem = {
   label: string;
   icon: typeof LayoutDashboard;
   end?: boolean;
-  admin?: boolean;
 };
 
-type NavGroup = { key: string; label: string; items: NavItem[] };
-
-const NAV: NavGroup[] = [
-  {
-    key: "work",
-    label: "工作台",
-    items: [{ to: "/", label: "看板", icon: LayoutDashboard, end: true }],
-  },
-  {
-    key: "system",
-    label: "系统",
-    items: [
-      { to: "/users", label: "用户", icon: Users, admin: true },
-      { to: "/settings", label: "设置", icon: Settings },
-    ],
-  },
+const NAV: NavItem[] = [
+  { to: "/", label: "看板", icon: LayoutDashboard, end: true },
+  { to: "/settings", label: "设置", icon: Settings },
 ];
 
 function formatBJT(date: Date) {
@@ -84,24 +69,13 @@ export function Layout() {
     },
   });
 
-  const groups = useMemo(
+  const current = useMemo(
     () =>
-      NAV.map((group) => ({
-        ...group,
-        items: group.items.filter((item) => !item.admin || me.data?.role === "admin"),
-      })).filter((group) => group.items.length > 0),
-    [me.data?.role],
-  );
-
-  const current = useMemo(() => {
-    for (const group of groups) {
-      const item = group.items.find((entry) =>
+      NAV.find((entry) =>
         entry.end ? location.pathname === entry.to : location.pathname.startsWith(entry.to),
-      );
-      if (item) return { group, item };
-    }
-    return null;
-  }, [groups, location.pathname]);
+      ) ?? null,
+    [location.pathname],
+  );
 
   function toggleCollapsed() {
     setCollapsed((prev) => {
@@ -122,27 +96,22 @@ export function Layout() {
   const nav = (compact: boolean, onNavigate?: () => void) => (
     <>
       <nav className="wb-nav">
-        {groups.map((group, index) => (
-          <div key={group.key} className="wb-group">
-            {compact ? index > 0 && <div className="wb-group-sep" /> : <div className="wb-group-label">{group.label}</div>}
-            {group.items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  title={compact ? item.label : undefined}
-                  className={({ isActive }) => `wb-item${isActive ? " is-active" : ""}`}
-                  onClick={onNavigate}
-                >
-                  <Icon size={15} className="wb-item-icon" />
-                  {!compact && <span className="wb-item-text">{item.label}</span>}
-                </NavLink>
-              );
-            })}
-          </div>
-        ))}
+        {NAV.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              title={compact ? item.label : undefined}
+              className={({ isActive }) => `wb-item${isActive ? " is-active" : ""}`}
+              onClick={onNavigate}
+            >
+              <Icon size={15} className="wb-item-icon" />
+              {!compact && <span className="wb-item-text">{item.label}</span>}
+            </NavLink>
+          );
+        })}
       </nav>
       <div className="wb-rail-foot">
         {compact && (
@@ -210,11 +179,9 @@ export function Layout() {
             {current && (
               <>
                 <span className="wb-crumb-sep">/</span>
-                <span>{current.group.label}</span>
-                <span className="wb-crumb-sep">/</span>
                 <span className="wb-crumb-cur">
-                  <current.item.icon size={14} />
-                  {current.item.label}
+                  <current.icon size={14} />
+                  {current.label}
                 </span>
               </>
             )}
