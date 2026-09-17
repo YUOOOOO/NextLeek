@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
@@ -555,8 +556,15 @@ def _compile_call(node: dict) -> tuple[pl.Expr | None, bool, bool]:
     return None, False, False
 
 
-def compile_formula(text: str) -> CompiledFormula:
-    """编译公式文本; 永不抛异常, 失败以 errors 表达 (fail-closed)。"""
+def compile_formula(
+    text: str,
+    extra_identifiers: Collection[str] | None = None,
+) -> CompiledFormula:
+    """编译公式文本; 永不抛异常, 失败以 errors 表达 (fail-closed)。
+
+    extra_identifiers: 调用方已物化或即将物化的列/用户因子 id, 不写入全局注册表。
+    """
+    extra = frozenset(extra_identifiers or ())
     if not isinstance(text, str) or not text.strip():
         return CompiledFormula(ok=False, errors=[DslError("E014", "语法错误: 表达式为空")], formula_text=text)
 
@@ -580,7 +588,7 @@ def compile_formula(text: str) -> CompiledFormula:
         errors.append(DslError("E016", "常量表达式: 公式必须引用至少一个数据列或因子"))
 
     for name in sorted(identifiers):
-        if name not in BASE_COLUMNS and get_factor(name) is None:
+        if name not in BASE_COLUMNS and get_factor(name) is None and name not in extra:
             errors.append(DslError("E001", f"未知标识符: {name}", detail={"name": name}))
 
     constants_by_call: dict[int, dict] = {}
@@ -596,6 +604,9 @@ def compile_formula(text: str) -> CompiledFormula:
             continue
         spec = get_factor(name)
         if spec is None:
+            if name in extra:
+                referenced_factors.add(name)
+                dependencies.add(name)
             continue
         referenced_factors.add(name)
         dependencies.update(factor_dependencies([name]))

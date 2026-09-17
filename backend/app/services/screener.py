@@ -428,6 +428,192 @@ class ScreenerService:
             elapsed_ms=elapsed,
         )
 
+    RESULT_COLUMNS = (
+        "symbol",
+        "name",
+        "close",
+        "change_pct",
+        "change_amount",
+        "volume",
+        "amount",
+        "turnover_rate",
+        "ma5",
+        "ma20",
+        "rsi_14",
+        "consecutive_limit_ups",
+    )
+
+    def run_conditions(
+        self,
+        as_of: date,
+        conditions: list[dict],
+        *,
+        basic_filter: dict | None = None,
+        order_by: str | None = "change_pct",
+        descending: bool = True,
+        limit: int = 200,
+        current: pl.DataFrame | None = None,
+    ) -> ScreenerResult:
+        """用自定义信号 DSL 跑选股，不落盘、不污染全局 custom_signals。"""
+        from app.strategy import custom_signals
+        from app.strategy.engine import StrategyEngine
+
+        t0 = time.perf_counter()
+        max_days = 0
+        for cond in conditions:
+            max_days = max(
+                max_days,
+                int(cond.get("leftDays") or 0),
+                int(cond.get("rightDays") or 0),
+            )
+        lookback = max(max_days + 1, 1)
+        live = current is not None and not current.is_empty()
+        if live and lookback > 1:
+            hist = self._load_enriched_history(as_of, lookback + MIN_INDICATOR_WARMUP_DAYS)
+            if hist.is_empty() or "date" not in hist.columns:
+                df = current
+            else:
+                today_key = as_of.isoformat() if hist.schema.get("date") == pl.Utf8 else as_of
+                hist = hist.filter(pl.col("date") != today_key)
+                df = pl.concat([hist, current], how="diagonal_relaxed")
+        elif live:
+            df = current
+        elif lookback > 1:
+            df = self._load_enriched_history(as_of, lookback + MIN_INDICATOR_WARMUP_DAYS)
+        else:
+            df = self._load_enriched_for_date(as_of)
+
+        empty = ScreenerResult(as_of=as_of, strategy=None, rows=[], total=0, elapsed_ms=(time.perf_counter() - t0) * 1000)
+        if df.is_empty():
+            return empty
+
+        sig = {
+            "id": "user",
+            "name": "user",
+            "kind": "entry",
+            "enabled": True,
+            "timeframe": custom_signals.TIMEFRAME_DAILY,
+            "conditions": conditions,
+        }
+        exprs = custom_signals.build_expressions([sig])
+        col = custom_signals.column_name("user")
+        if col not in exprs:
+            return empty
+
+        df = custom_signals.materialize_factor_columns(df, exprs)
+        df = custom_signals.inject(df, exprs)
+        if df.is_empty() or col not in df.columns:
+            return empty
+
+        date_col = pl.col("date")
+        if df.schema.get("date") == pl.Utf8:
+            hit = df.filter((date_col == as_of.isoformat()) & pl.col(col).fill_null(False))
+        else:
+            hit = df.filter((date_col == as_of) & pl.col(col).fill_null(False))
+
+        if basic_filter:
+            hit = StrategyEngine._apply_basic_filter(hit, basic_filter)
+        if order_by and order_by in hit.columns and not hit.is_empty():
+            hit = hit.sort(order_by, descending=descending, nulls_last=True)
+
+        keep = [name for name in self.RESULT_COLUMNS if name in hit.columns]
+        extra = [
+            cond["left"]
+            for cond in conditions
+            if isinstance(cond.get("left"), str) and cond["left"] in hit.columns and cond["left"] not in keep
+        ]
+        if order_by and order_by in hit.columns and order_by not in keep and order_by not in extra:
+            extra.append(order_by)
+        if keep or extra:
+            hit = hit.select([*keep, *extra])
+        if limit > 0:
+            hit = hit.head(limit)
+
+        rows = hit.to_dicts() if not hit.is_empty() else []
+        for row in rows:
+            for key, value in list(row.items()):
+                if isinstance(value, float) and (value != value or abs(value) == float("inf")):
+                    row[key] = None
+                elif hasattr(value, "isoformat"):
+                    row[key] = value.isoformat()
+        elapsed = (time.perf_counter() - t0) * 1000
+        return ScreenerResult(
+            as_of=as_of,
+            strategy=None,
+            rows=rows,
+            total=len(rows),
+            elapsed_ms=elapsed,
+        )
+
+    def run_formula(
+        self,
+        as_of: date,
+        formula: str,
+        *,
+        extra_specs: dict | None = None,
+        basic_filter: dict | None = None,
+        order_by: str | None = "change_pct",
+        descending: bool = True,
+        limit: int = 200,
+        current: pl.DataFrame | None = None,
+    ) -> ScreenerResult:
+        from app.services import formula_runtime
+        from app.strategy.engine import StrategyEngine
+
+        t0 = time.perf_counter()
+        extra_specs = extra_specs or {}
+        compiled = formula_runtime.compile_user_formula(formula, extra_specs.keys(), require_bool=True)
+        lookback = max(compiled.warmup_bars + 5, MIN_INDICATOR_WARMUP_DAYS)
+        live = current is not None and not current.is_empty()
+        if live:
+            hist = self._load_enriched_history(as_of, lookback)
+            if hist.is_empty() or "date" not in hist.columns:
+                df = current
+            else:
+                today_key = as_of.isoformat() if hist.schema.get("date") == pl.Utf8 else as_of
+                hist = hist.filter(pl.col("date") != today_key)
+                df = pl.concat([hist, current], how="diagonal_relaxed")
+        else:
+            df = self._load_enriched_history(as_of, lookback)
+        empty = ScreenerResult(as_of=as_of, strategy=None, rows=[], total=0, elapsed_ms=(time.perf_counter() - t0) * 1000)
+        if df.is_empty():
+            return empty
+        transformed, _ = formula_runtime.apply_formula(df, formula, extra_specs)
+        if "__dsl_factor__" not in transformed.columns:
+            return empty
+        date_col = pl.col("date")
+        signal = pl.col("__dsl_factor__").fill_null(0) > 0
+        if transformed.schema.get("date") == pl.Utf8:
+            hit = transformed.filter((date_col == as_of.isoformat()) & signal)
+        else:
+            hit = transformed.filter((date_col == as_of) & signal)
+        if basic_filter:
+            hit = StrategyEngine._apply_basic_filter(hit, basic_filter)
+        if order_by and order_by in hit.columns and not hit.is_empty():
+            hit = hit.sort(order_by, descending=descending, nulls_last=True)
+        keep = [name for name in self.RESULT_COLUMNS if name in hit.columns]
+        extra = [name for name in extra_specs if name in hit.columns and name not in keep]
+        if order_by and order_by in hit.columns and order_by not in keep and order_by not in extra:
+            extra.append(order_by)
+        if keep or extra:
+            hit = hit.select([*keep, *extra])
+        if limit > 0:
+            hit = hit.head(limit)
+        rows = hit.to_dicts() if not hit.is_empty() else []
+        for row in rows:
+            for key, value in list(row.items()):
+                if isinstance(value, float) and (value != value or abs(value) == float("inf")):
+                    row[key] = None
+                elif hasattr(value, "isoformat"):
+                    row[key] = value.isoformat()
+        return ScreenerResult(
+            as_of=as_of,
+            strategy=None,
+            rows=rows,
+            total=len(rows),
+            elapsed_ms=(time.perf_counter() - t0) * 1000,
+        )
+
     def build_strategy_context(
         self,
         engine,

@@ -8,11 +8,13 @@ import logging
 import time
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app import secrets_store
 from app.data_providers.custom.config import MAX_TIMEOUT
+from app.deps import require_admin
+from app.models import User
 from app.tickflow import client as tf_client
 from app.tickflow.policy import (
     detect_capabilities,
@@ -103,7 +105,7 @@ class SwitchEndpointIn(BaseModel):
 
 
 @router.post("/switch_endpoint")
-def switch_endpoint(req: SwitchEndpointIn, request: Request) -> dict:
+def switch_endpoint(req: SwitchEndpointIn, request: Request, _: User = Depends(require_admin)) -> dict:
     """切换 TickFlow 端点并立即生效。
 
     端点切换仅对付费档(starter+,走 api.tickflow.org)有意义;
@@ -129,7 +131,7 @@ def switch_endpoint(req: SwitchEndpointIn, request: Request) -> dict:
 
 
 @router.post("/tickflow-key")
-def save_tickflow_key(req: TickflowKeyIn, request: Request) -> dict:
+def save_tickflow_key(req: TickflowKeyIn, request: Request, _: User = Depends(require_admin)) -> dict:
     """保存 TickFlow API Key 并立即重新探测能力。
 
     先探后存(关键改动,修复乱填 key 也会被持久化的问题):
@@ -212,7 +214,7 @@ def save_tickflow_key(req: TickflowKeyIn, request: Request) -> dict:
 
 
 @router.delete("/tickflow-key")
-def clear_tickflow_key(request: Request) -> dict:
+def clear_tickflow_key(request: Request, _: User = Depends(require_admin)) -> dict:
     """清除 Key,退回无档(none)。
 
     同时清除 tickflow_base_url(测速切换的自定义端点),使客户端走 free-api
@@ -260,7 +262,7 @@ class AiSettingsIn(BaseModel):
 
 
 @router.post("/ai")
-def save_ai_settings(req: AiSettingsIn) -> dict:
+def save_ai_settings(req: AiSettingsIn, _: User = Depends(require_admin)) -> dict:
     """保存 AI 配置（全部持久化到 secrets.json）"""
     from app.config import settings
     from app.services.ai_provider import (
@@ -347,7 +349,7 @@ def save_ai_settings(req: AiSettingsIn) -> dict:
 
 
 @router.delete("/ai")
-def clear_ai_settings() -> dict:
+def clear_ai_settings(_: User = Depends(require_admin)) -> dict:
     """一键清空 AI 配置(provider / base_url / api_key / model)。
 
     保留 ai_user_agent —— 自定义请求头与凭证解耦,清空凭证不影响绕过 CDN 拦截的设置。
@@ -602,7 +604,7 @@ def get_capability_matrix() -> dict:
 
 
 @router.post("/plugin-key")
-def save_plugin_key(req: PluginKeyIn) -> dict:
+def save_plugin_key(req: PluginKeyIn, _: User = Depends(require_admin)) -> dict:
     """保存插件 API Key(先探后存, 对齐 /tickflow-key 语义)。
 
     流程: probe_plugin_key 用候选 Key 实探 → 有效才写 secrets.json
@@ -629,7 +631,7 @@ def save_plugin_key(req: PluginKeyIn) -> dict:
 
 
 @router.delete("/plugin-key/{name}")
-def clear_plugin_key(name: str) -> dict:
+def clear_plugin_key(name: str, _: User = Depends(require_admin)) -> dict:
     """清除插件的界面配置 Key(secrets.json);.env 里的同名变量仍然生效。"""
     from app.data_providers import custom as custom_sources
 
@@ -649,7 +651,7 @@ def clear_plugin_key(name: str) -> dict:
 
 
 @router.post("/data-sources/reload")
-def reload_data_sources() -> dict:
+def reload_data_sources(_: User = Depends(require_admin)) -> dict:
     """重新加载 data_sources/*.yaml。"""
     from app.data_providers import custom as custom_sources
     custom_sources.load_all()
@@ -657,7 +659,7 @@ def reload_data_sources() -> dict:
 
 
 @router.post("/plugins/{name}/install")
-def install_plugin(name: str) -> dict:
+def install_plugin(name: str, _: User = Depends(require_admin)) -> dict:
     """安装指定插件的依赖 (npm install / pip install), 完成后重新扫描。
 
     根据 plugin.yaml 的 runtime 字段决定安装方式。安装可能耗时较长 (网络下载),
@@ -676,7 +678,7 @@ def install_plugin(name: str) -> dict:
 
 
 @router.delete("/plugins/{name}/install")
-def uninstall_plugin(name: str) -> dict:
+def uninstall_plugin(name: str, _: User = Depends(require_admin)) -> dict:
     """卸载指定插件的依赖 (删除 node_modules / pip uninstall), 完成后重新扫描。
 
     如果该插件当前正被使用, 自动回退到 tickflow。
@@ -713,7 +715,7 @@ def get_data_source(name: str) -> dict:
 
 
 @router.post("/data-sources")
-def save_data_source(req: CustomSourceIn) -> dict:
+def save_data_source(req: CustomSourceIn, _: User = Depends(require_admin)) -> dict:
     """创建或更新一个自定义数据源 yaml, 保存后自动 reload。"""
     from app.data_providers import custom as custom_sources
     config = req.model_dump()
@@ -727,7 +729,7 @@ def save_data_source(req: CustomSourceIn) -> dict:
 
 
 @router.delete("/data-sources/{name}")
-def delete_data_source(name: str, request: Request) -> dict:
+def delete_data_source(name: str, request: Request, _: User = Depends(require_admin)) -> dict:
     """删除一个自定义数据源 yaml, 保存后自动 reload。
 
     若当前总开关选中的就是被删的源, 回退到 tickflow。
@@ -757,7 +759,7 @@ def delete_data_source(name: str, request: Request) -> dict:
 
 
 @router.post("/data-sources/test")
-def test_data_source(req: CustomSourceTestIn) -> dict:
+def test_data_source(req: CustomSourceTestIn, _: User = Depends(require_admin)) -> dict:
     """试拉自定义数据源，不写盘。"""
     from app.data_providers import custom as custom_sources
 
@@ -782,7 +784,7 @@ def test_data_source(req: CustomSourceTestIn) -> dict:
 
 
 @router.put("/preferences/data-providers")
-def update_data_providers(req: DataProvidersIn, request: Request) -> dict:
+def update_data_providers(req: DataProvidersIn, request: Request, _: User = Depends(require_admin)) -> dict:
     """保存数据源选择。"""
     from app.services import preferences
     updates = req.model_dump(exclude_none=True)

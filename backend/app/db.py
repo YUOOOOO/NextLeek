@@ -38,6 +38,54 @@ def init_database(engine: Engine) -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _ensure_strategy_columns(engine)
+    _ensure_subscription_columns(engine)
+
+
+def _add_missing_columns(engine: Engine, table: str, extras: dict[str, str]) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if table not in inspector.get_table_names():
+        return
+    cols = {column["name"] for column in inspector.get_columns(table)}
+    with engine.begin() as connection:
+        for name, stmt in extras.items():
+            if name not in cols:
+                connection.execute(text(stmt))
+
+
+def _ensure_strategy_columns(engine: Engine) -> None:
+    _add_missing_columns(
+        engine,
+        "strategies",
+        {
+            "basic_filter": "ALTER TABLE strategies ADD COLUMN basic_filter JSON",
+            "order_by": "ALTER TABLE strategies ADD COLUMN order_by VARCHAR(64) DEFAULT 'change_pct'",
+            "descending": "ALTER TABLE strategies ADD COLUMN descending BOOLEAN DEFAULT 1",
+            "result_limit": "ALTER TABLE strategies ADD COLUMN result_limit INTEGER DEFAULT 100",
+            "kind": "ALTER TABLE strategies ADD COLUMN kind VARCHAR(16) DEFAULT 'conditions'",
+            "children": "ALTER TABLE strategies ADD COLUMN children JSON",
+            "merge_mode": "ALTER TABLE strategies ADD COLUMN merge_mode VARCHAR(16) DEFAULT 'union'",
+            "min_confirm": "ALTER TABLE strategies ADD COLUMN min_confirm INTEGER DEFAULT 1",
+            "version": "ALTER TABLE strategies ADD COLUMN version INTEGER DEFAULT 0",
+            "published_snapshot": "ALTER TABLE strategies ADD COLUMN published_snapshot JSON",
+            "formula": "ALTER TABLE strategies ADD COLUMN formula TEXT DEFAULT ''",
+        },
+    )
+
+
+def _ensure_subscription_columns(engine: Engine) -> None:
+    _add_missing_columns(
+        engine,
+        "strategy_subscriptions",
+        {
+            "snapshot": "ALTER TABLE strategy_subscriptions ADD COLUMN snapshot JSON",
+            "pinned_version": "ALTER TABLE strategy_subscriptions ADD COLUMN pinned_version INTEGER DEFAULT 0",
+        },
+    )
 
 
 @contextmanager

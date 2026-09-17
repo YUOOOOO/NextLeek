@@ -17,8 +17,11 @@ from app.api.ext_data import router as ext_data_router
 from app.api.financials import router as financials_router
 from app.api.indices import router as indices_router
 from app.api.kline import router as kline_router
+from app.api.overview import router as overview_router
 from app.api.pipeline import router as pipeline_router
 from app.api.settings import router as settings_router
+from app.api.strategies import router as strategies_router
+from app.api.factors import router as factors_router
 from app.api.users import router as users_router
 from app.config import get_settings
 from app.db import create_database_engine, create_session_factory, init_database, session_scope
@@ -94,6 +97,9 @@ async def _start_market_data(app: FastAPI) -> None:
 
     strategy_monitor = StrategyMonitorService()
     app.state.strategy_monitor = strategy_monitor
+    from app.services.user_strategy_monitor import UserStrategyMonitor
+
+    app.state.user_strategy_monitor = UserStrategyMonitor()
     qs.set_app_state(app.state)
 
     from app.services.depth_service import DepthService
@@ -201,7 +207,9 @@ async def lifespan(app: FastAPI):
         admin = auth_service.bootstrap_admin(database, settings)
         if admin is not None:
             logger.info("bootstrapped admin user %s", admin.email)
-    logger.info("NextLeek v%s starting", __version__)
+        from app.services.market_catalog import seed_market_strategies
+
+        seed_market_strategies(database)
     await _start_market_data(app)
     try:
         yield
@@ -254,10 +262,13 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(data_router)
 app.include_router(pipeline_router)
+app.include_router(overview_router)
 app.include_router(kline_router)
 app.include_router(indices_router)
 app.include_router(financials_router)
 app.include_router(settings_router)
+app.include_router(strategies_router)
+app.include_router(factors_router)
 app.include_router(ext_data_router)
 
 _static = Path(settings.static_dir)
