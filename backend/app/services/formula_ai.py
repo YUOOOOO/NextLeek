@@ -55,7 +55,7 @@ async def generate_formula(prompt: str, kind: Kind) -> dict[str, Any]:
             {"role": "user", "content": f"{hint}。需求：{prompt.strip()}"},
         ],
         temperature=0.2,
-        max_tokens=800,
+        max_tokens=None,
     )
     data = _extract_json(text)
     formula = str(data.get("formula") or "").strip()

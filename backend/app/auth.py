@@ -50,7 +50,11 @@ def get_user_by_id(database: Session, user_id: str) -> User | None:
 
 
 def list_users(database: Session) -> list[User]:
-    return list(database.scalars(select(User).order_by(User.created_at.asc())))
+    return list(
+        database.scalars(
+            select(User).where(User.role.in_(("admin", "user"))).order_by(User.created_at.asc())
+        )
+    )
 
 
 def create_user(database: Session, payload: UserCreate, *, first_admin: bool = False) -> User:

@@ -46,7 +46,7 @@ export function Users() {
 
   const resetPassword = useMutation({
     mutationFn: (id: string) => {
-      const next = window.prompt("输入新密码（至少 12 位）");
+      const next = window.prompt("输入新密码（至少 10 位）");
       if (!next) return Promise.resolve(null);
       return api.resetPassword(id, next);
     },
@@ -96,12 +96,12 @@ export function Users() {
         />
         <input
           className="field"
-          placeholder="新密码（至少 12 位）"
+          placeholder="新密码（至少 10 位）"
           type="password"
           value={newPassword}
           onChange={(event) => setNewPassword(event.target.value)}
           required
-          minLength={12}
+          minLength={10}
         />
         <input
           className="field"
@@ -110,7 +110,7 @@ export function Users() {
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           required
-          minLength={12}
+          minLength={10}
         />
         <button className="btn btn-primary" type="submit" disabled={changePassword.isPending}>
           {changePassword.isPending ? "保存中…" : "修改密码"}
@@ -143,7 +143,7 @@ export function Users() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
-              minLength={12}
+              minLength={10}
             />
             <select
               className="field"
@@ -158,6 +158,7 @@ export function Users() {
             </button>
           </form>
           {error && <p className="err">{error}</p>}
+          {users.error && <p className="err">{(users.error as Error).message}</p>}
 
           <div className="card overflow-hidden">
             <table className="data-table">

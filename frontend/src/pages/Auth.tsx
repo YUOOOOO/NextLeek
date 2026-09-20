@@ -100,7 +100,7 @@ export function Auth() {
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
-            minLength={configured ? 1 : 12}
+            minLength={configured ? 1 : 10}
           />
         </label>
         {error && <p className="err">{error}</p>}

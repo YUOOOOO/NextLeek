@@ -3,13 +3,12 @@ import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-route
 import {
   Database,
   LayoutDashboard,
-  LogOut,
   Menu,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Moon,
   ScanSearch,
   Settings,
   Sigma,
+  Sun,
   X,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,9 +16,7 @@ import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { useCurrentUser } from "../lib/useAuth";
 
-const VERSION = "0.1.0";
-const COLLAPSE_KEY = "nextleek_sidebar";
-
+const THEME_KEY = "nextleek_theme";
 type NavItem = {
   to: string;
   label: string;
@@ -74,7 +71,9 @@ export function Layout() {
   const queryClient = useQueryClient();
   const me = useCurrentUser();
   const clock = useBeijingClock();
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === "1");
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -104,14 +103,6 @@ export function Layout() {
     [location.pathname],
   );
 
-  function toggleCollapsed() {
-    setCollapsed((prev) => {
-      const next = !prev;
-      localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
-      return next;
-    });
-  }
-
   if (me.isLoading) {
     return <div className="grid min-h-screen place-items-center text-[var(--ds-color-text-placeholder)]">加载中…</div>;
   }
@@ -121,74 +112,33 @@ export function Layout() {
   }
 
   const nav = (compact: boolean, onNavigate?: () => void) => (
-    <>
-      <nav className="wb-nav">
-        {NAV.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              title={compact ? item.label : undefined}
-              className={({ isActive }) => `wb-item${isActive ? " is-active" : ""}`}
-              onClick={onNavigate}
-            >
-              <Icon size={15} className="wb-item-icon" />
-              {!compact && <span className="wb-item-text">{item.label}</span>}
-            </NavLink>
-          );
-        })}
-      </nav>
-      <div className="wb-rail-foot">
-        {compact && (
-          <button
-            type="button"
-            className="wb-icon-btn"
-            title="展开侧栏"
-            aria-label="展开侧栏"
-            onClick={toggleCollapsed}
+    <nav className="wb-nav">
+      {NAV.map((item) => {
+        const Icon = item.icon;
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            title={compact ? item.label : undefined}
+            className={({ isActive }) => `wb-item${isActive ? " is-active" : ""}`}
+            onClick={onNavigate}
           >
-            <PanelLeftOpen size={15} />
-          </button>
-        )}
-        <button
-          type="button"
-          className="wb-item wb-item-danger"
-          title="退出"
-          onClick={() => logout.mutate()}
-        >
-          <LogOut size={15} className="wb-item-icon" />
-          {!compact && <span className="wb-item-text">退出</span>}
-        </button>
-      </div>
-    </>
+            <Icon size={15} className="wb-item-icon" />
+            {!compact && <span className="wb-item-text">{item.label}</span>}
+          </NavLink>
+        );
+      })}
+    </nav>
   );
 
   return (
     <div className="wb">
-      <aside id="nextleek-sidebar" className={`wb-rail${collapsed ? " is-collapsed" : ""}`}>
+      <aside id="nextleek-sidebar" className="wb-rail">
         <div className="wb-brand">
           <img src="/favicon.svg" className="wb-logo" alt="" />
-          {!collapsed && (
-            <>
-              <div className="wb-brand-text">
-                <span className="wb-brand-name">NextLeek</span>
-                <span className="wb-version">{VERSION}</span>
-              </div>
-              <button
-                type="button"
-                className="wb-icon-btn"
-                title="折叠侧栏"
-                aria-label="折叠侧栏"
-                onClick={toggleCollapsed}
-              >
-                <PanelLeftClose size={15} />
-              </button>
-            </>
-          )}
         </div>
-        {nav(collapsed)}
+        {nav(true)}
       </aside>
 
       <div className="wb-stage">
@@ -219,6 +169,20 @@ export function Layout() {
               <span>{clock.open ? "开市" : "休市"}</span>
               <span>{clock.time}</span>
             </div>
+            <button
+              type="button"
+              className="wb-icon-btn"
+              title={theme === "dark" ? "切换浅色" : "切换深色"}
+              aria-label={theme === "dark" ? "切换浅色" : "切换深色"}
+              onClick={() => {
+                const next = theme === "dark" ? "light" : "dark";
+                document.documentElement.dataset.theme = next;
+                localStorage.setItem(THEME_KEY, next);
+                setTheme(next);
+              }}
+            >
+              {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
+            </button>
             <div className="wb-account" ref={accountRef}>
               <button
                 type="button"

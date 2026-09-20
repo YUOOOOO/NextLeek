@@ -147,7 +147,7 @@ def serialize(
         "name": source.get("name") or strategy.name,
         "description": source.get("description") if "description" in source else (strategy.description or ""),
         "status": strategy.status,
-        "kind": source.get("kind") or "conditions",
+        "kind": _canonical_kind(source.get("kind"), source.get("formula") or ""),
         "formula": source.get("formula") or "",
         "conditions": source.get("conditions") or [],
         "children": source.get("children") or [],
@@ -178,6 +178,15 @@ def serialize(
         "updated_at": strategy.updated_at,
         "published_at": strategy.published_at,
     }
+
+
+def _canonical_kind(value: object, formula: str = "") -> str:
+    kind = str(value or "").strip()
+    if kind in {"formula", "conditions", "composite"}:
+        return kind
+    if formula.strip():
+        return "formula"
+    return "formula"
 
 
 def _view_source(strategy: Strategy, view: str, snapshot: dict | None) -> dict:
@@ -437,9 +446,14 @@ def update_strategy(
     if formula is not None:
         strategy.formula = formula
     if conditions is not None:
-        strategy.conditions = normalize_conditions(conditions)
+        strategy.conditions = conditions
+    next_kind = strategy.kind or "conditions"
     if children is not None:
-        strategy.children = normalize_children(database, strategy.owner_id, children)
+        strategy.children = (
+            normalize_children(database, strategy.owner_id, children)
+            if next_kind == "composite"
+            else []
+        )
     if merge_mode is not None:
         strategy.merge_mode = normalize_merge_mode(merge_mode)
     if min_confirm is not None:
@@ -452,14 +466,17 @@ def update_strategy(
         strategy.descending = descending
     if limit is not None:
         strategy.result_limit = limit
-    next_kind = strategy.kind or "conditions"
     if next_kind == "composite":
         if len(strategy.children or []) < 2:
             raise StrategyError("invalid", "叠加至少选择 2 个策略")
     elif next_kind == "formula":
         strategy.formula = normalize_formula(strategy.formula, extra=_factor_codes(database, strategy.owner_id))
-    elif not (strategy.conditions or []):
-        raise StrategyError("invalid", "至少一条条件")
+        strategy.conditions = []
+    else:
+        strategy.conditions = normalize_conditions(strategy.conditions or [])
+        if not strategy.conditions:
+            raise StrategyError("invalid", "至少一条条件")
+        strategy.formula = ""
     strategy.updated_at = utcnow()
     database.commit()
     database.refresh(strategy)
@@ -647,6 +664,8 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
     ) -> list[dict]:
         out = []
         for item in items:
+            if (item.kind or "") == "python":
+                continue
             flag = True if force_subscribed else item.id in subscribed_ids
             sub = subs.get(item.id)
             payload = serialize(
