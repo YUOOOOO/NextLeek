@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Folder, Rss, Store } from "lucide-react";
+import { Folder, PanelRightClose, PanelRightOpen, Rss, Store } from "lucide-react";
 import {
   api,
   ResearchResult,
@@ -11,7 +11,6 @@ import {
   StrategyRunResult,
 } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
-import { StrategyEditor } from "../components/StrategyEditor";
 
 type Tab = "mine" | "subscribed" | "market";
 
@@ -111,7 +110,7 @@ export function Strategies() {
   const [tab, setTab] = useState<Tab>("mine");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(() => localStorage.getItem("nextleek_ai_open") !== "0");
   const [error, setError] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -410,11 +409,6 @@ export function Strategies() {
                   取消订阅
                 </button>
               )}
-              {tab === "mine" && selected?.is_owner && selected.kind !== "formula" && (
-                <button type="button" className="btn btn-ghost" onClick={() => setEditorOpen(true)}>
-                  高级编辑
-                </button>
-              )}
               {tab === "mine" && selected?.is_owner && selected.status === "published" && (
                 <button type="button" className="btn btn-ghost" onClick={() => unpublish.mutate(selected.id)}>
                   撤回
@@ -512,43 +506,47 @@ export function Strategies() {
         )}
       </section>
 
-      <aside className="ide-ai">
-        <div className="ide-ai-head">AI · 生成公式</div>
-        <div className="ide-ai-log">
-          {chat.map((msg, index) => (
-            <div key={index} className={`ide-msg ${msg.role}`}>
-              {msg.text}
-              {msg.formula && formulaEditable && (
-                <div style={{ marginTop: 8 }}>
-                  <button type="button" className="btn btn-primary" onClick={() => applyFormula(msg.formula!)}>
-                    应用
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-        <form className="ide-ai-form" onSubmit={onAsk}>
-          <textarea value={prompt} placeholder="例如 站上120日均线且放量" onChange={(event) => setPrompt(event.target.value)} />
-          <button type="submit" className="btn btn-primary" disabled={!prompt.trim() || generate.isPending}>
-            {generate.isPending ? "…" : "发送"}
+      <aside className={`ide-ai${aiOpen ? "" : " is-collapsed"}`}>
+        <div className="ide-ai-head">
+          {aiOpen && <span>AI · 生成公式</span>}
+          <button
+            type="button"
+            className="wb-icon-btn"
+            aria-label={aiOpen ? "收起 AI" : "展开 AI"}
+            onClick={() => {
+              const next = !aiOpen;
+              setAiOpen(next);
+              localStorage.setItem("nextleek_ai_open", next ? "1" : "0");
+            }}
+          >
+            {aiOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
-        </form>
+        </div>
+        {aiOpen && (
+          <>
+            <div className="ide-ai-log">
+              {chat.map((msg, index) => (
+                <div key={index} className={`ide-msg ${msg.role}`}>
+                  {msg.text}
+                  {msg.formula && formulaEditable && (
+                    <div style={{ marginTop: 8 }}>
+                      <button type="button" className="btn btn-primary" onClick={() => applyFormula(msg.formula!)}>
+                        应用
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <form className="ide-ai-form" onSubmit={onAsk}>
+              <textarea value={prompt} placeholder="例如 站上120日均线且放量" onChange={(event) => setPrompt(event.target.value)} />
+              <button type="submit" className="btn btn-primary" disabled={!prompt.trim() || generate.isPending}>
+                {generate.isPending ? "…" : "发送"}
+              </button>
+            </form>
+          </>
+        )}
       </aside>
-
-      {editorOpen && selected && (
-        <StrategyEditor
-          strategy={selected}
-          options={options.data}
-          onClose={() => setEditorOpen(false)}
-          onSaved={async (strategy) => {
-            setEditorOpen(false);
-            setSelectedId(strategy.id);
-            setTab("mine");
-            await invalidate();
-          }}
-        />
-      )}
     </div>
   );
 }

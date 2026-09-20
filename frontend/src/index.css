@@ -571,14 +571,30 @@ select {
   min-width: 240px;
 }
 
+.ide-ai.is-collapsed {
+  width: 40px;
+  min-width: 40px;
+}
+
 .ide-ai-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   height: 40px;
-  padding: 0 12px;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--ds-color-border-default);
   font-size: 12px;
   color: var(--ds-color-text-secondary);
+}
+
+.ide-ai.is-collapsed .ide-ai-head {
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-start;
+  height: auto;
+  padding: 8px 0;
+  border-bottom: 0;
 }
 
 .ide-ai-log {
@@ -635,9 +651,8 @@ select {
   color: var(--ds-color-text-placeholder);
   font-size: 13px;
 }
-
 @media (max-width: 1100px) {
-  .ide-ai {
+  .ide-ai:not(.is-collapsed) {
     width: 280px;
   }
   .ide-list {
