@@ -245,8 +245,8 @@ export function Layout() {
             </div>
           </div>
         </header>
-        <main id="main-content" className="wb-main">
-          <div className="wb-content">
+        <main id="main-content" className={`wb-main${location.pathname === "/strategies" ? " is-flush" : ""}`}>
+          <div className={`wb-content${location.pathname === "/strategies" ? " is-flush" : ""}`}>
             <Outlet />
           </div>
         </main>
