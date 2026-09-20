@@ -14,5 +14,8 @@ export const queryKeys = {
   strategyOptions: ["strategies", "options"] as const,
   factors: ["factors"] as const,
   factorOptions: ["factors", "options"] as const,
-
+  monitor: ["monitor"] as const,
+  klineDaily: (symbol: string) => ["kline", "daily", symbol] as const,
+  financialStatus: ["financials", "status"] as const,
+  financialMetrics: (symbol: string) => ["financials", "metrics", symbol] as const,
 };

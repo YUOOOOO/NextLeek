@@ -267,4 +267,6 @@ def research_factor(
         horizon=payload.horizon,
         extra_specs=extra,
         code=spec.id,
+        start=payload.start,
+        end=payload.end,
     )

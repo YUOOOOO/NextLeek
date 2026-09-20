@@ -5,9 +5,9 @@ import {
   LayoutDashboard,
   Menu,
   Moon,
+  Radio,
   ScanSearch,
   Settings,
-  Sigma,
   Sun,
   X,
 } from "lucide-react";
@@ -27,7 +27,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { to: "/", label: "看板", icon: LayoutDashboard, end: true },
   { to: "/strategies", label: "策略", icon: ScanSearch },
-  { to: "/factors", label: "因子", icon: Sigma },
+  { to: "/monitor", label: "监控", icon: Radio },
   { to: "/data", label: "数据", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
 ];
@@ -110,6 +110,9 @@ export function Layout() {
   if (!me.data) {
     return <Navigate to="/login" replace />;
   }
+
+  const flushPage = location.pathname === "/strategies" || location.pathname === "/monitor";
+
 
   const nav = (compact: boolean, onNavigate?: () => void) => (
     <nav className="wb-nav">
@@ -209,8 +212,8 @@ export function Layout() {
             </div>
           </div>
         </header>
-        <main id="main-content" className={`wb-main${location.pathname === "/strategies" ? " is-flush" : ""}`}>
-          <div className={`wb-content${location.pathname === "/strategies" ? " is-flush" : ""}`}>
+        <main id="main-content" className={`wb-main${flushPage ? " is-flush" : ""}`}>
+          <div className={`wb-content${flushPage ? " is-flush" : ""}`}>
             <Outlet />
           </div>
         </main>

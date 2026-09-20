@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, OverviewRankItem, OverviewStock } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
 
 function num(v: number | null | undefined) {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -55,7 +57,17 @@ function quoteAge(ms?: number | null) {
   return `${Math.round(ms / 60_000)}m`;
 }
 
-function StockList({ title, rows, mode }: { title: string; rows: OverviewStock[]; mode: "gain" | "loss" | "amount" | "active" }) {
+function StockList({
+  title,
+  rows,
+  mode,
+  onOpen,
+}: {
+  title: string;
+  rows: OverviewStock[];
+  mode: "gain" | "loss" | "amount" | "active";
+  onOpen: (stock: StockRef) => void;
+}) {
   return (
     <section className="card overflow-hidden">
       <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">{title}</div>
@@ -67,7 +79,7 @@ function StockList({ title, rows, mode }: { title: string; rows: OverviewStock[]
             </tr>
           )}
           {rows.map((row) => (
-            <tr key={row.symbol}>
+            <tr key={row.symbol} className="kline-row" onClick={() => onOpen({ symbol: row.symbol, name: row.name })}>
               <td>
                 <div className="text-[var(--ds-color-text-primary)]">{row.name || row.symbol}</div>
                 <div className="text-[11px] text-[var(--ds-color-text-placeholder)]">{row.symbol}</div>
@@ -121,6 +133,7 @@ export function Dashboard() {
     refetchInterval: 15_000,
   });
   const data = overview.data;
+  const [preview, setPreview] = useState<StockRef | null>(null);
 
   async function refresh() {
     await api.dataRefreshCache().catch(() => undefined);
@@ -306,11 +319,14 @@ export function Dashboard() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" />
-        <StockList title="跌幅榜" rows={data.top_losers} mode="loss" />
-        <StockList title="成交额榜" rows={data.turnover_leaders} mode="amount" />
-        <StockList title="活跃换手" rows={data.active_leaders} mode="active" />
+        <StockList title="涨幅榜" rows={data.top_gainers} mode="gain" onOpen={setPreview} />
+        <StockList title="跌幅榜" rows={data.top_losers} mode="loss" onOpen={setPreview} />
+        <StockList title="成交额榜" rows={data.turnover_leaders} mode="amount" onOpen={setPreview} />
+        <StockList title="活跃换手" rows={data.active_leaders} mode="active" onOpen={setPreview} />
       </div>
+      {preview ? (
+        <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} />
+      ) : null}
     </div>
   );
 }

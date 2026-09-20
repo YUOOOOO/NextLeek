@@ -13,6 +13,8 @@ import {
   StrategyRunResult,
 } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
+import { defaultBacktestForm, StrategyBacktestPanel, toResearchBody } from "../components/StrategyBacktestPanel";
 
 type Tab = "mine" | "subscribed" | "market";
 type Workspace = "strategy" | "factor" | "condition";
@@ -195,9 +197,11 @@ export function Strategies() {
   const [direction, setDirection] = useState<"high" | "low" | "none">("none");
   const [result, setResult] = useState<StrategyRunResult | null>(null);
   const [research, setResearch] = useState<ResearchResult | null>(null);
+  const [backtestForm, setBacktestForm] = useState(defaultBacktestForm);
   const [prompt, setPrompt] = useState("");
   const [chat, setChat] = useState<ChatMsg[]>([{ role: "bot", text: CHAT_INTRO[workspace] }]);
   const [verifiedFormula, setVerifiedFormula] = useState<string | null>(null);
+  const [preview, setPreview] = useState<StockRef | null>(null);
 
   const strategyItems = filterStrategies(catalog.data?.[tab] ?? [], workspace);
   const factorItems = factorCatalog.data?.[tab] ?? [];
@@ -358,7 +362,12 @@ export function Strategies() {
     onError: (err: Error) => setError(err.message),
   });
   const runResearch = useMutation({
-    mutationFn: (id: string) => (workspace === "factor" ? api.researchFactor(id) : api.researchStrategy(id)),
+    mutationFn: (id: string) => {
+      const body = toResearchBody(backtestForm);
+      return workspace === "factor"
+        ? api.researchFactor(id, { start: body.start, end: body.end, horizon: body.holding_days, days: 90 })
+        : api.researchStrategy(id, body);
+    },
     onSuccess: (payload) => {
       setResearch(payload);
       setError("");
@@ -637,7 +646,10 @@ export function Strategies() {
                       className="btn btn-ghost"
                       disabled={runResearch.isPending || !canOperate}
                       title={canOperate ? undefined : blockedReason}
-                      onClick={() => runResearch.mutate(selectedStrategy.id)}
+                      onClick={() => {
+                        setSidePane("research");
+                        runResearch.mutate(selectedStrategy.id);
+                      }}
                     >
                       {runResearch.isPending ? "回测中…" : "回测"}
                     </button>
@@ -650,7 +662,10 @@ export function Strategies() {
                   className="btn btn-ghost"
                   disabled={runResearch.isPending || !canOperate}
                   title={canOperate ? undefined : blockedReason}
-                  onClick={() => runResearch.mutate(selectedFactor.id)}
+                  onClick={() => {
+                    setSidePane("research");
+                    runResearch.mutate(selectedFactor.id);
+                  }}
                 >
                   {runResearch.isPending ? "回测中…" : "回测"}
                 </button>
@@ -830,7 +845,18 @@ export function Strategies() {
                       </thead>
                       <tbody>
                         {result.rows.map((row, index) => (
-                          <tr key={String(row.symbol ?? index)}>
+                          <tr
+                            key={String(row.symbol ?? index)}
+                            className="kline-row"
+                            onClick={() => {
+                              const symbol = typeof row.symbol === "string" ? row.symbol : "";
+                              if (!symbol) return;
+                              setPreview({
+                                symbol,
+                                name: typeof row.name === "string" ? row.name : undefined,
+                              });
+                            }}
+                          >
                             {columns.map((column) => (
                               <td key={column} className={pctClass(column, row[column])}>
                                 {fmtCell(column, row[column])}
@@ -899,30 +925,19 @@ export function Strategies() {
             )}
             {sidePane === "research" && (
               <div className="ide-ai-log">
-                {runResearch.isPending && <div className="ide-msg bot">回测中…</div>}
-                {!runResearch.isPending && !research && (
-                  <div className="ide-msg bot">先保存并通过校验，再点顶部「回测」或下面按钮。</div>
-                )}
-                {research && (
-                  <div className="ide-msg bot">
-                    {research.warning ||
-                      (research.ok
-                        ? `平均收益 ${research.avg_return} · 胜率 ${research.hit_rate} · 日均命中 ${research.avg_names}${
-                            research.ic != null ? ` · IC ${research.ic}` : ""
-                          }${research.ir != null ? ` · IR ${research.ir}` : ""}`
-                        : "回测无结果")}
-                  </div>
-                )}
-                {selected && tab !== "market" && (selected.is_owner || selected.subscribed) && workspace !== "condition" && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={runResearch.isPending || !canOperate}
-                    title={canOperate ? undefined : blockedReason}
-                    onClick={() => runResearch.mutate(selected.id)}
-                  >
-                    {runResearch.isPending ? "回测中…" : "运行回测"}
-                  </button>
+                {selected && tab !== "market" && (selected.is_owner || selected.subscribed) && workspace !== "condition" ? (
+                  <StrategyBacktestPanel
+                    form={backtestForm}
+                    onChange={setBacktestForm}
+                    result={research}
+                    pending={runResearch.isPending}
+                    canRun={canOperate}
+                    blockedReason={blockedReason}
+                    factorMode={workspace === "factor"}
+                    onRun={() => runResearch.mutate(selected.id)}
+                  />
+                ) : (
+                  <div className="ide-msg bot">先保存并通过校验，再点顶部「回测」。</div>
                 )}
               </div>
             )}
@@ -964,6 +979,9 @@ export function Strategies() {
           </button>
         </nav>
       </aside>
+      {preview ? (
+        <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} />
+      ) : null}
     </div>
   );
 }

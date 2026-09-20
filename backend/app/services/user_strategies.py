@@ -613,6 +613,18 @@ def list_watches(database: Session) -> list[StrategyWatch]:
     )
 
 
+def list_user_watches(database: Session, user_id: str) -> list[StrategyWatch]:
+    return list(
+        database.scalars(
+            select(StrategyWatch)
+            .options(selectinload(StrategyWatch.strategy).selectinload(Strategy.owner))
+            .where(StrategyWatch.user_id == user_id)
+            .order_by(StrategyWatch.created_at.desc())
+        ).all()
+    )
+
+
+
 def _subscription_map(database: Session, user_id: str) -> dict[str, StrategySubscription]:
     rows = database.scalars(
         select(StrategySubscription).where(StrategySubscription.user_id == user_id)

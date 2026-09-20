@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     port: 3011,
     proxy: {
-      "/api": { target: "http://127.0.0.1:3018", changeOrigin: true },
+      "/api": { target: "http://127.0.0.1:3018", changeOrigin: true, timeout: 0, proxyTimeout: 0 },
       "/health": { target: "http://127.0.0.1:3018", changeOrigin: true },
     },
   },

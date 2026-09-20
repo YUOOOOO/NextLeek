@@ -7,6 +7,7 @@ import { DataSources } from "./pages/DataSources";
 import { GeneralSettings, Settings } from "./pages/Settings";
 import { Strategies } from "./pages/Strategies";
 import { Factors } from "./pages/Factors";
+import { Monitor } from "./pages/Monitor";
 import { AiSettings } from "./pages/AiSettings";
 import { Users } from "./pages/Users";
 
@@ -19,6 +20,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: "strategies", element: <Strategies /> },
       { path: "factors", element: <Factors /> },
+      { path: "monitor", element: <Monitor /> },
       { path: "data", element: <Data /> },
       {
         path: "settings",

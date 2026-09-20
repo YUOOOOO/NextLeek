@@ -266,6 +266,7 @@ def unsubscribe_strategy(
 @router.post("/{strategy_id}/monitor", response_model=StrategyRead)
 def start_strategy_monitor(
     strategy_id: str,
+    request: Request,
     user: User = Depends(require_user),
     database: Session = Depends(get_database),
 ) -> StrategyRead:
@@ -274,12 +275,16 @@ def start_strategy_monitor(
         strategy = svc.start_watch(database, user, strategy, subscribed)
     except svc.StrategyError as exc:
         raise _http(exc) from exc
+    monitor = getattr(request.app.state, "user_strategy_monitor", None)
+    if monitor is not None:
+        monitor.notify_updated(request.app.state)
     return _read(strategy, user_id=user.id, database=database)
 
 
 @router.delete("/{strategy_id}/monitor", status_code=status.HTTP_204_NO_CONTENT)
 def stop_strategy_monitor(
     strategy_id: str,
+    request: Request,
     user: User = Depends(require_user),
     database: Session = Depends(get_database),
 ) -> None:
@@ -288,6 +293,10 @@ def stop_strategy_monitor(
         svc.stop_watch(database, user, strategy)
     except svc.StrategyError as exc:
         raise _http(exc) from exc
+    monitor = getattr(request.app.state, "user_strategy_monitor", None)
+    if monitor is not None:
+        monitor.drop_pool(user.id, strategy_id)
+        monitor.notify_updated(request.app.state)
 
 @router.post("/{strategy_id}/run", response_model=StrategyRunResult)
 def run_strategy(
@@ -362,5 +371,16 @@ def research_strategy(
             horizon=payload.horizon,
             extra_specs=extra,
             basic_filter=spec.get("basic_filter") or {},
+            start=payload.start,
+            end=payload.end,
+            initial_capital=payload.initial_capital,
+            commission_pct=payload.commission_pct,
+            stamp_tax_pct=payload.stamp_tax_pct,
+            slippage_bps=payload.slippage_bps,
+            max_positions=payload.max_positions,
+            max_exposure_pct=payload.max_exposure_pct,
+            holding_days=payload.holding_days,
+            entry_fill=payload.entry_fill,
+            exit_fill=payload.exit_fill,
         )
     raise HTTPException(status_code=400, detail="回测目前支持公式策略")

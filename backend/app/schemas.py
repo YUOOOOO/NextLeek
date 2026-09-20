@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -309,6 +309,8 @@ class FactorGenerateIn(BaseModel):
 class FactorResearchIn(BaseModel):
     days: int = Field(default=240, ge=20, le=1500)
     horizon: int = Field(default=1, ge=1, le=20)
+    start: date | None = None
+    end: date | None = None
 
 
 class StrategyGenerateIn(BaseModel):
@@ -321,7 +323,18 @@ class StrategyCompileIn(BaseModel):
 
 class StrategyResearchIn(BaseModel):
     days: int = Field(default=240, ge=20, le=1500)
-    horizon: int = Field(default=1, ge=1, le=20)
+    horizon: int = Field(default=1, ge=1, le=60)
+    start: date | None = None
+    end: date | None = None
+    initial_capital: float = Field(default=1_000_000, gt=0, le=1e10)
+    commission_pct: float = Field(default=0.0002, ge=0, le=0.05)
+    stamp_tax_pct: float = Field(default=0.001, ge=0, le=0.05)
+    slippage_bps: float = Field(default=5, ge=0, le=1000)
+    max_positions: int = Field(default=10, ge=1, le=200)
+    max_exposure_pct: float = Field(default=1.0, gt=0, le=1)
+    holding_days: int | None = Field(default=None, ge=1, le=60)
+    entry_fill: Literal["close_t", "open_t+1"] = "open_t+1"
+    exit_fill: Literal["close_t", "open_t+1"] = "open_t+1"
 
 
 class FormulaPreview(BaseModel):

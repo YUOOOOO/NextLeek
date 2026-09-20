@@ -1,13 +1,14 @@
-"""因子 IC 回测、策略信号回测、模板挖掘。"""
+"""因子 IC 回测、策略组合回测、模板挖掘。"""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import polars as pl
 
 from app.factors.registry import FactorSpec
 from app.services import formula_runtime
+from app.services.portfolio_backtest import Fill, run_portfolio
 from app.services.screener import ScreenerService
 
 FACTOR_TEMPLATES = (
@@ -21,7 +22,6 @@ FACTOR_TEMPLATES = (
 def _history(screener: ScreenerService, as_of: date, days: int, warmup: int) -> pl.DataFrame:
     lookback = max(days, 20) + max(warmup, 1) + 5
     return screener._load_enriched_history(as_of, lookback)
-
 
 def _forward_return(frame: pl.DataFrame, horizon: int) -> pl.DataFrame:
     return frame.sort(["symbol", "date"]).with_columns(
@@ -50,18 +50,24 @@ def research_factor(
     horizon: int = 1,
     extra_specs: dict[str, FactorSpec] | None = None,
     code: str = "factor",
+    start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, Any]:
     compiled = formula_runtime.compile_user_formula(formula, extra_specs.keys() if extra_specs else None)
-    frame = _history(screener, as_of, days, compiled.warmup_bars)
+    end_date = end or as_of
+    start_date = start or (end_date - timedelta(days=max(days, 20)))
+    lookback = (end_date - start_date).days + max(compiled.warmup_bars, 1) + 30
+    frame = _history(screener, end_date, lookback, compiled.warmup_bars)
     if frame.is_empty():
         return {"ok": False, "warning": "本地暂无足够行情，无法回测", "days": 0}
     transformed, _ = formula_runtime.apply_formula(frame, formula, extra_specs)
     if FACTOR_MISSING(transformed):
         return {"ok": False, "warning": "公式未能产出因子列", "days": 0}
     col = "__dsl_factor__"
-    scored = _forward_return(transformed.filter(pl.col(col).is_not_null()), horizon).filter(pl.col("_ret").is_not_null())
-    if scored.is_empty():
-        return {"ok": False, "warning": "有效样本不足", "days": 0}
+    scored = _forward_return(
+        transformed.filter((pl.col(col).is_not_null()) & (pl.col("date") >= start_date) & (pl.col("date") <= end_date)),
+        horizon,
+    ).filter(pl.col("_ret").is_not_null())
     ic_frame = scored.group_by("date").agg(pl.corr(pl.col(col), pl.col("_ret"), method="spearman").alias("ic")).drop_nulls()
     ics = [float(v) for v in ic_frame["ic"].to_list() if v is not None and v == v]
     mean_ic = _mean(ics)
@@ -97,13 +103,30 @@ def research_strategy(
     as_of: date,
     formula: str,
     *,
-    days: int = 240,
-    horizon: int = 1,
+    days: int = 90,
+    horizon: int = 5,
     extra_specs: dict[str, FactorSpec] | None = None,
     basic_filter: dict | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    initial_capital: float = 1_000_000.0,
+    commission_pct: float = 0.0002,
+    stamp_tax_pct: float = 0.001,
+    slippage_bps: float = 5.0,
+    max_positions: int = 10,
+    max_exposure_pct: float = 1.0,
+    holding_days: int | None = None,
+    entry_fill: Fill = "open_t+1",
+    exit_fill: Fill = "open_t+1",
 ) -> dict[str, Any]:
-    compiled = formula_runtime.compile_user_formula(formula, extra_specs.keys() if extra_specs else None, require_bool=True)
-    frame = _history(screener, as_of, days, compiled.warmup_bars)
+    compiled = formula_runtime.compile_user_formula(
+        formula, extra_specs.keys() if extra_specs else None, require_bool=True
+    )
+    end_date = end or as_of
+    start_date = start or (end_date - timedelta(days=max(days, 20)))
+    hold = holding_days or horizon
+    lookback = (end_date - start_date).days + max(compiled.warmup_bars, 1) + 30
+    frame = _history(screener, end_date, lookback, compiled.warmup_bars)
     if frame.is_empty():
         return {"ok": False, "warning": "本地暂无足够行情，无法回测", "days": 0}
     transformed, _ = formula_runtime.apply_formula(frame, formula, extra_specs)
@@ -113,26 +136,53 @@ def research_strategy(
         from app.strategy.engine import StrategyEngine
 
         transformed = StrategyEngine._apply_basic_filter(transformed, basic_filter)
-    scored = _forward_return(transformed, horizon)
-    hits = scored.filter((pl.col("__dsl_factor__") > 0) & pl.col("_ret").is_not_null())
-    if hits.is_empty():
-        return {"ok": False, "warning": "回测窗口内没有命中", "days": 0, "formula": formula}
-    daily = hits.group_by("date").agg(pl.col("_ret").mean().alias("ret"), pl.len().alias("n")).sort("date")
-    rets = [float(v) for v in daily["ret"].to_list() if v is not None and v == v]
-    avg = _mean(rets)
-    hit_rate = sum(1 for item in rets if item > 0) / len(rets) if rets else 0
-    coverage = _mean([float(n) for n in daily["n"].to_list()])
-    return {
-        "ok": True,
-        "formula": formula,
-        "days": daily.height,
-        "horizon": horizon,
-        "avg_return": round(avg, 6),
-        "hit_rate": round(hit_rate, 4),
-        "avg_names": round(coverage, 1),
-        "total_hits": int(hits.height),
-        "warmup_bars": compiled.warmup_bars,
-    }
+    scored = _forward_return(transformed, hold)
+    hits = scored.filter(
+        (pl.col("date") >= start_date)
+        & (pl.col("date") <= end_date)
+        & (pl.col("__dsl_factor__") > 0)
+        & pl.col("_ret").is_not_null()
+    )
+    portfolio = run_portfolio(
+        transformed,
+        start=start_date,
+        end=end_date,
+        initial_capital=initial_capital,
+        commission_pct=commission_pct,
+        stamp_tax_pct=stamp_tax_pct,
+        slippage_bps=slippage_bps,
+        max_positions=max_positions,
+        max_exposure_pct=max_exposure_pct,
+        holding_days=hold,
+        entry_fill=entry_fill,
+        exit_fill=exit_fill,
+    )
+    if not portfolio.get("ok"):
+        portfolio["formula"] = formula
+        portfolio["days"] = 0
+        return portfolio
+    avg = 0.0
+    hit_rate = 0.0
+    coverage = 0.0
+    if not hits.is_empty():
+        daily = hits.group_by("date").agg(pl.col("_ret").mean().alias("ret"), pl.len().alias("n")).sort("date")
+        rets = [float(v) for v in daily["ret"].to_list() if v is not None and v == v]
+        avg = _mean(rets)
+        hit_rate = sum(1 for item in rets if item > 0) / len(rets) if rets else 0
+        coverage = _mean([float(n) for n in daily["n"].to_list()])
+    portfolio.update(
+        {
+            "formula": formula,
+            "days": len(portfolio.get("equity_curve") or []),
+            "horizon": hold,
+            "avg_return": round(avg, 6),
+            "hit_rate": round(hit_rate, 4),
+            "avg_names": round(coverage, 1),
+            "total_hits": int(hits.height),
+            "warmup_bars": compiled.warmup_bars,
+        }
+    )
+    return portfolio
 
 
 def mine_factors(

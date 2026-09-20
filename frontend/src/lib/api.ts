@@ -363,6 +363,35 @@ export type FactorWrite = {
   direction: "high" | "low" | "none";
 };
 
+export type StrategyResearchIn = {
+  days?: number;
+  horizon?: number;
+  start?: string | null;
+  end?: string | null;
+  initial_capital?: number;
+  commission_pct?: number;
+  stamp_tax_pct?: number;
+  slippage_bps?: number;
+  max_positions?: number;
+  max_exposure_pct?: number;
+  holding_days?: number;
+  entry_fill?: "close_t" | "open_t+1";
+  exit_fill?: "close_t" | "open_t+1";
+};
+
+export type BacktestTrade = {
+  symbol: string;
+  name?: string;
+  entry_date: string;
+  exit_date: string;
+  entry_price: number;
+  exit_price: number;
+  shares?: number;
+  pnl?: number;
+  pnl_pct?: number;
+  hold_days?: number;
+};
+
 export type ResearchResult = {
   ok: boolean;
   warning?: string;
@@ -375,6 +404,18 @@ export type ResearchResult = {
   hit_rate?: number;
   avg_names?: number;
   items?: Array<Record<string, unknown>>;
+  start?: string;
+  end?: string;
+  initial_capital?: number;
+  final_equity?: number;
+  total_return?: number;
+  annual_return?: number;
+  max_drawdown?: number;
+  sharpe?: number;
+  win_rate?: number;
+  trade_count?: number;
+  equity_curve?: Array<{ date: string; value: number }>;
+  trades?: BacktestTrade[];
 };
 
 export type StrategyRunResult = {
@@ -384,6 +425,61 @@ export type StrategyRunResult = {
   total: number;
   elapsed_ms: number;
   warnings: string[];
+};
+
+export type MonitorRow = {
+  symbol: string;
+  name: string;
+  close?: number | null;
+  change_pct?: number | null;
+};
+
+export type MonitorStrategy = {
+  id: string;
+  name: string;
+  kind: StrategyKind;
+  rows: MonitorRow[];
+  total: number;
+};
+
+export type MonitorEvent = {
+  ts: number;
+  type: string;
+  strategy_id?: string;
+  symbol?: string;
+  name?: string;
+  message: string;
+  price?: number | null;
+  change_pct?: number | null;
+};
+
+export type MonitorSnapshot = {
+  as_of: string | null;
+  strategies: MonitorStrategy[];
+  events: MonitorEvent[];
+  watch_count: number;
+  hit_count: number;
+};
+
+export type KlineDailyResponse = {
+  symbol: string;
+  name?: string | null;
+  stock_info?: { name?: string | null; [key: string]: unknown };
+  rows: Array<Record<string, unknown>>;
+  source?: string;
+};
+
+export type FinancialStatus = {
+  available: boolean;
+  tables?: Record<string, { rows?: number; symbols?: number }>;
+  last_sync?: Record<string, unknown>;
+  syncing?: boolean;
+};
+
+export type FinancialMetricRecord = {
+  symbol?: string;
+  period_end?: string | null;
+  [key: string]: unknown;
 };
 
 
@@ -526,8 +622,10 @@ export const api = {
     ),
   mineStrategies: (body: { days?: number; horizon?: number } = {}) =>
     request<ResearchResult>("/api/strategies/mine", { method: "POST", body: JSON.stringify(body) }),
-  researchStrategy: (id: string, body: { days?: number; horizon?: number } = {}) =>
+  researchStrategy: (id: string, body: StrategyResearchIn = {}) =>
     request<ResearchResult>(`/api/strategies/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
+  monitorSnapshot: () => request<MonitorSnapshot>("/api/monitor"),
+
 
   factorOptions: () => request<{ operators: string[]; base_columns: string[]; examples: FormulaExample[] }>("/api/factors/options"),
   listFactors: () => request<FactorCatalog>("/api/factors"),
@@ -550,7 +648,7 @@ export const api = {
     ),
   mineFactors: (body: { days?: number; horizon?: number } = {}) =>
     request<ResearchResult>("/api/factors/mine", { method: "POST", body: JSON.stringify(body) }),
-  researchFactor: (id: string, body: { days?: number; horizon?: number } = {}) =>
+  researchFactor: (id: string, body: StrategyResearchIn = {}) =>
     request<ResearchResult>(`/api/factors/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
 
   saveAiSettings: (body: {
@@ -562,4 +660,11 @@ export const api = {
     context_window?: number;
   }) => request<TickflowSettings>("/api/settings/ai", { method: "POST", body: JSON.stringify(body) }),
   clearAiSettings: () => request<{ ok: boolean }>("/api/settings/ai", { method: "DELETE" }),
+  klineDaily: (symbol: string, days = 250) =>
+    request<KlineDailyResponse>(`/api/kline/daily?symbol=${encodeURIComponent(symbol)}&days=${days}`),
+  financialStatus: () => request<FinancialStatus>("/api/financials/status"),
+  financialMetrics: (symbol: string) =>
+    request<{ data: FinancialMetricRecord[] }>(
+      `/api/financials/metrics?symbol=${encodeURIComponent(symbol)}`,
+    ),
 };
