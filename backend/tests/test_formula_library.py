@@ -127,3 +127,10 @@ def test_compile_preview_errors(client: TestClient) -> None:
     )
     assert bad.status_code == 200
     assert bad.json()["ok"] is False
+
+def test_compile_ignores_hash_and_slash_comments() -> None:
+    from app.factors.dsl import compile_formula
+
+    compiled = compile_formula("# NextLeek 公式  版本: DSL v1\nclose > ts_mean(close, 120) // 均线\n")
+    assert compiled.ok is True
+    assert compiled.errors == []

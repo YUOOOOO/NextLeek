@@ -41,6 +41,25 @@ export type AiApplyPayload = {
   description?: string;
 };
 
+export const DSL_VERSION = "v1";
+
+export function formatAiFormula(payload: AiApplyPayload): string {
+  const kind = payload.intent === "factor" ? "因子" : payload.intent === "condition" ? "条件" : "策略";
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const generated = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const note = (payload.description || "").replace(/\s+/g, " ").trim();
+  const header = [
+    `# NextLeek 公式  版本: DSL ${DSL_VERSION}`,
+    `# 类型: ${kind}`,
+    payload.name?.trim() ? `# 名称: ${payload.name.trim()}` : "",
+    `# 生成: ${generated}  AI`,
+    note ? `# 说明: ${note}` : "",
+    "#",
+  ].filter(Boolean);
+  return `${header.join("\n")}\n${payload.formula.trim()}\n`;
+}
+
 export const AI_APPLY_EVENT = "nextleek-ai-apply";
 
 export function queueAiApply(payload: AiApplyPayload) {

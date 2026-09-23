@@ -115,12 +115,17 @@ def _tokenize(text: str) -> tuple[list[tuple[str, Any, int]], DslError | None]:
     tokens: list[tuple[str, Any, int]] = []
     pos = 0
     while pos < len(text):
+        ch = text[pos]
+        if ch.isspace():
+            pos += 1
+            continue
+        if ch == "#" or (ch == "/" and pos + 1 < len(text) and text[pos + 1] == "/"):
+            while pos < len(text) and text[pos] not in "\n\r":
+                pos += 1
+            continue
         match = _TOKEN_RE.match(text, pos)
         if match is None or match.end() == pos:
-            rest = text[pos:].strip()
-            if not rest:
-                break
-            return [], DslError("E014", f"语法错误: 无法识别的字符 '{rest[0]}'", offset=pos)
+            return [], DslError("E014", f"语法错误: 无法识别的字符 '{ch}'", offset=pos)
         if match.group("num") is not None:
             tokens.append(("num", float(match.group("num")), match.start("num")))
         elif match.group("ident") is not None:

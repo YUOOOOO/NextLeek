@@ -14,9 +14,10 @@ import {
 } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { AiDock } from "../components/AiDock";
+import { FormulaDocs } from "../components/FormulaDocs";
 import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
 import { defaultBacktestForm, StrategyBacktestPanel, toResearchBody } from "../components/StrategyBacktestPanel";
-import { AI_APPLY_EVENT, takeAiApply, type AiApplyPayload } from "../lib/aiChat";
+import { AI_APPLY_EVENT, formatAiFormula, takeAiApply, type AiApplyPayload } from "../lib/aiChat";
 type Tab = "mine" | "subscribed" | "market";
 type Workspace = "strategy" | "factor" | "condition";
 type SidePane = "ai" | "research" | "docs";
@@ -53,36 +54,7 @@ const EMPTY_CONDITION: StrategyCondition = {
 };
 
 
-const DSL_DOCS = `DSL 公式
 
-策略必须是布尔表达式，例如:
-close > ts_mean(close, 120) and volume > ts_mean(volume, 20)
-
-因子必须是数值表达式，例如:
-ts_mean(close, 120)
-close / ts_mean(close, 120) - 1
-
-基准列: open high low close volume amount turnover_rate prev_close
-比较: > >= < <= == !=
-逻辑: and or
-窗口 n 必须是 2–512 的数字字面量。涨跌幅用小数，5% 写成 0.05。
-
-常用算子:
-ts_mean ts_std ts_sum ts_max ts_min ts_delay ts_delta
-ts_rank ts_zscore ts_corr ts_cov decay_linear
-rank zscore winsorize if_else min max log abs sign sqrt power clamp`;
-
-const AI_SKILL = `AI 用法
-
-用中文描述选股/因子逻辑，点发送。AI 只生成 DSL 公式，不是 Python。
-
-好的描述:
-- 收盘站上120日均线，并且成交量大于20日均量
-- 20日涨幅超过10%，但不要用涨停板计数
-
-生成后点「应用」写入左侧编辑器，再校验、保存，才能运行/发布/回测。
-
-未配置 AI 时会提示去设置页填写接口。推理模型可能要等几十秒，对话里会显示「生成中」。`;
 
 function parseWorkspace(value: string | null): Workspace {
   if (value === "factor" || value === "condition") return value;
@@ -239,7 +211,7 @@ export function Strategies() {
     if (workspace === "condition") {
       setConditions([{ ...EMPTY_CONDITION }]);
     } else {
-      setFormula(aiApply.formula);
+      setFormula(formatAiFormula(aiApply));
       setVerifiedFormula(null);
     }
     setError("");
@@ -925,12 +897,7 @@ export function Strategies() {
                 )}
               </div>
             ) : null}
-            {sidePane === "docs" ? (
-              <div className="ide-ai-log">
-                <div className="ide-msg bot">{DSL_DOCS}</div>
-                <div className="ide-msg bot">{AI_SKILL}</div>
-              </div>
-            ) : null}
+            {sidePane === "docs" ? <FormulaDocs /> : null}
           </div>
         ) : null}
         <nav className="ide-rail" aria-label="侧栏">
