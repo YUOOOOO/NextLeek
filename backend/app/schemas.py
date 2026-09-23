@@ -66,6 +66,24 @@ class UserRead(BaseModel):
     role: UserRole
     is_active: bool
     created_at: datetime
+
+
+class AiMessage(BaseModel):
+    role: Literal["user", "bot"]
+    text: str = Field(max_length=12000)
+    formula: str | None = Field(default=None, max_length=4000)
+    intent: Literal["strategy", "factor", "condition", "chat"] | None = None
+    name: str | None = Field(default=None, max_length=40)
+    description: str | None = Field(default=None, max_length=500)
+
+class AiConversationWrite(BaseModel):
+    messages: list[AiMessage] = Field(max_length=200)
+
+
+class AiConversationRead(BaseModel):
+    workspace: str
+    messages: list[AiMessage]
+    created_at: datetime
     updated_at: datetime
 
 

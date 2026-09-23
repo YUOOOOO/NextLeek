@@ -166,13 +166,13 @@ def serialize(
         "descending": True if source.get("descending") is None else bool(source.get("descending")),
         "limit": int(source.get("result_limit") or source.get("limit") or 100),
         "owner_id": strategy.owner_id,
-        "owner_username": owner.username if owner is not None else "",
+        "owner_username": "内置" if strategy.is_builtin else (owner.username if owner is not None else ""),
         "subscriber_count": subscriber_count,
         "subscribed": subscribed,
-        "is_owner": strategy.owner_id == user_id,
+        "is_owner": not strategy.is_builtin and strategy.owner_id == user_id,
         "monitoring": monitoring,
         "version": version,
-        "has_unpublished_changes": strategy.owner_id == user_id and _has_unpublished_changes(strategy),
+        "has_unpublished_changes": not strategy.is_builtin and strategy.owner_id == user_id and _has_unpublished_changes(strategy),
         "update_available": subscribed and version > pinned,
         "created_at": strategy.created_at,
         "updated_at": strategy.updated_at,
@@ -637,7 +637,7 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
         database.scalars(
             select(Strategy)
             .options(selectinload(Strategy.owner))
-            .where(Strategy.owner_id == user_id)
+            .where(Strategy.owner_id == user_id, Strategy.is_builtin.is_(False))
             .order_by(Strategy.updated_at.desc())
         ).all()
     )

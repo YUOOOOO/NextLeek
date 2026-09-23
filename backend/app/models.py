@@ -63,16 +63,33 @@ class UserSession(Base):
     user: Mapped[User] = relationship(back_populates="sessions")
 
 
+class AiConversation(Base):
+    __tablename__ = "ai_conversations"
+    __table_args__ = (UniqueConstraint("user_id", "workspace", name="uq_ai_conversation_user_workspace"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    workspace: Mapped[str] = mapped_column(String(16), index=True)
+    messages: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
 class Strategy(Base):
     __tablename__ = "strategies"
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    owner_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
     )
     name: Mapped[str] = mapped_column(String(40))
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     kind: Mapped[str] = mapped_column(String(16), default="conditions")

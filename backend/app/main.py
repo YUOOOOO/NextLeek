@@ -21,6 +21,7 @@ from app.api.overview import router as overview_router
 from app.api.pipeline import router as pipeline_router
 from app.api.settings import router as settings_router
 from app.api.strategies import router as strategies_router
+from app.api.ai import router as ai_router
 from app.api.factors import router as factors_router
 from app.api.monitor import router as monitor_router
 from app.api.users import router as users_router
@@ -272,6 +273,7 @@ app.include_router(strategies_router)
 app.include_router(factors_router)
 app.include_router(monitor_router)
 app.include_router(ext_data_router)
+app.include_router(ai_router)
 
 _static = Path(settings.static_dir)
 if _static.exists():

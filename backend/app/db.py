@@ -40,6 +40,7 @@ def init_database(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _ensure_strategy_columns(engine)
     _ensure_subscription_columns(engine)
+    _mark_builtin_strategies(engine)
 
 
 def _add_missing_columns(engine: Engine, table: str, extras: dict[str, str]) -> None:
@@ -73,6 +74,7 @@ def _ensure_strategy_columns(engine: Engine) -> None:
             "version": "ALTER TABLE strategies ADD COLUMN version INTEGER DEFAULT 0",
             "published_snapshot": "ALTER TABLE strategies ADD COLUMN published_snapshot JSON",
             "formula": "ALTER TABLE strategies ADD COLUMN formula TEXT DEFAULT ''",
+            "is_builtin": "ALTER TABLE strategies ADD COLUMN is_builtin BOOLEAN DEFAULT 0",
         },
     )
 
@@ -86,6 +88,26 @@ def _ensure_subscription_columns(engine: Engine) -> None:
             "pinned_version": "ALTER TABLE strategy_subscriptions ADD COLUMN pinned_version INTEGER DEFAULT 0",
         },
     )
+
+def _mark_builtin_strategies(engine: Engine) -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    from sqlalchemy import text
+    from app.services.market_catalog import MARKET_STRATEGIES
+
+    names = [str(item["name"]) for item in MARKET_STRATEGIES]
+    if not names:
+        return
+    placeholders = ",".join(f":name_{index}" for index in range(len(names)))
+    params = {f"name_{index}": name for index, name in enumerate(names)}
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                f"UPDATE strategies SET is_builtin = 1, owner_id = 'builtin' "
+                f"WHERE name IN ({placeholders}) AND status = 'published'"
+            ),
+            params,
+        )
 
 
 @contextmanager

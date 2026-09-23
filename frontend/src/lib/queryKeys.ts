@@ -11,6 +11,7 @@ export const queryKeys = {
   capabilityMatrix: ["settings", "capability-matrix"] as const,
   overviewMarket: (asOf?: string) => ["overview", "market", asOf ?? "latest"] as const,
   strategies: ["strategies"] as const,
+  aiConversation: (workspace: string) => ["ai", "conversation", workspace] as const,
   strategyOptions: ["strategies", "options"] as const,
   factors: ["factors"] as const,
   factorOptions: ["factors", "options"] as const,

@@ -260,7 +260,7 @@ MARKET_STRATEGIES: tuple[dict[str, Any], ...] = (
 
 
 def seed_market_strategies(database: Session) -> int:
-    """幂等：admin 已有同名策略则跳过。无 admin 时返回 0。"""
+    """幂等地创建不属于任何用户的内置策略。"""
     admin = database.scalar(
         select(User)
         .where(User.role == "admin", User.is_active.is_(True))
@@ -270,7 +270,9 @@ def seed_market_strategies(database: Session) -> int:
         return 0
 
     existing = set(
-        database.scalars(select(Strategy.name).where(Strategy.owner_id == admin.id)).all()
+        database.scalars(
+            select(Strategy.name).where(Strategy.name.in_([str(item["name"]) for item in MARKET_STRATEGIES]))
+        ).all()
     )
     created = 0
     for spec in MARKET_STRATEGIES:
@@ -288,6 +290,9 @@ def seed_market_strategies(database: Session) -> int:
             descending=True,
             limit=spec["limit"],
         )
+        strategy.is_builtin = True
+        strategy.owner_id = "builtin"
+        database.commit()
         svc.publish_strategy(database, strategy)
         existing.add(name)
         created += 1

@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, LineChart, Sparkles } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -13,12 +13,12 @@ import {
   StrategyRunResult,
 } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { AiDock } from "../components/AiDock";
 import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
 import { defaultBacktestForm, StrategyBacktestPanel, toResearchBody } from "../components/StrategyBacktestPanel";
-
+import { AI_APPLY_EVENT, takeAiApply, type AiApplyPayload } from "../lib/aiChat";
 type Tab = "mine" | "subscribed" | "market";
 type Workspace = "strategy" | "factor" | "condition";
-type ChatMsg = { role: "user" | "bot"; text: string; formula?: string; pending?: boolean };
 type SidePane = "ai" | "research" | "docs";
 
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -52,11 +52,6 @@ const EMPTY_CONDITION: StrategyCondition = {
   rightDays: 0,
 };
 
-const CHAT_INTRO: Record<Workspace, string> = {
-  strategy: "用中文描述选股条件。生成的是 DSL 公式，不是完整 Python。点「应用」写入左侧编辑器。",
-  factor: "用中文描述指标。生成的是 DSL 公式，比如 ts_mean(close, 120)。点「应用」写入左侧编辑器。",
-  condition: "条件策略用字段比较，不写公式。左侧加条件后保存。",
-};
 
 const DSL_DOCS = `DSL 公式
 
@@ -197,9 +192,59 @@ export function Strategies() {
   const [direction, setDirection] = useState<"high" | "low" | "none">("none");
   const [result, setResult] = useState<StrategyRunResult | null>(null);
   const [research, setResearch] = useState<ResearchResult | null>(null);
+  const [sideWidth, setSideWidth] = useState(() => Number(localStorage.getItem("nextleek_side_width") || 340));
+  const sideDragging = useRef(false);
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (!sideDragging.current) return;
+      event.preventDefault();
+      const next = Math.max(280, Math.min(720, window.innerWidth - event.clientX));
+      setSideWidth(next);
+      localStorage.setItem("nextleek_side_width", String(next));
+    };
+    const up = () => {
+      if (!sideDragging.current) return;
+      sideDragging.current = false;
+      document.body.classList.remove("is-resizing");
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.body.classList.remove("is-resizing");
+    };
+  }, []);
   const [backtestForm, setBacktestForm] = useState(defaultBacktestForm);
-  const [prompt, setPrompt] = useState("");
-  const [chat, setChat] = useState<ChatMsg[]>([{ role: "bot", text: CHAT_INTRO[workspace] }]);
+  const [aiApply, setAiApply] = useState<AiApplyPayload | null>(null);
+  useEffect(() => {
+    const consume = () => {
+      const payload = takeAiApply();
+      if (payload) setAiApply(payload);
+    };
+    consume();
+    window.addEventListener(AI_APPLY_EVENT, consume);
+    return () => window.removeEventListener(AI_APPLY_EVENT, consume);
+  }, []);
+  useEffect(() => {
+    if (!aiApply) return;
+    if (aiApply.intent !== workspace) return;
+    setCreating(true);
+    setSelectedId(null);
+    setTab("mine");
+    setName(aiApply.name || "");
+    setDescription(aiApply.description || "");
+    if (workspace === "condition") {
+      setConditions([{ ...EMPTY_CONDITION }]);
+    } else {
+      setFormula(aiApply.formula);
+      setVerifiedFormula(null);
+    }
+    setError("");
+    setAiApply(null);
+  }, [aiApply, workspace]);
   const [verifiedFormula, setVerifiedFormula] = useState<string | null>(null);
   const [preview, setPreview] = useState<StockRef | null>(null);
 
@@ -247,8 +292,6 @@ export function Strategies() {
     setResult(null);
     setResearch(null);
     setError("");
-    setPrompt("");
-    setChat([{ role: "bot", text: CHAT_INTRO[next] }]);
     setVerifiedFormula(null);
   }
 
@@ -389,12 +432,7 @@ export function Strategies() {
   const save = useMutation({
     mutationFn: (): Promise<Strategy | Factor> => {
       if (workspace === "factor") {
-        const payload = {
-          name: name.trim(),
-          description: description.trim(),
-          formula,
-          direction,
-        };
+        const payload = { name: name.trim(), description: description.trim(), formula, direction };
         return creating || !selectedFactor ? api.createFactor(payload) : api.updateFactor(selectedFactor.id, payload);
       }
       const payload = {
@@ -418,23 +456,6 @@ export function Strategies() {
     },
     onError: (err: Error) => setError(err.message),
   });
-  const generate = useMutation({
-    mutationFn: (text: string) => (workspace === "factor" ? api.generateFactor(text) : api.generateStrategy(text)),
-    onSuccess: (payload) => {
-      setChat((prev) => [
-        ...prev.filter((msg) => !msg.pending),
-        {
-          role: "bot",
-          text: `${payload.name}\n${payload.description || ""}\n${payload.formula}`.trim(),
-          formula: payload.formula,
-        },
-      ]);
-    },
-    onError: (err: Error) => {
-      setChat((prev) => [...prev.filter((msg) => !msg.pending), { role: "bot", text: err.message }]);
-    },
-  });
-
   const columns = result?.rows[0] ? Object.keys(result.rows[0]) : [];
   const busy =
     run.isPending || publish.isPending || subscribe.isPending || watch.isPending || acceptUpdate.isPending || save.isPending;
@@ -449,21 +470,6 @@ export function Strategies() {
     });
   }
 
-  function onAsk(event: FormEvent) {
-    event.preventDefault();
-    const text = prompt.trim();
-    if (!text || generate.isPending) return;
-    setPrompt("");
-    setSidePane("ai");
-    setChat((prev) => [...prev, { role: "user", text }, { role: "bot", text: "正在生成公式…", pending: true }]);
-    generate.mutate(text);
-  }
-
-  function applyFormula(next: string) {
-    setFormula(next);
-    setVerifiedFormula((prev) => (prev === next ? prev : null));
-    setError("");
-  }
 
   function updateCondition(index: number, patch: Partial<StrategyCondition>) {
     setConditions((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -873,10 +879,20 @@ export function Strategies() {
           </>
         )}
       </section>
-
       <aside className="ide-side">
-        {sidePane && (
-          <div className="ide-side-panel">
+        {sidePane ? (
+          <div className="ide-side-panel" style={{ width: sideWidth }}>
+            <div
+              className="ide-side-resize"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                sideDragging.current = true;
+                document.body.classList.add("is-resizing");
+                window.getSelection()?.removeAllRanges();
+              }}
+              aria-label="拖动调整侧栏宽度"
+            />
             <div className="ide-ai-head">
               <span>
                 {sidePane === "research"
@@ -890,40 +906,8 @@ export function Strategies() {
                         : "AI · 生成公式"}
               </span>
             </div>
-            {sidePane === "ai" && workspace !== "condition" && (
-              <>
-                <div className="ide-ai-log">
-                  {chat.map((msg, index) => (
-                    <div key={index} className={`ide-msg ${msg.role}${msg.pending ? " is-pending" : ""}`}>
-                      {msg.text}
-                      {msg.formula && formulaEditable && (
-                        <div style={{ marginTop: 8 }}>
-                          <button type="button" className="btn btn-primary" onClick={() => applyFormula(msg.formula!)}>
-                            应用
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <form className="ide-ai-form" onSubmit={onAsk}>
-                  <textarea
-                    value={prompt}
-                    placeholder={workspace === "factor" ? "例如 120日均线" : "例如 站上120日均线且放量"}
-                    onChange={(event) => setPrompt(event.target.value)}
-                  />
-                  <button type="submit" className="btn btn-primary" disabled={!prompt.trim() || generate.isPending}>
-                    {generate.isPending ? "…" : "发送"}
-                  </button>
-                </form>
-              </>
-            )}
-            {sidePane === "ai" && workspace === "condition" && (
-              <div className="ide-ai-log">
-                <div className="ide-msg bot">{CHAT_INTRO.condition}</div>
-              </div>
-            )}
-            {sidePane === "research" && (
+            {sidePane === "ai" ? <AiDock /> : null}
+            {sidePane === "research" ? (
               <div className="ide-ai-log">
                 {selected && tab !== "market" && (selected.is_owner || selected.subscribed) && workspace !== "condition" ? (
                   <StrategyBacktestPanel
@@ -940,48 +924,46 @@ export function Strategies() {
                   <div className="ide-msg bot">先保存并通过校验，再点顶部「回测」。</div>
                 )}
               </div>
-            )}
-            {sidePane === "docs" && (
+            ) : null}
+            {sidePane === "docs" ? (
               <div className="ide-ai-log">
                 <div className="ide-msg bot">{DSL_DOCS}</div>
                 <div className="ide-msg bot">{AI_SKILL}</div>
               </div>
-            )}
+            ) : null}
           </div>
-        )}
+        ) : null}
         <nav className="ide-rail" aria-label="侧栏">
           <button
             type="button"
-            className={`wb-icon-btn${sidePane === "ai" ? " is-on" : ""}`}
+            className={`wb-item${sidePane === "ai" ? " is-active" : ""}`}
             aria-label="AI"
             title="AI"
             onClick={() => togglePane("ai")}
           >
-            <Sparkles size={15} />
+            <Sparkles size={15} className="wb-item-icon" />
           </button>
           <button
             type="button"
-            className={`wb-icon-btn${sidePane === "research" ? " is-on" : ""}`}
+            className={`wb-item${sidePane === "research" ? " is-active" : ""}`}
             aria-label="回测"
             title="回测"
             onClick={() => togglePane("research")}
           >
-            <LineChart size={15} />
+            <LineChart size={15} className="wb-item-icon" />
           </button>
           <button
             type="button"
-            className={`wb-icon-btn${sidePane === "docs" ? " is-on" : ""}`}
+            className={`wb-item${sidePane === "docs" ? " is-active" : ""}`}
             aria-label="文档"
             title="文档"
             onClick={() => togglePane("docs")}
           >
-            <BookOpen size={15} />
+            <BookOpen size={15} className="wb-item-icon" />
           </button>
         </nav>
       </aside>
-      {preview ? (
-        <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} />
-      ) : null}
+      {preview ? <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} /> : null}
     </div>
   );
 }

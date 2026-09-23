@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Database,
-  LayoutDashboard,
   Menu,
   Moon,
   Radio,
@@ -10,22 +9,23 @@ import {
   Settings,
   Sun,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { useCurrentUser } from "../lib/useAuth";
+import { AiChatProvider } from "../lib/aiChat";
 
 const THEME_KEY = "nextleek_theme";
 type NavItem = {
   to: string;
   label: string;
-  icon: typeof LayoutDashboard;
+  icon: LucideIcon;
   end?: boolean;
 };
 
 const NAV: NavItem[] = [
-  { to: "/", label: "看板", icon: LayoutDashboard, end: true },
   { to: "/strategies", label: "策略", icon: ScanSearch },
   { to: "/monitor", label: "监控", icon: Radio },
   { to: "/data", label: "数据", icon: Database },
@@ -136,6 +136,7 @@ export function Layout() {
   );
 
   return (
+    <AiChatProvider>
     <div className="wb">
       <aside id="nextleek-sidebar" className="wb-rail">
         <div className="wb-brand">
@@ -234,5 +235,6 @@ export function Layout() {
         </div>
       )}
     </div>
+    </AiChatProvider>
   );
 }

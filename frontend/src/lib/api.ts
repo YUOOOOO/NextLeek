@@ -1,3 +1,18 @@
+export type AiMessage = {
+  role: "user" | "bot";
+  text: string;
+  formula?: string;
+  intent?: "strategy" | "factor" | "condition" | "chat";
+  name?: string;
+  description?: string;
+};
+
+export type AiConversation = {
+  workspace: "strategy" | "factor" | "global";
+  messages: AiMessage[];
+  created_at: string;
+  updated_at: string;
+};
 export type UserRole = "admin" | "user";
 
 export type User = {
@@ -596,6 +611,13 @@ export const api = {
     ),
 
   strategyOptions: () => request<StrategyOptions>("/api/strategies/options"),
+  getAiConversation: (workspace: "strategy" | "factor" | "global") =>
+    request<AiConversation>(`/api/ai/conversations?workspace=${workspace}`),
+  saveAiConversation: (workspace: "strategy" | "factor" | "global", messages: AiMessage[]) =>
+    request<AiConversation>(`/api/ai/conversations/${workspace}`, {
+      method: "PUT",
+      body: JSON.stringify({ messages }),
+    }),
   listStrategies: () => request<StrategyCatalog>("/api/strategies"),
   createStrategy: (body: StrategyWrite) =>
     request<Strategy>("/api/strategies", { method: "POST", body: JSON.stringify(body) }),
@@ -616,7 +638,7 @@ export const api = {
   compileStrategy: (formula: string) =>
     request<FormulaPreview>("/api/strategies/compile", { method: "POST", body: JSON.stringify({ formula }) }),
   generateStrategy: (prompt: string) =>
-    request<{ name: string; formula: string; description: string; warmup_bars?: number; dependencies?: string[] }>(
+    request<{ intent?: "strategy" | "factor" | "condition" | "chat"; response?: string; name: string; formula: string; description: string; warmup_bars?: number; dependencies?: string[] }>(
       "/api/strategies/generate",
       { method: "POST", body: JSON.stringify({ prompt }) },
     ),
@@ -642,7 +664,7 @@ export const api = {
   compileFactor: (formula: string) =>
     request<FormulaPreview>("/api/factors/compile", { method: "POST", body: JSON.stringify({ formula }) }),
   generateFactor: (prompt: string) =>
-    request<{ name: string; formula: string; description: string; code?: string; direction?: string; warmup_bars?: number; dependencies?: string[] }>(
+    request<{ intent?: "strategy" | "factor" | "condition" | "chat"; response?: string; name: string; formula: string; description: string; code?: string; direction?: string; warmup_bars?: number; dependencies?: string[] }>(
       "/api/factors/generate",
       { method: "POST", body: JSON.stringify({ prompt }) },
     ),

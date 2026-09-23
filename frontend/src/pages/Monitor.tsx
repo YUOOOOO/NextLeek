@@ -61,9 +61,17 @@ export function Monitor() {
   const [flash, setFlash] = useState<Record<string, "in" | "out">>({});
   const [ghosts, setGhosts] = useState<Record<string, MonitorRow[]>>({});
   const [preview, setPreview] = useState<StockRef | null>(null);
+  const [eventFilter, setEventFilter] = useState<"all" | "in" | "out">("all");
 
   const strategies = snapshot.data?.strategies ?? [];
   const events = snapshot.data?.events ?? [];
+  const filteredEvents = useMemo(() => {
+    if (eventFilter === "all") return events;
+    return events.filter((event) => {
+      const leaving = event.type === "pool_exit" || event.message.includes("移出");
+      return eventFilter === "out" ? leaving : !leaving;
+    });
+  }, [events, eventFilter]);
 
   useEffect(() => {
     if (!snapshot.data) return;
@@ -157,9 +165,34 @@ export function Monitor() {
           </p>
         </div>
         <Link to="/strategies" className="btn btn-ghost">
-          策略
+          管理策略
         </Link>
       </div>
+
+      <section className="mon-overview card">
+        <div className="kpi-strip mon-kpis">
+          <div className="kpi-cell">
+            <div className="kpi-label">监控状态</div>
+            <div className="mon-status"><i className={snapshot.isFetching ? "is-syncing" : ""} />{snapshot.isFetching ? "同步中" : "实时运行"}</div>
+            <div className="mon-kpi-note">SSE + 5 秒快照</div>
+          </div>
+          <div className="kpi-cell">
+            <div className="kpi-label">监控策略</div>
+            <div className="kpi-value">{data?.watch_count ?? 0}</div>
+            <div className="mon-kpi-note">正在评估的策略</div>
+          </div>
+          <div className="kpi-cell">
+            <div className="kpi-label">当前命中</div>
+            <div className="kpi-value">{data?.hit_count ?? 0}</div>
+            <div className="mon-kpi-note">跨策略去重前</div>
+          </div>
+          <div className="kpi-cell mon-kpi-last">
+            <div className="kpi-label">最近事件</div>
+            <div className="kpi-value mon-kpi-time">{events[0]?.ts ? fmtTime(events[0].ts) : "—"}</div>
+            <div className="mon-kpi-note">{events.length ? events[0].message : "暂无进出记录"}</div>
+          </div>
+        </div>
+      </section>
 
       {emptyWatches ? (
         <section className="card p-6 text-sm text-[var(--ds-color-text-description)]">
@@ -182,12 +215,21 @@ export function Monitor() {
             </div>
           </section>
           <section className="mon-col mon-col-events">
-            <div className="mon-col-head">进出记录</div>
+            <div className="mon-col-head mon-events-head">
+              <span>进出记录</span>
+              <div className="mon-filter" role="group" aria-label="事件筛选">
+                {(["all", "in", "out"] as const).map((filter) => (
+                  <button key={filter} type="button" className={eventFilter === filter ? "is-on" : ""} onClick={() => setEventFilter(filter)}>
+                    {filter === "all" ? "全部" : filter === "in" ? "进入" : "离场"}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="mon-col-body">
-              {events.length === 0 ? (
-                <div className="mon-empty">尚未发生进入或移出</div>
+              {filteredEvents.length === 0 ? (
+                <div className="mon-empty">{events.length === 0 ? "尚未发生进入或移出" : "没有符合筛选条件的事件"}</div>
               ) : (
-                events.map((event) => (
+                filteredEvents.map((event) => (
                   <EventCard
                     key={`${event.ts}-${event.symbol}-${event.message}`}
                     event={event}

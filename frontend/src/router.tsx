@@ -1,7 +1,6 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Auth } from "./pages/Auth";
-import { Dashboard } from "./pages/Dashboard";
 import { Data } from "./pages/Data";
 import { DataSources } from "./pages/DataSources";
 import { GeneralSettings, Settings } from "./pages/Settings";
@@ -17,7 +16,7 @@ export const router = createBrowserRouter([
     path: "/",
     element: <Layout />,
     children: [
-      { index: true, element: <Dashboard /> },
+      { index: true, element: <Navigate to="/strategies" replace /> },
       { path: "strategies", element: <Strategies /> },
       { path: "factors", element: <Factors /> },
       { path: "monitor", element: <Monitor /> },
@@ -33,7 +32,7 @@ export const router = createBrowserRouter([
         ],
       },
       { path: "users", element: <Navigate to="/settings/users" replace /> },
-      { path: "*", element: <Navigate to="/" replace /> },
+      { path: "*", element: <Navigate to="/strategies" replace /> },
     ],
   },
 ]);
