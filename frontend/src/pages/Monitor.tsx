@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, MonitorEvent, MonitorRow, MonitorStrategy } from "../lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Sparkles } from "lucide-react";
+import { api, MonitorRow } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { AiDock } from "../components/AiDock";
 import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
+import { AiChatProvider, MONITOR_INTRO } from "../lib/aiChat";
 
 const KIND_LABEL: Record<string, string> = {
   formula: "公式",
@@ -62,16 +64,53 @@ export function Monitor() {
   const [ghosts, setGhosts] = useState<Record<string, MonitorRow[]>>({});
   const [preview, setPreview] = useState<StockRef | null>(null);
   const [eventFilter, setEventFilter] = useState<"all" | "in" | "out">("all");
+  const [selectedId, setSelectedId] = useState("all");
+  const [feedOpen, setFeedOpen] = useState(false);
+  const [sideOpen, setSideOpen] = useState(() => localStorage.getItem("nextleek_mon_ai_open") !== "0");
+  const [sideWidth, setSideWidth] = useState(() => Number(localStorage.getItem("nextleek_mon_side_width") || 340));
+  const sideDragging = useRef(false);
+  const queryClient = useQueryClient();
+  const stopWatch = useMutation({
+    mutationFn: (id: string) => api.stopStrategyMonitor(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.strategies });
+    },
+  });
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (!sideDragging.current) return;
+      event.preventDefault();
+      const next = Math.max(280, Math.min(720, window.innerWidth - event.clientX));
+      setSideWidth(next);
+      localStorage.setItem("nextleek_mon_side_width", String(next));
+    };
+    const up = () => {
+      if (!sideDragging.current) return;
+      sideDragging.current = false;
+      document.body.classList.remove("is-resizing");
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.body.classList.remove("is-resizing");
+    };
+  }, []);
 
   const strategies = snapshot.data?.strategies ?? [];
   const events = snapshot.data?.events ?? [];
   const filteredEvents = useMemo(() => {
-    if (eventFilter === "all") return events;
-    return events.filter((event) => {
+    const scoped = selectedId === "all" ? events : events.filter((event) => event.strategy_id === selectedId);
+    if (eventFilter === "all") return scoped;
+    return scoped.filter((event) => {
       const leaving = event.type === "pool_exit" || event.message.includes("移出");
       return eventFilter === "out" ? leaving : !leaving;
     });
-  }, [events, eventFilter]);
+  }, [events, eventFilter, selectedId]);
 
   useEffect(() => {
     if (!snapshot.data) return;
@@ -134,187 +173,222 @@ export function Monitor() {
     });
   }, [strategies, ghosts]);
 
-  if (snapshot.isLoading && !snapshot.data) {
-    return <div className="grid min-h-[40vh] place-items-center text-[var(--ds-color-text-placeholder)]">加载监控…</div>;
-  }
+  const selected = liveRows.find((item) => item.strategy.id === selectedId) ?? null;
+  const boardRows = useMemo(() => {
+    const source = selectedId === "all" || !selected ? liveRows : [selected];
+    const rows = source.flatMap(({ strategy, rows }) => rows.map((row) => ({ ...row, strategy })));
+    rows.sort((a, b) => (num(b.change_pct) ?? -Infinity) - (num(a.change_pct) ?? -Infinity));
+    return rows;
+  }, [liveRows, selected, selectedId]);
 
-  if (snapshot.isError) {
-    return (
-      <section className="card p-6 text-center">
-        <div className="text-sm text-[#f87171]">监控加载失败</div>
-        <button className="btn btn-primary mt-3" type="button" onClick={() => snapshot.refetch()}>
-          重试
-        </button>
-      </section>
-    );
-  }
+  useEffect(() => {
+    if (selectedId !== "all" && !liveRows.some((item) => item.strategy.id === selectedId)) {
+      setSelectedId("all");
+    }
+  }, [liveRows, selectedId]);
 
   const data = snapshot.data;
   const emptyWatches = !data || data.watch_count === 0;
 
   return (
-    <div className="mon-page">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">监控</h1>
-          <p className="page-desc">
-            {data?.as_of ?? "暂无行情日"}
-            {data ? ` · ${data.watch_count} 个策略` : ""}
-            {data ? ` · ${data.hit_count} 只在池` : ""}
-            {" · 新进增加、离场移出"}
-          </p>
-        </div>
-        <Link to="/strategies" className="btn btn-ghost">
-          管理策略
-        </Link>
-      </div>
-
-      <section className="mon-overview card">
-        <div className="kpi-strip mon-kpis">
-          <div className="kpi-cell">
-            <div className="kpi-label">监控状态</div>
-            <div className="mon-status"><i className={snapshot.isFetching ? "is-syncing" : ""} />{snapshot.isFetching ? "同步中" : "实时运行"}</div>
-            <div className="mon-kpi-note">SSE + 5 秒快照</div>
-          </div>
-          <div className="kpi-cell">
-            <div className="kpi-label">监控策略</div>
-            <div className="kpi-value">{data?.watch_count ?? 0}</div>
-            <div className="mon-kpi-note">正在评估的策略</div>
-          </div>
-          <div className="kpi-cell">
-            <div className="kpi-label">当前命中</div>
-            <div className="kpi-value">{data?.hit_count ?? 0}</div>
-            <div className="mon-kpi-note">跨策略去重前</div>
-          </div>
-          <div className="kpi-cell mon-kpi-last">
-            <div className="kpi-label">最近事件</div>
-            <div className="kpi-value mon-kpi-time">{events[0]?.ts ? fmtTime(events[0].ts) : "—"}</div>
-            <div className="mon-kpi-note">{events.length ? events[0].message : "暂无进出记录"}</div>
-          </div>
-        </div>
-      </section>
-
-      {emptyWatches ? (
-        <section className="card p-6 text-sm text-[var(--ds-color-text-description)]">
-          还没有监控中的策略。去「策略」页点监控后，命中标的会实时出现在这里。
-        </section>
-      ) : (
-        <div className="mon-split">
-          <section className="mon-col">
-            <div className="mon-col-head">当前命中</div>
-            <div className="mon-col-body">
-              {liveRows.map(({ strategy, rows }) => (
-                <StrategyPool
-                  key={strategy.id}
-                  strategy={strategy}
-                  rows={rows}
-                  flash={flash}
-                  onOpen={setPreview}
-                />
-              ))}
+    <AiChatProvider workspace="monitor" intro={MONITOR_INTRO}>
+      <div className="ide">
+        <section className="ide-editor">
+          <div className="mon-toolbar">
+            <div className="mon-status">
+              <i className={snapshot.isFetching ? "is-syncing" : ""} />
+              {snapshot.isError ? "异常" : snapshot.isFetching ? "同步中" : "实时运行"}
             </div>
-          </section>
-          <section className="mon-col mon-col-events">
-            <div className="mon-col-head mon-events-head">
-              <span>进出记录</span>
-              <div className="mon-filter" role="group" aria-label="事件筛选">
-                {(["all", "in", "out"] as const).map((filter) => (
-                  <button key={filter} type="button" className={eventFilter === filter ? "is-on" : ""} onClick={() => setEventFilter(filter)}>
-                    {filter === "all" ? "全部" : filter === "in" ? "进入" : "离场"}
-                  </button>
-                ))}
+            <span className="mon-toolbar-stat">
+              行情日<b>{data?.as_of ?? "—"}</b>
+            </span>
+            <span className="mon-toolbar-stat">
+              策略<b>{data?.watch_count ?? 0}</b>
+            </span>
+            <span className="mon-toolbar-stat">
+              命中<b>{data?.hit_count ?? 0}</b>
+            </span>
+            <span className="mon-toolbar-stat">
+              最近<b>{events[0]?.ts ? fmtTime(events[0].ts) : "—"}</b>
+            </span>
+          </div>
+          {snapshot.isError ? (
+            <div className="mon-empty">
+              监控加载失败
+              <div>
+                <button className="btn btn-primary mt-3" type="button" onClick={() => snapshot.refetch()}>
+                  重试
+                </button>
               </div>
             </div>
-            <div className="mon-col-body">
-              {filteredEvents.length === 0 ? (
-                <div className="mon-empty">{events.length === 0 ? "尚未发生进入或移出" : "没有符合筛选条件的事件"}</div>
-              ) : (
-                filteredEvents.map((event) => (
-                  <EventCard
-                    key={`${event.ts}-${event.symbol}-${event.message}`}
-                    event={event}
-                    onOpen={setPreview}
-                  />
-                ))
-              )}
+          ) : snapshot.isLoading && !data ? (
+            <div className="mon-empty">加载监控…</div>
+          ) : (
+            <div className="mon-split">
+              <aside className="mon-watches">
+                <div className="mon-col-head">监控中</div>
+                <div className="mon-watch-list">
+                  <button type="button" className={`ide-row${selectedId === "all" ? " is-on" : ""}`} onClick={() => setSelectedId("all")}>
+                    <div className="ide-row-top">
+                      <span className="ide-row-name">全部</span>
+                      <span className="mon-watch-count">{data?.hit_count ?? 0}</span>
+                    </div>
+                    <div className="mon-pool-meta">{data?.watch_count ?? 0} 个策略</div>
+                  </button>
+                  {liveRows.map(({ strategy, rows }) => (
+                    <button
+                      key={strategy.id}
+                      type="button"
+                      className={`ide-row${selectedId === strategy.id ? " is-on" : ""}`}
+                      onClick={() => setSelectedId(strategy.id)}
+                    >
+                      <div className="ide-row-top">
+                        <span className="ide-row-name">{strategy.name}</span>
+                        <span className="mon-watch-count">{rows.length}</span>
+                      </div>
+                      <div className="mon-pool-meta">{KIND_LABEL[strategy.kind] || strategy.kind}</div>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+              <section className="mon-board">
+                <div className="mon-col-head">
+                  <span>{selected ? selected.strategy.name : "当前命中"}</span>
+                  <span className="mon-col-count">{boardRows.length} 只</span>
+                  <div className="mon-pool-actions">
+                    {selected ? (
+                      <button type="button" className="btn-quiet" disabled={stopWatch.isPending} onClick={() => stopWatch.mutate(selected.strategy.id)}>
+                        取消监控
+                      </button>
+                    ) : null}
+                    <button type="button" className={`btn-quiet${feedOpen ? " is-on" : ""}`} onClick={() => setFeedOpen((open) => !open)}>
+                      日志
+                    </button>
+                  </div>
+                </div>
+                {emptyWatches ? (
+                  <div className="mon-empty">还没有监控。右侧从已有策略创建单条或叠加。</div>
+                ) : boardRows.length === 0 ? (
+                  <div className="mon-empty">等待命中</div>
+                ) : (
+                  <div className="mon-board-body">
+                    <table className="data-table mon-table">
+                      <thead>
+                        <tr>
+                          <th>标的</th>
+                          {selectedId === "all" ? <th>策略</th> : null}
+                          <th className="text-right">现价</th>
+                          <th className="text-right">涨跌</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {boardRows.map((row) => {
+                          const mark = flash[`${row.strategy.id}:${row.symbol}`];
+                          return (
+                            <tr
+                              key={`${row.strategy.id}:${row.symbol}`}
+                              className={mark ? `mon-row is-${mark}` : "mon-row"}
+                              onClick={() => setPreview({ symbol: row.symbol, name: row.name || row.symbol })}
+                            >
+                              <td>
+                                <div className="mon-sym-name">{row.name || row.symbol}</div>
+                                <div className="mon-sym-code">{row.symbol}</div>
+                              </td>
+                              {selectedId === "all" ? <td className="mon-sym-code">{row.strategy.name}</td> : null}
+                              <td className="text-right font-mono">{fmtPrice(row.close)}</td>
+                              <td className={`text-right font-mono ${pctClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+              {feedOpen ? (
+                <section className="mon-feed">
+                  <div className="mon-col-head mon-events-head">
+                    <span>进出</span>
+                    <div className="mon-filter" role="group" aria-label="事件筛选">
+                      {(["all", "in", "out"] as const).map((filter) => (
+                        <button key={filter} type="button" className={eventFilter === filter ? "is-on" : ""} onClick={() => setEventFilter(filter)}>
+                          {filter === "all" ? "全部" : filter === "in" ? "进入" : "离场"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mon-feed-body">
+                    {filteredEvents.length === 0 ? (
+                      <div className="mon-empty">{events.length === 0 ? "尚未发生进入或移出" : "没有符合筛选条件的事件"}</div>
+                    ) : (
+                      filteredEvents.map((event) => {
+                        const leaving = event.type === "pool_exit" || event.message.includes("移出");
+                        return (
+                          <button
+                            key={`${event.ts}-${event.symbol}-${event.message}`}
+                            type="button"
+                            className={`mon-feed-row${leaving ? " is-out" : " is-in"}`}
+                            disabled={!event.symbol}
+                            onClick={() => event.symbol && setPreview({ symbol: event.symbol, name: event.name || event.symbol })}
+                          >
+                            <span className="mon-feed-time">{event.ts ? fmtTime(event.ts) : ""}</span>
+                            <span className="mon-feed-tag">{leaving ? "离" : "进"}</span>
+                            <span className="mon-feed-main">
+                              <span className="mon-sym-name">{event.name || event.symbol || event.message}</span>
+                              <span className="mon-feed-msg">{event.message}</span>
+                            </span>
+                            <span className={`font-mono ${pctClass(event.change_pct)}`}>{fmtPct(event.change_pct)}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </section>
+              ) : null}
             </div>
-          </section>
-        </div>
-      )}
-      {preview ? (
-        <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} />
-      ) : null}
-    </div>
-  );
-}
-
-function StrategyPool({
-  strategy,
-  rows,
-  flash,
-  onOpen,
-}: {
-  strategy: MonitorStrategy;
-  rows: MonitorRow[];
-  flash: Record<string, "in" | "out">;
-  onOpen: (stock: StockRef) => void;
-}) {
-  return (
-    <section className="mon-pool">
-      <div className="mon-pool-head">
-        <div>
-          <div className="mon-pool-name">{strategy.name}</div>
-          <div className="mon-pool-meta">
-            {KIND_LABEL[strategy.kind] || strategy.kind} · {strategy.total} 只
-          </div>
-        </div>
-        <Link to="/strategies" className="btn-quiet">
-          打开
-        </Link>
+          )}
+        </section>
+        <aside className="ide-side">
+          {sideOpen ? (
+            <div className="ide-side-panel" style={{ width: sideWidth }}>
+              <div
+                className="ide-side-resize"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  sideDragging.current = true;
+                  document.body.classList.add("is-resizing");
+                  window.getSelection()?.removeAllRanges();
+                }}
+                aria-label="拖动调整侧栏宽度"
+              />
+              <div className="ide-ai-head">
+                <span>AI · 配置监控</span>
+              </div>
+              <AiDock mode="monitor" />
+            </div>
+          ) : null}
+          <nav className="ide-rail" aria-label="侧栏">
+            <button
+              type="button"
+              className={`wb-item${sideOpen ? " is-active" : ""}`}
+              aria-label="AI"
+              title="AI"
+              onClick={() => {
+                setSideOpen((open) => {
+                  const next = !open;
+                  localStorage.setItem("nextleek_mon_ai_open", next ? "1" : "0");
+                  return next;
+                });
+              }}
+            >
+              <Sparkles size={15} className="wb-item-icon" />
+            </button>
+          </nav>
+        </aside>
+        {preview ? <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} /> : null}
       </div>
-      {rows.length === 0 ? (
-        <div className="mon-empty">等待命中</div>
-      ) : (
-        <table className="data-table">
-          <tbody>
-            {rows.map((row) => {
-              const mark = flash[`${strategy.id}:${row.symbol}`];
-              return (
-                <tr
-                  key={row.symbol}
-                  className={mark ? `mon-row is-${mark}` : "mon-row"}
-                  onClick={() => onOpen({ symbol: row.symbol, name: row.name })}
-                >
-                  <td>
-                    <div className="text-[var(--ds-color-text-primary)]">{row.name || row.symbol}</div>
-                    <div className="text-[11px] text-[var(--ds-color-text-placeholder)]">{row.symbol}</div>
-                  </td>
-                  <td className="text-right font-mono">{fmtPrice(row.close)}</td>
-                  <td className={`text-right font-mono ${pctClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </section>
+    </AiChatProvider>
   );
 }
 
-function EventCard({ event, onOpen }: { event: MonitorEvent; onOpen: (stock: StockRef) => void }) {
-  const leaving = event.type === "pool_exit" || event.message.includes("移出");
-  return (
-    <div
-      className={`mon-event${leaving ? " is-out" : " is-in"}${event.symbol ? " kline-row" : ""}`}
-      onClick={() => event.symbol && onOpen({ symbol: event.symbol, name: event.name })}
-    >
-      <div className="mon-event-time">{event.ts ? fmtTime(event.ts) : ""}</div>
-      <div className="mon-event-msg">{event.message}</div>
-      {(event.price != null || event.change_pct != null) && (
-        <div className={`mon-event-quote ${pctClass(event.change_pct)}`}>
-          {fmtPrice(event.price)} {fmtPct(event.change_pct)}
-        </div>
-      )}
-    </div>
-  );
-}

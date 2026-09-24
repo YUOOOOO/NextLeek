@@ -10,8 +10,7 @@ from app.schemas import AiConversationRead, AiConversationWrite
 from app.security import utcnow
 
 router = APIRouter(prefix="/api/ai/conversations", tags=["ai"], dependencies=[Depends(require_csrf)])
-_ALLOWED_WORKSPACES = {"strategy", "factor"}
-_ALLOWED_WORKSPACES = {"strategy", "factor", "global"}
+_ALLOWED_WORKSPACES = {"strategy", "factor", "global", "monitor"}
 
 def _workspace(value: str) -> str:
     workspace = value.strip().lower()

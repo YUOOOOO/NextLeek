@@ -2,13 +2,19 @@ export type AiMessage = {
   role: "user" | "bot";
   text: string;
   formula?: string;
-  intent?: "strategy" | "factor" | "condition" | "chat";
+  intent?: "strategy" | "factor" | "condition" | "chat" | "single" | "composite";
   name?: string;
   description?: string;
+  strategy_id?: string;
+  children?: StrategyChild[];
+  merge_mode?: "union" | "intersect";
+  min_confirm?: number;
 };
 
+export type AiWorkspace = "strategy" | "factor" | "global" | "monitor";
+
 export type AiConversation = {
-  workspace: "strategy" | "factor" | "global";
+  workspace: AiWorkspace;
   messages: AiMessage[];
   created_at: string;
   updated_at: string;
@@ -611,9 +617,9 @@ export const api = {
     ),
 
   strategyOptions: () => request<StrategyOptions>("/api/strategies/options"),
-  getAiConversation: (workspace: "strategy" | "factor" | "global") =>
+  getAiConversation: (workspace: AiWorkspace) =>
     request<AiConversation>(`/api/ai/conversations?workspace=${workspace}`),
-  saveAiConversation: (workspace: "strategy" | "factor" | "global", messages: AiMessage[]) =>
+  saveAiConversation: (workspace: AiWorkspace, messages: AiMessage[]) =>
     request<AiConversation>(`/api/ai/conversations/${workspace}`, {
       method: "PUT",
       body: JSON.stringify({ messages }),
@@ -642,6 +648,17 @@ export const api = {
       "/api/strategies/generate",
       { method: "POST", body: JSON.stringify({ prompt }) },
     ),
+  generateMonitorPlan: (prompt: string) =>
+    request<{
+      intent?: "single" | "composite" | "chat";
+      response?: string;
+      name?: string;
+      description?: string;
+      strategy_id?: string;
+      children?: StrategyChild[];
+      merge_mode?: "union" | "intersect";
+      min_confirm?: number;
+    }>("/api/strategies/generate-monitor", { method: "POST", body: JSON.stringify({ prompt }) }),
   mineStrategies: (body: { days?: number; horizon?: number } = {}) =>
     request<ResearchResult>("/api/strategies/mine", { method: "POST", body: JSON.stringify(body) }),
   researchStrategy: (id: string, body: StrategyResearchIn = {}) =>

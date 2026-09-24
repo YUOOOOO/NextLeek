@@ -68,13 +68,23 @@ class UserRead(BaseModel):
     created_at: datetime
 
 
+class AiStrategyRef(BaseModel):
+    strategy_id: str = Field(min_length=1, max_length=36)
+    weight: float = Field(default=1, ge=0)
+    name: str = ""
+
+
 class AiMessage(BaseModel):
     role: Literal["user", "bot"]
     text: str = Field(max_length=12000)
     formula: str | None = Field(default=None, max_length=4000)
-    intent: Literal["strategy", "factor", "condition", "chat"] | None = None
+    intent: Literal["strategy", "factor", "condition", "chat", "single", "composite"] | None = None
     name: str | None = Field(default=None, max_length=40)
     description: str | None = Field(default=None, max_length=500)
+    strategy_id: str | None = Field(default=None, max_length=36)
+    children: list[AiStrategyRef] = Field(default_factory=list, max_length=8)
+    merge_mode: Literal["union", "intersect"] | None = None
+    min_confirm: int | None = Field(default=None, ge=1, le=8)
 
 class AiConversationWrite(BaseModel):
     messages: list[AiMessage] = Field(max_length=200)

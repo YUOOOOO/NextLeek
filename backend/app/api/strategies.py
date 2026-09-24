@@ -82,6 +82,22 @@ async def generate_strategy(payload: StrategyGenerateIn, _: User = Depends(requi
         raise HTTPException(status_code=400, detail=exc.message) from exc
 
 
+@router.post("/generate-monitor")
+async def generate_monitor(
+    payload: StrategyGenerateIn,
+    user: User = Depends(require_user),
+    database: Session = Depends(get_database),
+) -> dict:
+    from app.services import formula_ai
+
+    catalog = svc.list_catalog(database, user.id)
+    try:
+        return await formula_ai.generate_monitor_plan(payload.prompt, formula_ai.catalog_pool(catalog))
+    except formula_ai.FormulaAIError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+
+
+
 @router.post("/mine")
 def mine_strategies(
     payload: StrategyResearchIn,
