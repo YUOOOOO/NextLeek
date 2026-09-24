@@ -10,6 +10,7 @@ import { Monitor } from "./pages/Monitor";
 import { News } from "./pages/News";
 import { Users } from "./pages/Users";
 import { AiSettings } from "./pages/AiSettings";
+import { Watchlist } from "./pages/Watchlist";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <Auth /> },
@@ -17,7 +18,8 @@ export const router = createBrowserRouter([
     path: "/",
     element: <Layout />,
     children: [
-      { index: true, element: <Navigate to="/strategies" replace /> },
+      { index: true, element: <Navigate to="/watchlist" replace /> },
+      { path: "watchlist", element: <Watchlist /> },
       { path: "strategies", element: <Strategies /> },
       { path: "factors", element: <Factors /> },
       { path: "monitor", element: <Monitor /> },
@@ -34,7 +36,7 @@ export const router = createBrowserRouter([
         ],
       },
       { path: "users", element: <Navigate to="/settings/users" replace /> },
-      { path: "*", element: <Navigate to="/strategies" replace /> },
+      { path: "*", element: <Navigate to="/watchlist" replace /> },
     ],
   },
 ]);

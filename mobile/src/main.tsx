@@ -2,14 +2,15 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "react-router-dom";
-import { isMobileUA } from "./lib/device";
-import { router } from "./router";
+import { isMobileUA } from "@/lib/device";
+import { router } from "./App";
 import "./index.css";
 
-if (isMobileUA() && !window.location.pathname.startsWith("/m")) {
-  const path = window.location.pathname === "/" ? "/watchlist" : window.location.pathname;
-  window.location.replace(`/m${path}${window.location.search}${window.location.hash}`);
+if (!isMobileUA() && window.location.pathname.startsWith("/m")) {
+  const rest = window.location.pathname.replace(/^\/m/, "") || "/watchlist";
+  window.location.replace(`${rest}${window.location.search}${window.location.hash}`);
 }
+
 const redirectToLogin = (() => {
   let redirecting = false;
   return (err: unknown) => {
@@ -18,10 +19,10 @@ const redirectToLogin = (() => {
     if (!message.includes("未登录") && !message.includes("会话已过期") && !message.includes("401")) {
       return;
     }
-    if (window.location.pathname === "/login") return;
+    if (window.location.pathname.endsWith("/login")) return;
     redirecting = true;
     const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/login?redirect=${redirect}`;
+    window.location.href = `/m/login?redirect=${redirect}`;
   };
 })();
 

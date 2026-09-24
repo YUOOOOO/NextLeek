@@ -482,6 +482,39 @@ export type MonitorEvent = {
   message: string;
   price?: number | null;
   change_pct?: number | null;
+  source?: string;
+};
+
+export type StockMonitorWatch = {
+  id: string;
+  symbol: string;
+  name: string;
+  period: string;
+  period_label: string;
+  signal: string;
+  signal_label: string;
+  hit?: boolean;
+  hit_key?: string | null;
+  summary?: string;
+  close?: number | null;
+  change_pct?: number | null;
+};
+
+export type WatchlistItem = {
+  id: string;
+  symbol: string;
+  name: string;
+  close?: number | null;
+  change_pct?: number | null;
+  created_at?: string | null;
+};
+
+
+export type InstrumentHit = {
+  symbol: string;
+  name: string;
+  code?: string;
+  asset_type?: string;
 };
 
 export type DisplayTagTone = "bull" | "bear" | "neutral";
@@ -491,11 +524,10 @@ export type DisplaySignal = {
   name: string;
   description?: string;
   tone: DisplayTagTone;
-  kind: string;
+  kind?: "entry" | "exit" | "both";
+  enabled?: boolean;
   field?: string;
-  locked: boolean;
-  subscribed: boolean;
-  enabled: boolean;
+  locked?: boolean;
   conditions?: StrategyCondition[];
 };
 
@@ -525,11 +557,13 @@ export type ExtraTagSpec = {
 export type MonitorSnapshot = {
   as_of: string | null;
   strategies: MonitorStrategy[];
+  stock_watches?: StockMonitorWatch[];
   events: MonitorEvent[];
   watch_count: number;
   hit_count: number;
   custom_tags?: ExtraTagSpec[];
 };
+
 
 export type KlineDailyResponse = {
   symbol: string;
@@ -770,6 +804,21 @@ export const api = {
     request<ResearchResult>(`/api/strategies/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
   monitorSnapshot: (assetType: AssetType = "stock") =>
     request<MonitorSnapshot>(`/api/monitor?asset_type=${assetType}`),
+  createStockMonitor: (body: { symbol: string; name?: string; period?: string; signal?: string }) =>
+    request<StockMonitorWatch>("/api/monitor/stocks", { method: "POST", body: JSON.stringify(body) }),
+  deleteStockMonitor: (id: string) =>
+    request<void>(`/api/monitor/stocks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  searchInstruments: (q: string, assetTypes = "stock") =>
+    request<{ results: InstrumentHit[] }>(
+      `/api/kline/instruments/search?q=${encodeURIComponent(q)}&asset_types=${encodeURIComponent(assetTypes)}`,
+    ),
+  listWatchlist: () => request<{ items: WatchlistItem[]; count: number }>("/api/watchlist"),
+  addWatchlist: (body: { symbol: string; name?: string }) =>
+    request<WatchlistItem>("/api/watchlist", { method: "POST", body: JSON.stringify(body) }),
+  removeWatchlist: (symbol: string) =>
+    request<void>(`/api/watchlist/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
+
+
   listDisplaySignals: (assetType: AssetType = "stock") =>
     request<DisplaySignalCatalog>(`/api/custom-signals?asset_type=${assetType}`),
   saveDisplaySignal: (body: DisplaySignalWrite) =>

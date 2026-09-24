@@ -1,4 +1,4 @@
-"""策略监控中心：当前命中池 + 进出记录 + SSE。"""
+"""监控中心：策略命中池 + 个股缠论监控 + 进出记录 + SSE。"""
 from __future__ import annotations
 
 import asyncio
@@ -6,18 +6,28 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from app.deps import get_database, require_user
 from app.models import User
 from app.services import alert_store
+from app.services import stock_chanlun_monitor as stock_mon
 from app.services import user_strategies as svc
 from app.services.display_tags import enabled_custom_specs
 from app.services.user_strategy_monitor import TAG_FIELDS
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
+
+
+class StockMonitorIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=16)
+    name: str = ""
+    period: str = "day"
+    signal: str = "b2"
+
 
 
 def _overlay_quotes(
@@ -196,18 +206,84 @@ def monitor_snapshot(
     if data_dir is not None:
         events = [
             event
-            for event in alert_store.list_recent(data_dir, days=7, limit=500, source="strategy")
-            if event.get("user_id") == user.id and (event.get("asset_type") or "stock") == asset_type
+            for event in alert_store.list_recent(data_dir, days=7, limit=500)
+            if event.get("user_id") == user.id
+            and (event.get("asset_type") or "stock") == asset_type
+            and event.get("source") in {"strategy", "stock_chanlun"}
         ]
+    stock_watches: list[dict[str, Any]] = []
+    if asset_type == "stock":
+        stock_watches, stock_events = stock_mon.evaluate_user(
+            database, request.app.state, user.id, emit_events=True
+        )
+        if stock_events:
+            stock_mon.persist_events(request.app.state, stock_events)
+            events = stock_events + events
+        stock_watches = _overlay_quotes(stock_watches, quotes, tags)
+    stock_hit = sum(1 for item in stock_watches if item.get("hit"))
     return {
         "as_of": None if as_of is None else as_of.isoformat(),
         "asset_type": asset_type,
         "strategies": strategies,
+        "stock_watches": stock_watches,
         "events": events[:200],
-        "watch_count": len(strategies),
-        "hit_count": sum(item["total"] for item in strategies),
+        "watch_count": len(strategies) + len(stock_watches),
+        "hit_count": sum(item["total"] for item in strategies) + stock_hit,
         "custom_tags": enabled_custom_specs(data_dir, asset_type) if data_dir is not None else [],
     }
+
+
+def _stock_http(exc: stock_mon.StockMonitorError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=exc.message)
+
+
+@router.post("/stocks")
+def create_stock_monitor(
+    payload: StockMonitorIn,
+    request: Request,
+    user: User = Depends(require_user),
+    database: Session = Depends(get_database),
+) -> dict:
+    try:
+        name = payload.name.strip()
+        if not name:
+            repo = getattr(request.app.state, "repo", None)
+            if repo is not None:
+                name = repo.get_name_map([payload.symbol.strip().upper()]).get(
+                    payload.symbol.strip().upper(), ""
+                )
+        row = stock_mon.create(
+            database,
+            user.id,
+            symbol=payload.symbol,
+            name=name,
+            period=payload.period,
+            signal=payload.signal,
+        )
+    except stock_mon.StockMonitorError as exc:
+        raise _stock_http(exc) from exc
+    extra = stock_mon._cached_eval(request.app.state, row.symbol, row.period, row.signal)
+    monitor = getattr(request.app.state, "user_strategy_monitor", None)
+    if monitor is not None:
+        monitor.notify_updated(request.app.state)
+    return stock_mon.to_read(row, extra)
+
+
+@router.delete("/stocks/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_stock_monitor(
+    monitor_id: str,
+    request: Request,
+    user: User = Depends(require_user),
+    database: Session = Depends(get_database),
+) -> None:
+    try:
+        stock_mon.delete(database, user.id, monitor_id)
+    except stock_mon.StockMonitorError as exc:
+        raise _stock_http(exc) from exc
+    monitor = getattr(request.app.state, "user_strategy_monitor", None)
+    if monitor is not None:
+        monitor.notify_updated(request.app.state)
+
 
 
 @router.get("/stream")

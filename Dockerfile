@@ -1,11 +1,11 @@
-# 两阶段: 前端 dist 打进后端镜像, 单容器对外 3018。
+# 前端 dist + 手机端 dist 打进后端镜像, 单容器对外 3018。
 # 国内网络: --build-arg USE_CN_MIRROR=1 (默认开)
 ARG USE_CN_MIRROR=1
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG PYPI_FALLBACK=https://mirrors.aliyun.com/pypi/simple
 
-# === 前端 ===
+# === 电脑端 ===
 FROM node:22-alpine AS frontend
 ARG USE_CN_MIRROR=1
 ARG NPM_REGISTRY=https://registry.npmmirror.com
@@ -15,6 +15,19 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
+
+# === 手机端 ===
+FROM node:22-alpine AS mobile
+ARG USE_CN_MIRROR=1
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+WORKDIR /build/mobile
+RUN if [ "$USE_CN_MIRROR" = "1" ]; then npm config set registry "$NPM_REGISTRY"; fi
+COPY mobile/package.json mobile/package-lock.json ./
+RUN npm ci
+COPY frontend /build/frontend
+COPY mobile /build/mobile
+RUN npm run build
+
 
 # === 运行时 ===
 FROM python:3.11-slim AS runtime
@@ -47,6 +60,7 @@ RUN if [ "$USE_CN_MIRROR" = "1" ]; then \
 
 COPY tiers.yaml /app/tiers.yaml
 COPY --from=frontend /build/dist /app/static
+COPY --from=mobile /build/mobile/dist /app/static/m
 RUN mkdir -p /app/data
 
 ENV PATH="/app/.venv/bin:$PATH" \

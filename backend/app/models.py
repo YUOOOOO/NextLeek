@@ -43,6 +43,13 @@ class User(Base):
     factor_subscriptions: Mapped[list["FactorSubscription"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    stock_monitors: Mapped[list["StockMonitor"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    watchlist_items: Mapped[list["WatchlistItem"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
 
 
 
@@ -158,6 +165,48 @@ class StrategyWatch(Base):
 
     user: Mapped[User] = relationship(back_populates="strategy_watches")
     strategy: Mapped[Strategy] = relationship(back_populates="watches")
+
+
+class StockMonitor(Base):
+    __tablename__ = "stock_monitors"
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", "period", "signal", name="uq_stock_monitor"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    period: Mapped[str] = mapped_column(String(8), default="day")
+    signal: Mapped[str] = mapped_column(String(8), default="b2")
+    last_hit_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_eval_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="stock_monitors")
+
+
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_watchlist_item"),)
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="watchlist_items")
+
+
 
 
 class Factor(Base):

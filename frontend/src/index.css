@@ -1884,6 +1884,16 @@ select {
   min-width: 160px;
   border-right: 1px solid var(--ds-color-border-default);
 }
+.mon-watches .mon-col-head {
+  padding: 6px 8px;
+}
+.mon-watches .mon-filter {
+  width: 100%;
+}
+.mon-watches .mon-filter button {
+  flex: 1;
+}
+
 .mon-watch-list {
   flex: 1;
   min-height: 0;
@@ -2107,6 +2117,66 @@ select {
   font-size: 11px;
   color: var(--ds-color-text-placeholder);
 }
+.mon-section {
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  color: var(--ds-color-text-placeholder);
+}
+.mon-add {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 10px 10px;
+}
+.mon-add-input,
+.mon-add select {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--ds-color-border-default);
+  border-radius: 4px;
+  background: var(--ds-color-bg-container);
+  color: var(--ds-color-text-primary);
+  font-size: 12px;
+}
+.mon-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+}
+.mon-add-hits {
+  position: absolute;
+  z-index: 5;
+  top: 34px;
+  left: 10px;
+  right: 10px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--ds-color-border-default);
+  border-radius: 4px;
+  background: var(--ds-color-bg-container);
+}
+.mon-add-hits button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ds-color-text-primary);
+  font-size: 12px;
+  text-align: left;
+}
+.mon-add-hits button:hover {
+  background: var(--ds-color-bg-hover);
+}
+.mon-add-err {
+  color: #f87171;
+  font-size: 11px;
+}
+
 .mon-empty {
   padding: 20px 12px;
   text-align: center;
@@ -2193,6 +2263,34 @@ select {
   gap: 12px;
   padding: 14px 16px 8px;
 }
+
+.kline-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wl-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.wl-star.is-on {
+  color: #fbbf24;
+}
+.wl-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.wl-search {
+  padding: 10px 12px 8px;
+}
+.wl-search .mon-add-row {
+  grid-template-columns: auto;
+  justify-content: start;
+}
+
 
 .kline-title {
   font-size: 16px;

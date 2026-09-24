@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import { WatchlistToggle } from "./WatchlistToggle";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { klineDate, lastKline, num, resampleKline, resampleMinuteKline, trendFacts, trendTags, type KlineRow } from "../lib/kline";
@@ -166,9 +167,12 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
               {facts ? <span className="kline-facts">{facts}</span> : null}
             </div>
           </div>
-          <button className="btn-quiet" type="button" onClick={onClose} aria-label="关闭">
-            <X size={16} />
-          </button>
+          <div className="kline-head-actions">
+            <WatchlistToggle symbol={symbol} name={displayName} />
+            <button className="btn-quiet" type="button" onClick={onClose} aria-label="关闭">
+              <X size={16} />
+            </button>
+          </div>
         </header>
 
         <div className="kline-tags">

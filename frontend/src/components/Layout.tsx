@@ -8,10 +8,11 @@ import {
   Radio,
   ScanSearch,
   Settings,
+  Star,
   Sun,
   X,
   type LucideIcon,
- } from "lucide-react";
+} from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
@@ -27,6 +28,7 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
+  { to: "/watchlist", label: "自选", icon: Star },
   { to: "/strategies", label: "策略", icon: ScanSearch },
   { to: "/monitor", label: "监控", icon: Radio },
   { to: "/news", label: "新闻", icon: Newspaper },
@@ -113,7 +115,11 @@ export function Layout() {
     return <Navigate to="/login" replace />;
   }
 
-  const flushPage = location.pathname === "/strategies" || location.pathname === "/monitor" || location.pathname === "/news";
+  const flushPage =
+    location.pathname === "/strategies" ||
+    location.pathname === "/monitor" ||
+    location.pathname === "/news" ||
+    location.pathname === "/watchlist";
 
 
   const nav = (compact: boolean, onNavigate?: () => void) => (

@@ -14,6 +14,29 @@ const KIND_LABEL: Record<string, string> = {
   formula: "公式",
   conditions: "条件",
   composite: "叠加",
+  chanlun: "缠论",
+};
+
+const SIGNAL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "b1", label: "买1" },
+  { value: "b2", label: "买2" },
+  { value: "b3", label: "买3" },
+  { value: "s1", label: "卖1" },
+  { value: "s2", label: "卖2" },
+  { value: "s3", label: "卖3" },
+];
+
+const PERIOD_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "day", label: "日K" },
+  { value: "d5", label: "5日K" },
+];
+
+type BoardRow = MonitorRow & {
+  strategy: { id: string; name: string; kind: string };
+  hit?: boolean;
+  summary?: string;
+  signal_label?: string;
+  period_label?: string;
 };
 
 function num(v: number | null | undefined) {
@@ -41,6 +64,10 @@ function fmtTime(ts: number) {
   return new Date(ts).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+function stockKey(id: string) {
+  return `stock:${id}`;
+}
+
 function useMonitorStream() {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -50,7 +77,6 @@ function useMonitorStream() {
     };
     source.addEventListener("pool_updated", refresh);
     source.addEventListener("strategy_alert", refresh);
-    source.onerror = () => undefined;
     return () => source.close();
   }, [queryClient]);
 }
@@ -69,11 +95,24 @@ export function Monitor() {
   const [preview, setPreview] = useState<StockRef | null>(null);
   const [eventFilter, setEventFilter] = useState<"all" | "in" | "out">("all");
   const [selectedId, setSelectedId] = useState("all");
+  const [listTab, setListTab] = useState<"strategy" | "stock">(() =>
+    localStorage.getItem("nextleek_mon_list_tab") === "stock" ? "stock" : "strategy",
+  );
   const [feedOpen, setFeedOpen] = useState(false);
   const [sideOpen, setSideOpen] = useState(() => localStorage.getItem("nextleek_mon_ai_open") !== "0");
   const [sideWidth, setSideWidth] = useState(() => Number(localStorage.getItem("nextleek_mon_side_width") || 340));
   const sideDragging = useRef(false);
   const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [picked, setPicked] = useState<{ symbol: string; name: string } | null>(null);
+  const [period, setPeriod] = useState("day");
+  const [signal, setSignal] = useState("b2");
+  const search = useQuery({
+    queryKey: ["instruments", "search", query],
+    queryFn: () => api.searchInstruments(query),
+    enabled: query.trim().length >= 1,
+  });
+
   const stopWatch = useMutation({
     mutationFn: (id: string) => api.stopStrategyMonitor(id),
     onSuccess: () => {
@@ -81,11 +120,35 @@ export function Monitor() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.strategies(universe) });
     },
   });
+  const addStock = useMutation({
+    mutationFn: () => {
+      const target = picked ?? search.data?.results[0];
+      if (!target) throw new Error("先搜索并选择标的");
+      return api.createStockMonitor({
+        symbol: target.symbol,
+        name: target.name,
+        period,
+        signal,
+      });
+    },
+    onSuccess: () => {
+      setQuery("");
+      setPicked(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor(universe) });
+    },
+  });
+  const stopStock = useMutation({
+    mutationFn: (id: string) => api.deleteStockMonitor(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor(universe) });
+    },
+  });
+
   useEffect(() => {
     prevSymbols.current = new Map();
     setFlash({});
     setGhosts({});
-    setSelectedId("all");
+    setSelectedId(listTab === "stock" ? "stocks" : "all");
   }, [universe]);
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -112,15 +175,28 @@ export function Monitor() {
   }, []);
 
   const strategies = snapshot.data?.strategies ?? [];
+  const stockWatches = snapshot.data?.stock_watches ?? [];
   const events = snapshot.data?.events ?? [];
   const filteredEvents = useMemo(() => {
-    const scoped = selectedId === "all" ? events : events.filter((event) => event.strategy_id === selectedId);
-    if (eventFilter === "all") return scoped;
-    return scoped.filter((event) => {
+    const onStock = listTab === "stock" || selectedId === "stocks" || selectedId.startsWith("stock:");
+    const scoped = onStock
+      ? events.filter(
+          (event) =>
+            event.source === "stock_chanlun" ||
+            event.type === "signal_hit" ||
+            String(event.message || "").includes("缠论"),
+        )
+      : events.filter((event) => event.source !== "stock_chanlun" && event.type !== "signal_hit");
+    const narrowed =
+      selectedId === "all" || selectedId === "stocks"
+        ? scoped
+        : scoped.filter((event) => event.strategy_id === selectedId || stockKey(event.strategy_id || "") === selectedId);
+    if (eventFilter === "all") return narrowed;
+    return narrowed.filter((event) => {
       const leaving = event.type === "pool_exit" || event.message.includes("移出");
       return eventFilter === "out" ? leaving : !leaving;
     });
-  }, [events, eventFilter, selectedId]);
+  }, [events, eventFilter, listTab, selectedId]);
 
   useEffect(() => {
     if (!snapshot.data) return;
@@ -147,6 +223,17 @@ export function Monitor() {
       else if (leftover.length) nextGhosts[strategy.id] = leftover;
       else delete nextGhosts[strategy.id];
     }
+    const stockCurrent = new Set(stockWatches.filter((item) => item.hit).map((item) => item.id));
+    const stockPrev = prevSymbols.current.get("stocks");
+    nextPrev.set("stocks", stockCurrent);
+    if (stockPrev) {
+      for (const id of stockCurrent) {
+        if (!stockPrev.has(id)) nextFlash[stockKey(id)] = "in";
+      }
+      for (const id of stockPrev) {
+        if (!stockCurrent.has(id)) nextFlash[stockKey(id)] = "out";
+      }
+    }
     prevSymbols.current = nextPrev;
     if (Object.keys(nextFlash).length) {
       setFlash((prev) => ({ ...prev, ...nextFlash }));
@@ -168,7 +255,6 @@ export function Monitor() {
       }, 1200);
     }
     setGhosts(nextGhosts);
-    // ghosts is merged from previous render; omit from deps to avoid loop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot.data]);
 
@@ -184,21 +270,68 @@ export function Monitor() {
   }, [strategies, ghosts]);
 
   const selected = liveRows.find((item) => item.strategy.id === selectedId) ?? null;
+  const selectedStock =
+    selectedId.startsWith("stock:") ? stockWatches.find((item) => stockKey(item.id) === selectedId) ?? null : null;
+
+  const stockBoardRows = useMemo((): BoardRow[] => {
+    if (listTab !== "stock") return [];
+    const source = selectedStock ? [selectedStock] : stockWatches;
+    return source.map((item) => ({
+      symbol: item.symbol,
+      name: item.name,
+      close: item.close,
+      change_pct: item.change_pct,
+      hit: item.hit,
+      summary: item.summary,
+      signal_label: item.signal_label,
+      period_label: item.period_label,
+      strategy: {
+        id: stockKey(item.id),
+        name: `${item.signal_label} · ${item.period_label}`,
+        kind: "chanlun",
+      },
+    }));
+  }, [listTab, selectedStock, stockWatches]);
+
   const boardRows = useMemo(() => {
-    const source = selectedId === "all" || !selected ? liveRows : [selected];
-    const rows = source.flatMap(({ strategy, rows }) => rows.map((row) => ({ ...row, strategy })));
-    rows.sort((a, b) => (num(b.change_pct) ?? -Infinity) - (num(a.change_pct) ?? -Infinity));
+    const strategyRows: BoardRow[] =
+      listTab !== "strategy"
+        ? []
+        : (selectedId === "all" || !selected ? liveRows : [selected]).flatMap(({ strategy, rows }) =>
+            rows.map((row) => ({ ...row, strategy })),
+          );
+    const rows = [...strategyRows, ...stockBoardRows];
+    rows.sort((a, b) => {
+      const hitDelta = Number(Boolean(b.hit)) - Number(Boolean(a.hit));
+      if (hitDelta) return hitDelta;
+      return (num(b.change_pct) ?? -Infinity) - (num(a.change_pct) ?? -Infinity);
+    });
     return rows;
-  }, [liveRows, selected, selectedId]);
+  }, [listTab, liveRows, selected, selectedId, stockBoardRows]);
 
   useEffect(() => {
-    if (selectedId !== "all" && !liveRows.some((item) => item.strategy.id === selectedId)) {
-      setSelectedId("all");
+    if (listTab === "stock") {
+      if (selectedId === "stocks") return;
+      if (!selectedId.startsWith("stock:") || !stockWatches.some((item) => stockKey(item.id) === selectedId)) {
+        setSelectedId("stocks");
+      }
+      return;
     }
-  }, [liveRows, selectedId]);
+    if (selectedId === "all") return;
+    if (!liveRows.some((item) => item.strategy.id === selectedId)) setSelectedId("all");
+  }, [listTab, liveRows, selectedId, stockWatches]);
 
   const data = snapshot.data;
-  const emptyWatches = !data || data.watch_count === 0;
+  const emptyWatches = listTab === "stock" ? stockWatches.length === 0 : liveRows.length === 0;
+  const stockHits = stockWatches.filter((item) => item.hit).length;
+  const canAdd = Boolean(picked || search.data?.results[0]);
+  const showRuleCol = selectedId === "all" || selectedId === "stocks";
+  const switchListTab = (tab: "strategy" | "stock") => {
+    setListTab(tab);
+    localStorage.setItem("nextleek_mon_list_tab", tab);
+    setSelectedId(tab === "stock" ? "stocks" : "all");
+  };
+
 
   return (
     <AiChatProvider workspace="monitor" intro={MONITOR_INTRO}>
@@ -214,7 +347,10 @@ export function Monitor() {
               行情日<b>{data?.as_of ?? "—"}</b>
             </span>
             <span className="mon-toolbar-stat">
-              策略<b>{data?.watch_count ?? 0}</b>
+              策略<b>{strategies.length}</b>
+            </span>
+            <span className="mon-toolbar-stat">
+              个股<b>{stockWatches.length}</b>
             </span>
             <span className="mon-toolbar-stat">
               命中<b>{data?.hit_count ?? 0}</b>
@@ -237,38 +373,155 @@ export function Monitor() {
           ) : (
             <div className="mon-split">
               <aside className="mon-watches">
-                <div className="mon-col-head">监控中</div>
-                <div className="mon-watch-list">
-                  <button type="button" className={`ide-row${selectedId === "all" ? " is-on" : ""}`} onClick={() => setSelectedId("all")}>
-                    <div className="ide-row-top">
-                      <span className="ide-row-name">全部</span>
-                      <span className="mon-watch-count">{data?.hit_count ?? 0}</span>
-                    </div>
-                    <div className="mon-pool-meta">{data?.watch_count ?? 0} 个策略</div>
-                  </button>
-                  {liveRows.map(({ strategy, rows }) => (
+                <div className="mon-col-head">
+                  <div className="mon-filter" role="tablist">
                     <button
-                      key={strategy.id}
                       type="button"
-                      className={`ide-row${selectedId === strategy.id ? " is-on" : ""}`}
-                      onClick={() => setSelectedId(strategy.id)}
+                      className={listTab === "strategy" ? "is-on" : ""}
+                      onClick={() => switchListTab("strategy")}
                     >
-                      <div className="ide-row-top">
-                        <span className="ide-row-name">{strategy.name}</span>
-                        <span className="mon-watch-count">{rows.length}</span>
-                      </div>
-                      <div className="mon-pool-meta">{KIND_LABEL[strategy.kind] || strategy.kind}</div>
+                      策略
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      className={listTab === "stock" ? "is-on" : ""}
+                      onClick={() => switchListTab("stock")}
+                    >
+                      个股
+                    </button>
+                  </div>
+                </div>
+                <div className="mon-watch-list">
+                  {listTab === "strategy" ? (
+                    <>
+                      <button type="button" className={`ide-row${selectedId === "all" ? " is-on" : ""}`} onClick={() => setSelectedId("all")}>
+                        <div className="ide-row-top">
+                          <span className="ide-row-name">全部</span>
+                          <span className="mon-watch-count">{liveRows.reduce((n, item) => n + item.rows.length, 0)}</span>
+                        </div>
+                        <div className="mon-pool-meta">{liveRows.length} 个策略</div>
+                      </button>
+                      {liveRows.map(({ strategy, rows }) => (
+                        <button
+                          key={strategy.id}
+                          type="button"
+                          className={`ide-row${selectedId === strategy.id ? " is-on" : ""}`}
+                          onClick={() => setSelectedId(strategy.id)}
+                        >
+                          <div className="ide-row-top">
+                            <span className="ide-row-name">{strategy.name}</span>
+                            <span className="mon-watch-count">{rows.length}</span>
+                          </div>
+                          <div className="mon-pool-meta">{KIND_LABEL[strategy.kind] || strategy.kind}</div>
+                        </button>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      <div className="mon-section">缠论</div>
+                      <div className="mon-add">
+                        <input
+                          className="mon-add-input"
+                          value={picked ? `${picked.name} ${picked.symbol}` : query}
+                          placeholder="代码 / 名称 / 拼音"
+                          onChange={(event) => {
+                            setPicked(null);
+                            setQuery(event.target.value);
+                          }}
+                        />
+                        {query.trim() && !picked && (search.data?.results.length ?? 0) > 0 ? (
+                          <div className="mon-add-hits">
+                            {search.data?.results.map((item) => (
+                              <button
+                                key={item.symbol}
+                                type="button"
+                                onClick={() => {
+                                  setPicked({ symbol: item.symbol, name: item.name });
+                                  setQuery("");
+                                }}
+                              >
+                                <span>{item.name}</span>
+                                <span className="mon-sym-code">{item.symbol}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="mon-add-row">
+                          <select value={period} onChange={(event) => setPeriod(event.target.value)}>
+                            {PERIOD_OPTIONS.map((item) => (
+                              <option key={item.value} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                          <select value={signal} onChange={(event) => setSignal(event.target.value)}>
+                            {SIGNAL_OPTIONS.map((item) => (
+                              <option key={item.value} value={item.value}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={!canAdd || addStock.isPending}
+                            onClick={() => addStock.mutate()}
+                          >
+                            添加
+                          </button>
+                        </div>
+                        {addStock.error ? <div className="mon-add-err">{(addStock.error as Error).message}</div> : null}
+                      </div>
+                      <button
+                        type="button"
+                        className={`ide-row${selectedId === "stocks" ? " is-on" : ""}`}
+                        onClick={() => setSelectedId("stocks")}
+                      >
+                        <div className="ide-row-top">
+                          <span className="ide-row-name">全部</span>
+                          <span className="mon-watch-count">{stockHits}</span>
+                        </div>
+                        <div className="mon-pool-meta">{stockWatches.length} 条缠论</div>
+                      </button>
+                      {stockWatches.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`ide-row${selectedId === stockKey(item.id) ? " is-on" : ""}`}
+                          onClick={() => setSelectedId(stockKey(item.id))}
+                        >
+                          <div className="ide-row-top">
+                            <span className="ide-row-name">{item.name}</span>
+                            <span className="mon-watch-count">{item.hit ? "中" : "等"}</span>
+                          </div>
+                          <div className="mon-pool-meta">
+                            {item.signal_label} · {item.period_label}
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               </aside>
               <section className="mon-board">
                 <div className="mon-col-head">
-                  <span>{selected ? selected.strategy.name : "当前命中"}</span>
+                  <span>
+                    {selected
+                      ? selected.strategy.name
+                      : selectedStock
+                        ? `${selectedStock.name} ${selectedStock.signal_label}`
+                        : selectedId === "stocks"
+                          ? "个股缠论"
+                          : "当前命中"}
+                  </span>
                   <span className="mon-col-count">{boardRows.length} 只</span>
                   <div className="mon-pool-actions">
                     {selected ? (
                       <button type="button" className="btn-quiet" disabled={stopWatch.isPending} onClick={() => stopWatch.mutate(selected.strategy.id)}>
+                        取消监控
+                      </button>
+                    ) : selectedStock ? (
+                      <button type="button" className="btn-quiet" disabled={stopStock.isPending} onClick={() => stopStock.mutate(selectedStock.id)}>
                         取消监控
                       </button>
                     ) : null}
@@ -278,7 +531,11 @@ export function Monitor() {
                   </div>
                 </div>
                 {emptyWatches ? (
-                  <div className="mon-empty">还没有监控。右侧从已有策略创建单条或叠加。</div>
+                  <div className="mon-empty">
+                    {listTab === "stock"
+                      ? "还没有个股缠论监控。左侧搜索标的添加买卖点。"
+                      : "还没有策略监控。右侧从已有策略创建。"}
+                  </div>
                 ) : boardRows.length === 0 ? (
                   <div className="mon-empty">等待命中</div>
                 ) : (
@@ -287,7 +544,7 @@ export function Monitor() {
                       <thead>
                         <tr>
                           <th>标的</th>
-                          {selectedId === "all" ? <th>策略</th> : null}
+                          {showRuleCol ? <th>{listTab === "stock" ? "规则" : "策略"}</th> : null}
                           <th>信号</th>
                           <th className="text-right">现价</th>
                           <th className="text-right">涨跌</th>
@@ -295,7 +552,7 @@ export function Monitor() {
                       </thead>
                       <tbody>
                         {boardRows.map((row) => {
-                          const mark = flash[`${row.strategy.id}:${row.symbol}`];
+                          const mark = flash[`${row.strategy.id}:${row.symbol}`] ?? flash[row.strategy.id];
                           const tags = trendTags(row, snapshot.data?.custom_tags);
                           return (
                             <tr
@@ -307,15 +564,20 @@ export function Monitor() {
                                 <div className="mon-sym-name">{row.name || row.symbol}</div>
                                 <div className="mon-sym-code">{row.symbol}</div>
                               </td>
-                              {selectedId === "all" ? <td className="mon-sym-code">{row.strategy.name}</td> : null}
+                              {showRuleCol ? <td className="mon-sym-code">{row.strategy.name}</td> : null}
                               <td>
                                 <div className="kline-tags mon-tags">
-                                  {tags.length === 0 ? <span className="mon-sym-code">—</span> : null}
+                                  {row.signal_label ? (
+                                    <span className={`kline-tag ${row.hit ? "is-bull" : "is-neutral"}`}>
+                                      {row.hit ? `出现${row.signal_label}` : `等待${row.signal_label}`}
+                                    </span>
+                                  ) : null}
                                   {tags.map((tag) => (
                                     <span key={tag.id} className={`kline-tag is-${tag.tone}`}>
                                       {tag.label}
                                     </span>
                                   ))}
+                                  {!row.signal_label && tags.length === 0 ? <span className="mon-sym-code">—</span> : null}
                                 </div>
                               </td>
                               <td className="text-right font-mono">{fmtPrice(row.close)}</td>
@@ -415,4 +677,3 @@ export function Monitor() {
     </AiChatProvider>
   );
 }
-

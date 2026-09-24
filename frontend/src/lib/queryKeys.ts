@@ -18,6 +18,8 @@ export const queryKeys = {
   factors: (assetType: AssetType) => ["factors", assetType] as const,
   factorOptions: ["factors", "options"] as const,
   monitor: (assetType: AssetType) => ["monitor", assetType] as const,
+  watchlist: ["watchlist"] as const,
+
   displaySignals: (assetType: AssetType) => ["display-signals", assetType] as const,
   news: (source: string, q: string, symbol: string) => ["news", source, q, symbol] as const,
   newsMembers: (kind: string, name: string) => ["news", "members", kind, name] as const,

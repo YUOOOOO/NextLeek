@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-
 from app import __version__, auth as auth_service
 from app.api.auth import router as auth_router
 from app.api.data import router as data_router
@@ -27,6 +27,7 @@ from app.api.monitor import router as monitor_router
 from app.api.news import router as news_router
 from app.api.signals import router as signals_router
 from app.api.users import router as users_router
+from app.api.watchlist import router as watchlist_router
 from app.config import get_settings
 from app.db import create_database_engine, create_session_factory, init_database, session_scope
 from app.tickflow.capabilities import CapabilityDenied
@@ -281,16 +282,55 @@ app.include_router(signals_router)
 app.include_router(news_router)
 app.include_router(ext_data_router)
 app.include_router(ai_router)
+app.include_router(watchlist_router)
+
+_MOBILE_UA = re.compile(
+    r"Android|webOS|iPhone|iPod|iPad|BlackBerry|IEMobile|Opera Mini|Mobile",
+    re.I,
+)
 
 _static = Path(settings.static_dir)
 if _static.exists():
     assets = _static / "assets"
     if assets.exists():
         app.mount("/assets", StaticFiles(directory=assets), name="assets")
+    mobile_assets = _static / "m" / "assets"
+    if mobile_assets.exists():
+        app.mount("/m/assets", StaticFiles(directory=mobile_assets), name="mobile-assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    def spa_fallback(full_path: str):
+    def spa_fallback(request: Request, full_path: str):
         root = _static.resolve()
+        mobile_root = (root / "m").resolve()
+        ua = request.headers.get("user-agent") or ""
+        is_mobile = bool(_MOBILE_UA.search(ua))
+        wants_mobile = full_path == "m" or full_path.startswith("m/")
+        if is_mobile and not wants_mobile:
+            rest = full_path.strip("/")
+            if rest in {"", "strategies"}:
+                rest = "watchlist"
+            return RedirectResponse(f"/m/{rest}", status_code=302)
+        if not is_mobile and wants_mobile:
+            rest = full_path[1:].lstrip("/") if full_path.startswith("m") else full_path
+            rest = rest[1:].lstrip("/") if rest.startswith("/") else rest
+            if rest.startswith("m/"):
+                rest = rest[2:]
+            elif rest == "m":
+                rest = ""
+            dest = f"/{rest}" if rest else "/watchlist"
+            if dest == "/":
+                dest = "/watchlist"
+            return RedirectResponse(dest, status_code=302)
+        if wants_mobile:
+            rel = full_path[2:] if full_path.startswith("m/") else ""
+            if rel:
+                candidate = (mobile_root / rel).resolve()
+                if candidate.is_file() and (candidate == mobile_root or mobile_root in candidate.parents):
+                    return FileResponse(candidate)
+            index = mobile_root / "index.html"
+            if index.exists():
+                return FileResponse(index, headers={"Cache-Control": "no-store, must-revalidate"})
+            return JSONResponse({"error": "mobile frontend not built"}, status_code=404)
         if full_path:
             candidate = (root / full_path).resolve()
             if candidate.is_file() and (candidate == root or root in candidate.parents):

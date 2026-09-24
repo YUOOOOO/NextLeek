@@ -19,10 +19,15 @@ BACKEND_PID=$!
 
 if command -v pnpm >/dev/null 2>&1; then
   (cd frontend && pnpm install && pnpm dev) &
+  FRONTEND_PID=$!
+  (cd mobile && pnpm install && pnpm dev) &
+  MOBILE_PID=$!
 else
   (cd frontend && npm install && npm run dev) &
+  FRONTEND_PID=$!
+  (cd mobile && npm install && npm run dev) &
+  MOBILE_PID=$!
 fi
-FRONTEND_PID=$!
 
-trap 'kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true' EXIT INT TERM
+trap 'kill "$BACKEND_PID" "$FRONTEND_PID" "$MOBILE_PID" 2>/dev/null || true' EXIT INT TERM
 wait
