@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { lastKline, num, trendFacts, trendTags, type KlineRow } from "../lib/kline";
+import { useUniverse } from "../lib/universe";
 import { DailyKChart } from "./DailyKChart";
 
 export type StockRef = { symbol: string; name?: string | null };
@@ -33,14 +34,23 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
     queryKey: queryKeys.klineDaily(symbol),
     queryFn: () => api.klineDaily(symbol, 250),
   });
+  const { universe } = useUniverse();
+  useEffect(() => {
+    if (universe !== "stock") setTab("kline");
+  }, [universe]);
   const finStatus = useQuery({
     queryKey: queryKeys.financialStatus,
     queryFn: api.financialStatus,
+    enabled: universe === "stock",
   });
   const metrics = useQuery({
     queryKey: queryKeys.financialMetrics(symbol),
     queryFn: () => api.financialMetrics(symbol),
-    enabled: finStatus.data?.available === true,
+    enabled: universe === "stock" && finStatus.data?.available === true,
+  });
+  const signals = useQuery({
+    queryKey: queryKeys.displaySignals(universe),
+    queryFn: () => api.listDisplaySignals(universe),
   });
 
   useEffect(() => {
@@ -53,7 +63,19 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
 
   const rows = (kline.data?.rows ?? []) as KlineRow[];
   const last = lastKline(rows);
-  const tags = useMemo(() => trendTags(last), [last]);
+  const extras = useMemo(
+    () =>
+      (signals.data?.custom ?? [])
+        .filter((item) => item.enabled && item.field)
+        .map((item) => ({
+          id: item.id,
+          label: item.name,
+          field: item.field as string,
+          tone: item.tone,
+        })),
+    [signals.data?.custom],
+  );
+  const tags = useMemo(() => trendTags(last, extras), [extras, last]);
   const facts = trendFacts(last);
   const displayName = name || kline.data?.name || kline.data?.stock_info?.name || symbol;
   const close = num(last?.close);
@@ -104,9 +126,11 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
           <button type="button" className={tab === "kline" ? "is-on" : ""} onClick={() => setTab("kline")}>
             日K
           </button>
-          <button type="button" className={tab === "finance" ? "is-on" : ""} onClick={() => setTab("finance")}>
-            财务
-          </button>
+          {universe === "stock" ? (
+            <button type="button" className={tab === "finance" ? "is-on" : ""} onClick={() => setTab("finance")}>
+              财务
+            </button>
+          ) : null}
         </div>
 
         {tab === "kline" ? (
@@ -117,7 +141,7 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
             {rows.length > 0 ? <DailyKChart rows={rows} /> : null}
             <p className="kline-note">走势标签只打最后一根日K实算命中。分时无本地分钟K，不画。暂无 AI 个股分析。</p>
           </div>
-        ) : (
+        ) : universe === "stock" ? (
           <div className="kline-pane">
             {financeBlocked ? <div className="kline-empty">无财务权限，本地也没有财务数据</div> : null}
             {!financeBlocked && metrics.isLoading ? <div className="kline-empty">读取财务…</div> : null}
@@ -136,7 +160,7 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
               </div>
             ) : null}
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   );

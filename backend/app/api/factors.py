@@ -79,8 +79,7 @@ def mine_factors(
 ) -> dict:
     from app.services.screener import ScreenerService
 
-    repo = request.app.state.repo
-    screener = ScreenerService(repo)
+    screener = ScreenerService(request.app.state.repo)
     as_of = screener.latest_date()
     if as_of is None:
         return {"ok": False, "warning": "本地暂无行情", "items": []}
@@ -91,8 +90,9 @@ def mine_factors(
 def list_factors(
     user: User = Depends(require_user),
     database: Session = Depends(get_database),
+    asset_type: str = "stock",
 ) -> FactorCatalog:
-    return FactorCatalog.model_validate(svc.list_catalog(database, user.id))
+    return FactorCatalog.model_validate(svc.list_catalog(database, user.id, asset_type=asset_type))
 
 
 @router.post("", response_model=FactorRead, status_code=status.HTTP_201_CREATED)
@@ -110,6 +110,7 @@ def create_factor(
             code=payload.code,
             description=payload.description,
             direction=payload.direction,
+            asset_type=payload.asset_type,
         )
     except svc.FactorError as exc:
         raise _http(exc) from exc
@@ -252,13 +253,12 @@ def research_factor(
         raise _http(exc) from exc
     from app.services.screener import ScreenerService
 
-    repo = request.app.state.repo
-    screener = ScreenerService(repo)
+    screener = ScreenerService(request.app.state.repo, asset_type=getattr(factor, "asset_type", "stock") or "stock")
     as_of = screener.latest_date()
     if as_of is None:
         return {"ok": False, "warning": "本地暂无行情"}
     spec = svc.spec_for_run(database, factor, user.id)
-    extra = svc.specs_for_user(database, user.id)
+    extra = svc.specs_for_user(database, user.id, asset_type=getattr(factor, "asset_type", "stock") or "stock")
     return formula_research.research_factor(
         screener,
         as_of,

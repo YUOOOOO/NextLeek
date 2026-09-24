@@ -21,6 +21,13 @@ export type TrendTag = {
   tone: "bull" | "bear" | "neutral";
 };
 
+export type ExtraTagSpec = {
+  id: string;
+  label: string;
+  field: string;
+  tone: TrendTag["tone"];
+};
+
 export function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -41,7 +48,7 @@ export function lastKline(rows: KlineRow[] | undefined): KlineRow | undefined {
   return rows[rows.length - 1];
 }
 
-export function trendTags(row: KlineRow | undefined): TrendTag[] {
+export function trendTags(row: KlineRow | undefined, extras: ExtraTagSpec[] = []): TrendTag[] {
   if (!row) return [];
   const tags: TrendTag[] = [];
   const close = num(row.close);
@@ -73,6 +80,10 @@ export function trendTags(row: KlineRow | undefined): TrendTag[] {
   if (flagged(row, "signal_ma_dead_5_20")) tags.push({ id: "ma-d", label: "MA5下穿MA20", tone: "bear" });
   if (flagged(row, "signal_n_day_high")) tags.push({ id: "nh", label: "阶段新高", tone: "bull" });
   if (flagged(row, "signal_n_day_low")) tags.push({ id: "nl", label: "阶段新低", tone: "bear" });
+  for (const extra of extras) {
+    if (!extra.field || extra.id === extra.field) continue;
+    if (flagged(row, extra.field)) tags.push({ id: extra.id, label: extra.label, tone: extra.tone });
+  }
   return tags;
 }
 

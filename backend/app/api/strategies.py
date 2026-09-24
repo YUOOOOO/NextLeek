@@ -60,6 +60,12 @@ def _read(strategy, *, user_id: str, database, view: str | None = None) -> Strat
     )
 
 
+def _screener(request: Request, asset_type: str = "stock"):
+    from app.services.screener import ScreenerService
+
+    return ScreenerService(request.app.state.repo, asset_type=asset_type)
+
+
 @router.get("/options")
 def options(_: User = Depends(require_user)) -> dict:
     return svc.field_options()
@@ -105,9 +111,8 @@ def mine_strategies(
     _: User = Depends(require_user),
 ) -> dict:
     from app.services import formula_research
-    from app.services.screener import ScreenerService
 
-    screener = ScreenerService(request.app.state.repo)
+    screener = _screener(request)
     as_of = screener.latest_date()
     if as_of is None:
         return {"ok": False, "warning": "本地暂无行情", "items": []}
@@ -118,8 +123,9 @@ def mine_strategies(
 def list_strategies(
     user: User = Depends(require_user),
     database: Session = Depends(get_database),
+    asset_type: str = "stock",
 ) -> StrategyCatalog:
-    return StrategyCatalog.model_validate(svc.list_catalog(database, user.id))
+    return StrategyCatalog.model_validate(svc.list_catalog(database, user.id, asset_type=asset_type))
 
 
 @router.post("", response_model=StrategyRead, status_code=status.HTTP_201_CREATED)
@@ -136,6 +142,7 @@ def create_strategy(
             payload.description,
             payload.conditions,
             kind=payload.kind,
+            asset_type=payload.asset_type,
             formula=payload.formula,
             children=payload.children,
             merge_mode=payload.merge_mode,
@@ -327,11 +334,10 @@ def run_strategy(
     except svc.StrategyError as exc:
         raise _http(exc) from exc
 
-    from app.services.screener import ScreenerService
     from app.services.strategy_runtime import execute_spec
 
-    repo = request.app.state.repo
-    screener = ScreenerService(repo)
+    spec = svc.spec_for_run(database, strategy, user.id)
+    screener = _screener(request, spec.get("asset_type") or getattr(strategy, "asset_type", "stock"))
     as_of = screener.latest_date()
     if as_of is None:
         return StrategyRunResult(
@@ -343,7 +349,6 @@ def run_strategy(
             warnings=["本地暂无 enriched 数据，请先在数据页同步日K并计算指标"],
         )
     warnings = screener.coverage_warnings(as_of)
-    spec = svc.spec_for_run(database, strategy, user.id)
     result = execute_spec(screener, as_of, spec)
     return StrategyRunResult(
         as_of=as_of.isoformat(),
@@ -369,13 +374,12 @@ def research_strategy(
     except svc.StrategyError as exc:
         raise _http(exc) from exc
     from app.services import formula_research
-    from app.services.screener import ScreenerService
 
-    screener = ScreenerService(request.app.state.repo)
+    spec = svc.spec_for_run(database, strategy, user.id)
+    screener = _screener(request, spec.get("asset_type") or getattr(strategy, "asset_type", "stock"))
     as_of = screener.latest_date()
     if as_of is None:
         return {"ok": False, "warning": "本地暂无行情"}
-    spec = svc.spec_for_run(database, strategy, user.id)
     kind = spec.get("kind") or "conditions"
     extra = spec.get("_extra_specs") or {}
     if kind == "formula":

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import polars as pl
+
+from app.api.monitor import _overlay_quotes, _tag_map
 from app.services.user_strategy_monitor import UserStrategyMonitor
 
 
@@ -9,11 +12,24 @@ def test_apply_result_enters_and_exits() -> None:
         "user-1",
         "stg-1",
         "冲高",
-        [{"symbol": "000001.SZ", "name": "平安银行", "close": 10.2, "change_pct": 0.02}],
+        [
+            {
+                "symbol": "000001.SZ",
+                "name": "平安银行",
+                "close": 10.2,
+                "change_pct": 0.02,
+                "ma20": 9.8,
+                "vol_ratio_5d": 8.7,
+                "signal_volume_surge": True,
+            }
+        ],
     )
     assert first == []
     pool = monitor.pools_for_user("user-1")["stg-1"]
     assert pool[0]["symbol"] == "000001.SZ"
+    assert pool[0]["ma20"] == 9.8
+    assert pool[0]["vol_ratio_5d"] == 8.7
+    assert pool[0]["signal_volume_surge"] is True
     assert monitor.pools_for_user("user-2") == {}
 
     events = monitor.apply_result(
@@ -49,3 +65,26 @@ def test_drop_pool_clears_user_strategy() -> None:
     remaining = monitor.pools_for_user("user-1")
     assert "stg-1" not in remaining
     assert [row["symbol"] for row in remaining["stg-2"]] == ["000002.SZ"]
+
+
+def test_overlay_copies_enriched_tags_then_live_quote() -> None:
+    frame = pl.DataFrame(
+        {
+            "symbol": ["000001.SZ"],
+            "ma20": [9.8],
+            "vol_ratio_5d": [8.7],
+            "signal_ma20_breakout": [True],
+            "signal_volume_surge": [True],
+        }
+    )
+    rows = _overlay_quotes(
+        [{"symbol": "000001.SZ", "name": "平安", "close": 10.0, "change_pct": 0.01}],
+        {"000001.SZ": {"close": 10.5, "change_pct": 0.03, "name": "平安银行"}},
+        _tag_map(frame),
+    )
+    assert rows[0]["name"] == "平安银行"
+    assert rows[0]["close"] == 10.5
+    assert rows[0]["ma20"] == 9.8
+    assert rows[0]["vol_ratio_5d"] == 8.7
+    assert rows[0]["signal_ma20_breakout"] is True
+    assert rows[0]["signal_volume_surge"] is True

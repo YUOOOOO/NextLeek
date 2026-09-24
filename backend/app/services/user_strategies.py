@@ -57,6 +57,13 @@ def normalize_kind(value: str | None) -> str:
     return kind
 
 
+def normalize_asset_type(value: str | None) -> str:
+    asset_type = (value or "stock").strip().lower()
+    if asset_type not in {"stock", "etf"}:
+        raise StrategyError("invalid", "资产类型只能是股票或ETF")
+    return asset_type
+
+
 def normalize_formula(formula: str | None, *, extra: list[str] | None = None) -> str:
     text = (formula or "").strip()
     if not text:
@@ -70,10 +77,11 @@ def normalize_formula(formula: str | None, *, extra: list[str] | None = None) ->
     return text
 
 
-def _factor_codes(database: Session, user_id: str) -> list[str]:
+def _factor_codes(database: Session, user_id: str, asset_type: str = "stock") -> list[str]:
     from app.services import user_factors
 
-    return list(user_factors.specs_for_user(database, user_id))
+    return list(user_factors.specs_for_user(database, user_id, asset_type=asset_type))
+
 
 def normalize_merge_mode(value: str | None) -> str:
     mode = (value or "union").strip()
@@ -82,7 +90,7 @@ def normalize_merge_mode(value: str | None) -> str:
     return mode
 
 
-def normalize_children(database: Session, owner_id: str, raw: list[Any] | None) -> list[dict]:
+def normalize_children(database: Session, owner_id: str, raw: list[Any] | None, *, asset_type: str = "stock") -> list[dict]:
     items = raw or []
     if len(items) < 2:
         raise StrategyError("invalid", "叠加至少选择 2 个策略")
@@ -101,6 +109,8 @@ def normalize_children(database: Session, owner_id: str, raw: list[Any] | None) 
             raise StrategyError("invalid", "不能叠加另一个叠加策略")
         if child.owner_id != owner_id and child.status != "published":
             raise StrategyError("forbidden", "只能叠加自己的或已发布的策略")
+        if normalize_asset_type(getattr(child, "asset_type", None)) != asset_type:
+            raise StrategyError("invalid", "叠加子策略必须是同一资产类型")
         weight = float(data.get("weight") or 1)
         if weight < 0:
             raise StrategyError("invalid", "权重必须大于等于 0")
@@ -147,6 +157,7 @@ def serialize(
         "name": source.get("name") or strategy.name,
         "description": source.get("description") if "description" in source else (strategy.description or ""),
         "status": strategy.status,
+        "asset_type": normalize_asset_type(getattr(strategy, "asset_type", None)),
         "kind": _canonical_kind(source.get("kind"), source.get("formula") or ""),
         "formula": source.get("formula") or "",
         "conditions": source.get("conditions") or [],
@@ -234,6 +245,7 @@ def working_payload(strategy: Strategy) -> dict:
         "name": strategy.name,
         "description": strategy.description or "",
         "kind": strategy.kind or "conditions",
+        "asset_type": normalize_asset_type(getattr(strategy, "asset_type", None)),
         "formula": strategy.formula or "",
         "conditions": strategy.conditions or [],
         "children": [
@@ -316,7 +328,8 @@ def spec_for_run(database: Session, strategy: Strategy, user_id: str) -> dict:
     from app.services import user_factors
 
     payload = dict(payload)
-    payload["_extra_specs"] = user_factors.specs_for_user(database, user_id)
+    payload.setdefault("asset_type", normalize_asset_type(getattr(strategy, "asset_type", None)))
+    payload["_extra_specs"] = user_factors.specs_for_user(database, user_id, asset_type=payload["asset_type"])
     return payload
 
 
@@ -332,8 +345,17 @@ def _subscription(database: Session, user_id: str, strategy_id: str) -> Strategy
 ALLOWED_BOARDS = ["沪主板", "深主板", "创业板", "科创板", "北交所"]
 
 
-def normalize_basic_filter(raw: Any) -> dict:
+def normalize_basic_filter(raw: Any, asset_type: str = "stock") -> dict:
     data = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw or {})
+    if asset_type == "etf":
+        return {
+            "price_min": data.get("price_min"),
+            "price_max": data.get("price_max"),
+            "market_cap_min": data.get("market_cap_min"),
+            "amount_min": data.get("amount_min"),
+            "exclude_st": bool(data.get("exclude_st", False)),
+            "boards": [],
+        }
     boards = [board for board in (data.get("boards") or []) if board in ALLOWED_BOARDS]
     return {
         "price_min": data.get("price_min"),
@@ -378,6 +400,7 @@ def create_strategy(
     conditions: list[Any],
     *,
     kind: str = "conditions",
+    asset_type: str = "stock",
     formula: str = "",
     children: list[Any] | None = None,
     merge_mode: str = "union",
@@ -388,10 +411,12 @@ def create_strategy(
     limit: int = 100,
 ) -> Strategy:
     kind = normalize_kind(kind)
-    child_refs = normalize_children(database, owner.id, children) if kind == "composite" else []
+    asset_type = normalize_asset_type(asset_type)
+    child_refs = normalize_children(database, owner.id, children, asset_type=asset_type) if kind == "composite" else []
     body = normalize_conditions(conditions) if kind == "conditions" else []
+    extra = _factor_codes(database, owner.id, asset_type)
     formula_text = (
-        normalize_formula(formula, extra=_factor_codes(database, owner.id))
+        normalize_formula(formula, extra=extra)
         if kind == "formula"
         else (formula or "")
     )
@@ -402,13 +427,14 @@ def create_strategy(
         name=name,
         description=description,
         status="draft",
+        asset_type=asset_type,
         kind=kind,
         formula=formula_text,
         conditions=body,
         children=child_refs,
         merge_mode=normalize_merge_mode(merge_mode),
         min_confirm=min_confirm,
-        basic_filter=normalize_basic_filter(basic_filter),
+        basic_filter=normalize_basic_filter(basic_filter, asset_type),
         order_by=normalize_order_by(order_by),
         descending=descending,
         result_limit=limit,
@@ -450,7 +476,7 @@ def update_strategy(
     next_kind = strategy.kind or "conditions"
     if children is not None:
         strategy.children = (
-            normalize_children(database, strategy.owner_id, children)
+            normalize_children(database, strategy.owner_id, children, asset_type=normalize_asset_type(getattr(strategy, "asset_type", None)))
             if next_kind == "composite"
             else []
         )
@@ -459,7 +485,7 @@ def update_strategy(
     if min_confirm is not None:
         strategy.min_confirm = min_confirm
     if basic_filter is not None:
-        strategy.basic_filter = normalize_basic_filter(basic_filter)
+        strategy.basic_filter = normalize_basic_filter(basic_filter, normalize_asset_type(getattr(strategy, "asset_type", None)))
     if order_by is not None:
         strategy.order_by = normalize_order_by(order_by)
     if descending is not None:
@@ -470,7 +496,7 @@ def update_strategy(
         if len(strategy.children or []) < 2:
             raise StrategyError("invalid", "叠加至少选择 2 个策略")
     elif next_kind == "formula":
-        strategy.formula = normalize_formula(strategy.formula, extra=_factor_codes(database, strategy.owner_id))
+        strategy.formula = normalize_formula(strategy.formula, extra=_factor_codes(database, strategy.owner_id, normalize_asset_type(getattr(strategy, "asset_type", None))))
         strategy.conditions = []
     else:
         strategy.conditions = normalize_conditions(strategy.conditions or [])
@@ -489,7 +515,7 @@ def publish_strategy(database: Session, strategy: Strategy) -> Strategy:
         if len(strategy.children or []) < 2:
             raise StrategyError("invalid", "发布前叠加至少选择 2 个策略")
     elif kind == "formula":
-        strategy.formula = normalize_formula(strategy.formula, extra=_factor_codes(database, strategy.owner_id))
+        strategy.formula = normalize_formula(strategy.formula, extra=_factor_codes(database, strategy.owner_id, normalize_asset_type(getattr(strategy, "asset_type", None))))
     elif not strategy.conditions:
         raise StrategyError("invalid", "发布前至少需要一条条件")
     strategy.published_snapshot = freeze_snapshot(database, strategy)
@@ -632,12 +658,12 @@ def _subscription_map(database: Session, user_id: str) -> dict[str, StrategySubs
     return {row.strategy_id: row for row in rows}
 
 
-def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
+def list_catalog(database: Session, user_id: str, asset_type: str = "stock") -> dict[str, list[dict]]:
     mine = list(
         database.scalars(
             select(Strategy)
             .options(selectinload(Strategy.owner))
-            .where(Strategy.owner_id == user_id, Strategy.is_builtin.is_(False))
+            .where(Strategy.owner_id == user_id, Strategy.is_builtin.is_(False), Strategy.asset_type == normalize_asset_type(asset_type))
             .order_by(Strategy.updated_at.desc())
         ).all()
     )
@@ -649,6 +675,7 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
             .where(
                 StrategySubscription.user_id == user_id,
                 Strategy.owner_id != user_id,
+                Strategy.asset_type == normalize_asset_type(asset_type),
             )
             .order_by(StrategySubscription.created_at.desc())
         ).all()
@@ -657,7 +684,7 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
         database.scalars(
             select(Strategy)
             .options(selectinload(Strategy.owner))
-            .where(Strategy.status == "published")
+            .where(Strategy.status == "published", Strategy.asset_type == normalize_asset_type(asset_type))
             .order_by(Strategy.published_at.desc())
         ).all()
     )

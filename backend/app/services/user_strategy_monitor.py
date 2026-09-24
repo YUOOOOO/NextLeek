@@ -18,6 +18,29 @@ logger = logging.getLogger(__name__)
 EVAL_INTERVAL_S = 60.0
 BATCH_LIMIT = 5
 
+# 与 frontend/src/lib/kline.ts trendTags 对齐：个股弹窗同一套量价/信号列。
+TAG_FIELDS = (
+    "ma5",
+    "ma10",
+    "ma20",
+    "vol_ratio_5d",
+    "signal_ma20_breakout",
+    "signal_volume_surge",
+    "signal_macd_golden",
+    "signal_macd_dead",
+    "signal_ma_golden_5_20",
+    "signal_ma_dead_5_20",
+    "signal_n_day_high",
+    "signal_n_day_low",
+)
+
+
+def _latest_asset(repo: Any, asset_type: str) -> tuple[pl.DataFrame | None, date | None]:
+    try:
+        return repo.get_enriched_latest_asset(asset_type)
+    except Exception:
+        return None, None
+
 
 def _pool_key(user_id: str, strategy_id: str) -> str:
     return f"{user_id}:{strategy_id}"
@@ -31,12 +54,16 @@ def _stock_row(row: dict) -> dict[str, Any] | None:
     if close is None:
         close = row.get("last_price")
     name = str(row.get("name") or symbol)
-    return {
+    item: dict[str, Any] = {
         "symbol": symbol,
         "name": name,
         "close": close,
         "change_pct": row.get("change_pct"),
     }
+    for key in TAG_FIELDS:
+        if key in row:
+            item[key] = row[key]
+    return item
 
 
 class UserStrategyMonitor:
@@ -72,6 +99,7 @@ class UserStrategyMonitor:
         *,
         as_of: date | None = None,
         emit_events: bool = True,
+        asset_type: str = "stock",
     ) -> list[dict]:
         by_symbol: dict[str, dict[str, Any]] = {}
         for raw in rows:
@@ -95,14 +123,12 @@ class UserStrategyMonitor:
             exited_rows = [previous[symbol] for symbol in exited if symbol in previous]
         if first_round or not emit_events:
             return []
-        view = _SpecView(strategy_id, strategy_name)
+        view = _SpecView(strategy_id, strategy_name, asset_type)
         events = _pool_events(view, user_id, list(by_symbol.values()), entered, "pool_entry", "进入")
         events.extend(_pool_events(view, user_id, exited_rows, exited, "pool_exit", "移出"))
         return events
 
     def fill_missing(self, app_state: Any, user_id: str, as_of: date | None, frame: pl.DataFrame | None) -> None:
-        if as_of is None:
-            return
         factory = getattr(app_state, "session_factory", None)
         repo = getattr(app_state, "repo", None)
         if factory is None or repo is None:
@@ -124,26 +150,29 @@ class UserStrategyMonitor:
             return
         from app.services.strategy_runtime import execute_spec
 
-        screener = ScreenerService(repo)
+        etf_frame, etf_as_of = _latest_asset(repo, "etf")
         for strategy_id, spec in jobs:
+            asset = spec.get("asset_type") or "stock"
+            current, day = (frame, as_of) if asset != "etf" else (etf_frame, etf_as_of)
+            if day is None:
+                continue
+            screener = ScreenerService(repo, asset_type=asset)
             try:
-                result = execute_spec(screener, as_of, spec, current=frame)
+                result = execute_spec(screener, day, spec, current=current)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("user strategy monitor fill %s failed: %s", strategy_id, exc)
-                self.apply_result(user_id, strategy_id, spec.get("name") or "", [], as_of=as_of, emit_events=False)
+                self.apply_result(user_id, strategy_id, spec.get("name") or "", [], as_of=day, emit_events=False)
                 continue
             self.apply_result(
                 user_id,
                 strategy_id,
                 spec.get("name") or "",
                 result.rows,
-                as_of=as_of,
+                as_of=day,
                 emit_events=False,
             )
 
     def evaluate(self, app_state: Any, frame: pl.DataFrame | None, as_of: date | None) -> list[dict]:
-        if as_of is None:
-            return []
         now = time.time()
         with self._lock:
             if now - self._last_eval < EVAL_INTERVAL_S:
@@ -177,11 +206,18 @@ class UserStrategyMonitor:
 
         from app.services.strategy_runtime import execute_spec
 
-        screener = ScreenerService(repo)
+        etf_frame, etf_as_of = _latest_asset(repo, "etf")
+        screeners: dict[str, ScreenerService] = {}
         events: list[dict] = []
         for user_id, strategy_id, spec in jobs:
+            asset = spec.get("asset_type") or "stock"
+            current, day = (etf_frame, etf_as_of) if asset == "etf" else (frame, as_of)
+            if day is None:
+                continue
+            if asset not in screeners:
+                screeners[asset] = ScreenerService(repo, asset_type=asset)
             try:
-                result = execute_spec(screener, as_of, spec, current=frame)
+                result = execute_spec(screeners[asset], day, spec, current=current)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("user strategy monitor %s failed: %s", strategy_id, exc)
                 continue
@@ -191,8 +227,9 @@ class UserStrategyMonitor:
                     strategy_id,
                     spec.get("name") or "",
                     result.rows,
-                    as_of=as_of,
+                    as_of=day,
                     emit_events=True,
+                    asset_type=asset,
                 )
             )
 
@@ -280,6 +317,7 @@ def _event(
         "type": event_type,
         "rule_id": f"user_strategy_{strategy.id}",
         "rule_name": strategy.name,
+        "asset_type": getattr(strategy, "asset_type", None) or "stock",
         "strategy_id": strategy.id,
         "user_id": user_id,
         "symbol": symbol,
@@ -299,6 +337,7 @@ def _alert_payload(event: dict) -> dict:
         "rule_id": event.get("rule_id"),
         "strategy_id": event.get("strategy_id"),
         "user_id": event.get("user_id"),
+        "asset_type": event.get("asset_type") or "stock",
         "symbol": event["symbol"],
         "name": event.get("name"),
         "message": event["message"],
@@ -311,6 +350,7 @@ def _alert_payload(event: dict) -> dict:
 
 
 class _SpecView:
-    def __init__(self, strategy_id: str, name: str) -> None:
+    def __init__(self, strategy_id: str, name: str, asset_type: str = "stock") -> None:
         self.id = strategy_id
         self.name = name
+        self.asset_type = asset_type

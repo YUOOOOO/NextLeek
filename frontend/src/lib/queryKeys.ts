@@ -1,3 +1,5 @@
+import type { AssetType } from "./universe";
+
 export const queryKeys = {
   authStatus: ["auth", "status"] as const,
   me: ["auth", "me"] as const,
@@ -10,12 +12,13 @@ export const queryKeys = {
   dataSources: ["settings", "data-sources"] as const,
   capabilityMatrix: ["settings", "capability-matrix"] as const,
   overviewMarket: (asOf?: string) => ["overview", "market", asOf ?? "latest"] as const,
-  strategies: ["strategies"] as const,
+  strategies: (assetType: AssetType) => ["strategies", assetType] as const,
   aiConversation: (workspace: string) => ["ai", "conversation", workspace] as const,
   strategyOptions: ["strategies", "options"] as const,
-  factors: ["factors"] as const,
+  factors: (assetType: AssetType) => ["factors", assetType] as const,
   factorOptions: ["factors", "options"] as const,
-  monitor: ["monitor"] as const,
+  monitor: (assetType: AssetType) => ["monitor", assetType] as const,
+  displaySignals: (assetType: AssetType) => ["display-signals", assetType] as const,
   news: (source: string, q: string, symbol: string) => ["news", source, q, symbol] as const,
   klineDaily: (symbol: string) => ["kline", "daily", symbol] as const,
   financialStatus: ["financials", "status"] as const,

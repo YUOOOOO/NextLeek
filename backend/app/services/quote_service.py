@@ -1309,7 +1309,7 @@ class QuoteService:
                 self._maybe_send_webhook(rule_events, engine)
 
             user_monitor = getattr(self._app_state, "user_strategy_monitor", None)
-            if user_monitor is not None and stock_ready:
+            if user_monitor is not None:
                 try:
                     user_monitor.evaluate(self._app_state, enriched_today, enriched_date)
                 except Exception as e:  # noqa: BLE001

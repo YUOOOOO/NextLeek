@@ -246,3 +246,29 @@ async def generate_monitor_plan(prompt: str, pool: list[dict[str, Any]]) -> dict
     )
     return parse_monitor_plan(_extract_json(text), pool)
 
+
+_NEWS_SYSTEM = """你是 A 股盘面新闻分析助手。根据用户给出的快讯标题和摘要做解读。
+规则:
+- 只依据给出的快讯，不要编造未出现的数据、公告或行情
+- 先给结论：对市场情绪、主线/板块、相关个股线索的影响
+- 区分已落地事实和猜测，猜测必须标明
+- 指出风险或需要继续观察的点
+- 不要生成选股公式，不要给出具体买卖指令
+- 用简洁中文，分点作答
+"""
+
+
+async def analyze_news(prompt: str) -> dict[str, Any]:
+    if not ai_configured():
+        raise FormulaAIError("请先在设置页配置 AI")
+    text = await generate_ai_text(
+        [
+            {"role": "system", "content": _NEWS_SYSTEM},
+            {"role": "user", "content": prompt.strip()},
+        ],
+        temperature=0.3,
+        max_tokens=None,
+    )
+    reply = (text or "").strip() or "这些快讯信息有限，需要补充后才能判断影响。"
+    return {"intent": "chat", "response": reply[:12000]}
+

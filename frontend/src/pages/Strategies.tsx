@@ -7,7 +7,6 @@ import {
   Factor,
   ResearchResult,
   Strategy,
-  StrategyBasicFilter,
   StrategyCondition,
   StrategyOptions,
   StrategyRunResult,
@@ -17,9 +16,12 @@ import { AiDock } from "../components/AiDock";
 import { FormulaDocs } from "../components/FormulaDocs";
 import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
 import { defaultBacktestForm, StrategyBacktestPanel, toResearchBody } from "../components/StrategyBacktestPanel";
+import { UniverseShell } from "../components/UniverseBar";
+import { SignalWorkspace } from "../components/SignalManager";
 import { AI_APPLY_EVENT, formatAiFormula, takeAiApply, type AiApplyPayload } from "../lib/aiChat";
+import { defaultBasicFilter, useUniverse } from "../lib/universe";
 type Tab = "mine" | "subscribed" | "market";
-type Workspace = "strategy" | "factor" | "condition";
+type Workspace = "strategy" | "factor" | "condition" | "signal";
 type SidePane = "ai" | "research" | "docs";
 
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -32,16 +34,9 @@ const WORKSPACES: Array<{ id: Workspace; label: string }> = [
   { id: "strategy", label: "策略" },
   { id: "factor", label: "因子" },
   { id: "condition", label: "条件" },
+  { id: "signal", label: "信号" },
 ];
 
-const DEFAULT_FILTER: StrategyBasicFilter = {
-  price_min: 3,
-  price_max: 300,
-  market_cap_min: 10e8,
-  amount_min: 0.2e8,
-  exclude_st: true,
-  boards: ["沪主板", "深主板", "创业板", "科创板", "北交所"],
-};
 
 const DEFAULT_FORMULA = "close > ts_mean(close, 120) and volume > ts_mean(volume, 20)";
 const DEFAULT_FACTOR_FORMULA = "ts_mean(close, 120)";
@@ -57,7 +52,7 @@ const EMPTY_CONDITION: StrategyCondition = {
 
 
 function parseWorkspace(value: string | null): Workspace {
-  if (value === "factor" || value === "condition") return value;
+  if (value === "factor" || value === "condition" || value === "signal") return value;
   return "strategy";
 }
 
@@ -147,8 +142,9 @@ export function Strategies() {
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const workspace = parseWorkspace(params.get("ws"));
-  const catalog = useQuery({ queryKey: queryKeys.strategies, queryFn: api.listStrategies });
-  const factorCatalog = useQuery({ queryKey: queryKeys.factors, queryFn: api.listFactors });
+  const { universe } = useUniverse();
+  const catalog = useQuery({ queryKey: queryKeys.strategies(universe), queryFn: () => api.listStrategies(universe) });
+  const factorCatalog = useQuery({ queryKey: queryKeys.factors(universe), queryFn: () => api.listFactors(universe) });
   const options = useQuery({ queryKey: queryKeys.strategyOptions, queryFn: api.strategyOptions });
   const [tab, setTab] = useState<Tab>("mine");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -218,6 +214,19 @@ export function Strategies() {
     setAiApply(null);
   }, [aiApply, workspace]);
   const [verifiedFormula, setVerifiedFormula] = useState<string | null>(null);
+  useEffect(() => {
+    setCreating(false);
+    setSelectedId(null);
+    setName("");
+    setDescription("");
+    setFormula(workspace === "factor" ? DEFAULT_FACTOR_FORMULA : DEFAULT_FORMULA);
+    setConditions([{ ...EMPTY_CONDITION }]);
+    setDirection("none");
+    setResult(null);
+    setResearch(null);
+    setError("");
+    setVerifiedFormula(null);
+  }, [universe]);
   const [preview, setPreview] = useState<StockRef | null>(null);
 
   const strategyItems = filterStrategies(catalog.data?.[tab] ?? [], workspace);
@@ -269,8 +278,8 @@ export function Strategies() {
 
   function invalidate() {
     return Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.strategies }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.factors }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.strategies(universe) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.factors(universe) }),
     ]);
   }
 
@@ -404,16 +413,17 @@ export function Strategies() {
   const save = useMutation({
     mutationFn: (): Promise<Strategy | Factor> => {
       if (workspace === "factor") {
-        const payload = { name: name.trim(), description: description.trim(), formula, direction };
+        const payload = { name: name.trim(), description: description.trim(), formula, direction, asset_type: universe };
         return creating || !selectedFactor ? api.createFactor(payload) : api.updateFactor(selectedFactor.id, payload);
       }
       const payload = {
         name: name.trim(),
         description: description.trim(),
         kind: (workspace === "condition" ? "conditions" : "formula") as "formula" | "conditions",
+        asset_type: universe,
         formula: workspace === "condition" ? "" : formula,
         conditions: workspace === "condition" ? conditions : ([] as StrategyCondition[]),
-        basic_filter: selectedStrategy?.basic_filter ?? DEFAULT_FILTER,
+        basic_filter: selectedStrategy?.basic_filter ?? defaultBasicFilter(universe),
         order_by: selectedStrategy?.order_by ?? "change_pct",
         descending: selectedStrategy?.descending ?? true,
         limit: selectedStrategy?.limit ?? 100,
@@ -477,7 +487,16 @@ export function Strategies() {
     !name.trim() ||
     (workspace === "condition" ? conditions.length === 0 : !formula.trim() || !compiledOk);
 
+  if (workspace === "signal") {
+    return (
+      <UniverseShell>
+        <SignalWorkspace workspace={workspace} workspaces={WORKSPACES} onWorkspace={setWorkspace} />
+      </UniverseShell>
+    );
+  }
+
   return (
+    <UniverseShell>
     <div className="ide">
       <aside className="ide-list">
         <div className="ide-ws-tabs" role="tablist" aria-label="工作区">
@@ -932,6 +951,7 @@ export function Strategies() {
       </aside>
       {preview ? <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} /> : null}
     </div>
+    </UniverseShell>
   );
 }
 

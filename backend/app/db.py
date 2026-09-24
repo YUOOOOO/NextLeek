@@ -40,6 +40,7 @@ def init_database(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _ensure_strategy_columns(engine)
     _ensure_subscription_columns(engine)
+    _ensure_factor_columns(engine)
     _mark_builtin_strategies(engine)
 
 
@@ -75,9 +76,20 @@ def _ensure_strategy_columns(engine: Engine) -> None:
             "published_snapshot": "ALTER TABLE strategies ADD COLUMN published_snapshot JSON",
             "formula": "ALTER TABLE strategies ADD COLUMN formula TEXT DEFAULT ''",
             "is_builtin": "ALTER TABLE strategies ADD COLUMN is_builtin BOOLEAN DEFAULT 0",
+            "asset_type": "ALTER TABLE strategies ADD COLUMN asset_type VARCHAR(8) DEFAULT 'stock'",
         },
     )
 
+
+
+def _ensure_factor_columns(engine: Engine) -> None:
+    _add_missing_columns(
+        engine,
+        "factors",
+        {
+            "asset_type": "ALTER TABLE factors ADD COLUMN asset_type VARCHAR(8) DEFAULT 'stock'",
+        },
+    )
 
 def _ensure_subscription_columns(engine: Engine) -> None:
     _add_missing_columns(

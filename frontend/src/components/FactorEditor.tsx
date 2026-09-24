@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api, Factor, FormulaExample } from "../lib/api";
 import { FormulaEditor } from "./FormulaEditor";
+import { useUniverse } from "../lib/universe";
 
 type Props = {
   factor: Factor | null;
@@ -14,6 +15,7 @@ type Props = {
 };
 
 export function FactorEditor({ factor, examples, operators, onClose, onSaved }: Props) {
+  const { universe } = useUniverse();
   const [name, setName] = useState(factor?.name ?? "");
   const [code, setCode] = useState(factor?.code ?? "");
   const [description, setDescription] = useState(factor?.description ?? "");
@@ -29,6 +31,7 @@ export function FactorEditor({ factor, examples, operators, onClose, onSaved }: 
         description: description.trim(),
         formula: formula.trim(),
         direction,
+        asset_type: universe,
       };
       return factor ? api.updateFactor(factor.id, payload) : api.createFactor(payload);
     },

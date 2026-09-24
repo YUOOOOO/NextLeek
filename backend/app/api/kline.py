@@ -537,6 +537,9 @@ def _latest_live_candle(
                 "atr_14", "vol_ratio_5d"):
         if key in q and q[key] is not None:
             live_row[key] = q[key]
+    for key, value in q.items():
+        if str(key).startswith(("signal_", "csg_")) and value is not None:
+            live_row[key] = value
     return live_row
 
 

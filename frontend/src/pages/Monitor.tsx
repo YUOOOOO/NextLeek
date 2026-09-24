@@ -5,7 +5,10 @@ import { api, MonitorRow } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { AiDock } from "../components/AiDock";
 import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
+import { UniverseShell } from "../components/UniverseBar";
 import { AiChatProvider, MONITOR_INTRO } from "../lib/aiChat";
+import { trendTags } from "../lib/kline";
+import { useUniverse } from "../lib/universe";
 
 const KIND_LABEL: Record<string, string> = {
   formula: "公式",
@@ -43,7 +46,7 @@ function useMonitorStream() {
   useEffect(() => {
     const source = new EventSource("/api/monitor/stream");
     const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor });
+      void queryClient.invalidateQueries({ queryKey: ["monitor"] });
     };
     source.addEventListener("pool_updated", refresh);
     source.addEventListener("strategy_alert", refresh);
@@ -54,9 +57,10 @@ function useMonitorStream() {
 
 export function Monitor() {
   useMonitorStream();
+  const { universe } = useUniverse();
   const snapshot = useQuery({
-    queryKey: queryKeys.monitor,
-    queryFn: api.monitorSnapshot,
+    queryKey: queryKeys.monitor(universe),
+    queryFn: () => api.monitorSnapshot(universe),
     refetchInterval: 5_000,
   });
   const prevSymbols = useRef<Map<string, Set<string>>>(new Map());
@@ -73,10 +77,16 @@ export function Monitor() {
   const stopWatch = useMutation({
     mutationFn: (id: string) => api.stopStrategyMonitor(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.strategies });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.monitor(universe) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.strategies(universe) });
     },
   });
+  useEffect(() => {
+    prevSymbols.current = new Map();
+    setFlash({});
+    setGhosts({});
+    setSelectedId("all");
+  }, [universe]);
   useEffect(() => {
     const move = (event: PointerEvent) => {
       if (!sideDragging.current) return;
@@ -192,12 +202,13 @@ export function Monitor() {
 
   return (
     <AiChatProvider workspace="monitor" intro={MONITOR_INTRO}>
+      <UniverseShell>
       <div className="ide">
         <section className="ide-editor">
           <div className="mon-toolbar">
             <div className="mon-status">
-              <i className={snapshot.isFetching ? "is-syncing" : ""} />
-              {snapshot.isError ? "异常" : snapshot.isFetching ? "同步中" : "实时运行"}
+              <i className={snapshot.isError ? "is-error" : ""} />
+              {snapshot.isError ? "异常" : "实时运行"}
             </div>
             <span className="mon-toolbar-stat">
               行情日<b>{data?.as_of ?? "—"}</b>
@@ -277,6 +288,7 @@ export function Monitor() {
                         <tr>
                           <th>标的</th>
                           {selectedId === "all" ? <th>策略</th> : null}
+                          <th>信号</th>
                           <th className="text-right">现价</th>
                           <th className="text-right">涨跌</th>
                         </tr>
@@ -284,6 +296,7 @@ export function Monitor() {
                       <tbody>
                         {boardRows.map((row) => {
                           const mark = flash[`${row.strategy.id}:${row.symbol}`];
+                          const tags = trendTags(row, snapshot.data?.custom_tags);
                           return (
                             <tr
                               key={`${row.strategy.id}:${row.symbol}`}
@@ -295,6 +308,16 @@ export function Monitor() {
                                 <div className="mon-sym-code">{row.symbol}</div>
                               </td>
                               {selectedId === "all" ? <td className="mon-sym-code">{row.strategy.name}</td> : null}
+                              <td>
+                                <div className="kline-tags mon-tags">
+                                  {tags.length === 0 ? <span className="mon-sym-code">—</span> : null}
+                                  {tags.map((tag) => (
+                                    <span key={tag.id} className={`kline-tag is-${tag.tone}`}>
+                                      {tag.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
                               <td className="text-right font-mono">{fmtPrice(row.close)}</td>
                               <td className={`text-right font-mono ${pctClass(row.change_pct)}`}>{fmtPct(row.change_pct)}</td>
                             </tr>
@@ -388,6 +411,7 @@ export function Monitor() {
         </aside>
         {preview ? <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} /> : null}
       </div>
+      </UniverseShell>
     </AiChatProvider>
   );
 }

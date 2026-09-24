@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, Factor, ResearchResult } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { FactorEditor } from "../components/FactorEditor";
-
+import { UniverseBar } from "../components/UniverseBar";
+import { useUniverse } from "../lib/universe";
 type Tab = "mine" | "subscribed" | "market";
 
 const TABS: Array<{ id: Tab; label: string }> = [
@@ -14,7 +15,8 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 export function Factors() {
   const queryClient = useQueryClient();
-  const catalog = useQuery({ queryKey: queryKeys.factors, queryFn: api.listFactors });
+  const { universe } = useUniverse();
+  const catalog = useQuery({ queryKey: queryKeys.factors(universe), queryFn: () => api.listFactors(universe) });
   const options = useQuery({ queryKey: queryKeys.factorOptions, queryFn: api.factorOptions });
   const [tab, setTab] = useState<Tab>("mine");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -22,6 +24,13 @@ export function Factors() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [research, setResearch] = useState<ResearchResult | null>(null);
+  useEffect(() => {
+    setSelectedId(null);
+    setEditorOpen(false);
+    setEditingId(null);
+    setResearch(null);
+    setError("");
+  }, [universe]);
 
   const items = catalog.data?.[tab] ?? [];
   const editing = useMemo(() => {
@@ -30,7 +39,7 @@ export function Factors() {
   }, [catalog.data, editingId]);
 
   function invalidate() {
-    return queryClient.invalidateQueries({ queryKey: queryKeys.factors });
+    return queryClient.invalidateQueries({ queryKey: queryKeys.factors(universe) });
   }
 
   const publish = useMutation({
@@ -85,6 +94,7 @@ export function Factors() {
 
   return (
     <div className="space-y-5">
+      <UniverseBar />
       <div className="page-head">
         <div>
           <h1 className="page-title">因子</h1>

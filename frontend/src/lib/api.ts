@@ -11,7 +11,7 @@ export type AiMessage = {
   min_confirm?: number;
 };
 
-export type AiWorkspace = "strategy" | "factor" | "global" | "monitor";
+export type AiWorkspace = "strategy" | "factor" | "global" | "monitor" | "news";
 
 export type AiConversation = {
   workspace: AiWorkspace;
@@ -20,6 +20,7 @@ export type AiConversation = {
   updated_at: string;
 };
 export type UserRole = "admin" | "user";
+export type AssetType = "stock" | "etf";
 
 export type User = {
   id: string;
@@ -268,6 +269,7 @@ export type StrategyWrite = {
   name: string;
   description: string;
   kind?: StrategyKind;
+  asset_type?: AssetType;
   formula?: string;
   conditions: StrategyCondition[];
   children?: StrategyChild[];
@@ -284,6 +286,7 @@ export type Strategy = {
   name: string;
   description: string;
   status: StrategyStatus;
+  asset_type: AssetType;
   kind: StrategyKind;
   formula?: string;
   conditions: StrategyCondition[];
@@ -355,6 +358,7 @@ export type Factor = {
   description: string;
   formula: string;
   direction: "high" | "low" | "none";
+  asset_type: AssetType;
   status: FactorStatus;
   owner_id: string;
   owner_username: string;
@@ -382,6 +386,7 @@ export type FactorWrite = {
   description: string;
   formula: string;
   direction: "high" | "low" | "none";
+  asset_type?: AssetType;
 };
 
 export type StrategyResearchIn = {
@@ -453,6 +458,11 @@ export type MonitorRow = {
   name: string;
   close?: number | null;
   change_pct?: number | null;
+  ma5?: number | null;
+  ma10?: number | null;
+  ma20?: number | null;
+  vol_ratio_5d?: number | null;
+  [key: string]: unknown;
 };
 
 export type MonitorStrategy = {
@@ -474,12 +484,51 @@ export type MonitorEvent = {
   change_pct?: number | null;
 };
 
+export type DisplayTagTone = "bull" | "bear" | "neutral";
+
+export type DisplaySignal = {
+  id: string;
+  name: string;
+  description?: string;
+  tone: DisplayTagTone;
+  kind: string;
+  field?: string;
+  locked: boolean;
+  subscribed: boolean;
+  enabled: boolean;
+  conditions?: StrategyCondition[];
+};
+
+export type DisplaySignalCatalog = {
+  builtin: DisplaySignal[];
+  custom: DisplaySignal[];
+};
+
+export type DisplaySignalWrite = {
+  id: string;
+  name: string;
+  kind?: "entry" | "exit" | "both";
+  enabled?: boolean;
+  tone?: DisplayTagTone;
+  description?: string;
+  conditions: StrategyCondition[];
+  asset_type?: AssetType;
+};
+
+export type ExtraTagSpec = {
+  id: string;
+  label: string;
+  field: string;
+  tone: DisplayTagTone;
+};
+
 export type MonitorSnapshot = {
   as_of: string | null;
   strategies: MonitorStrategy[];
   events: MonitorEvent[];
   watch_count: number;
   hit_count: number;
+  custom_tags?: ExtraTagSpec[];
 };
 
 export type KlineDailyResponse = {
@@ -643,7 +692,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ messages }),
     }),
-  listStrategies: () => request<StrategyCatalog>("/api/strategies"),
+  listStrategies: (assetType: AssetType = "stock") =>
+    request<StrategyCatalog>(`/api/strategies?asset_type=${assetType}`),
   createStrategy: (body: StrategyWrite) =>
     request<Strategy>("/api/strategies", { method: "POST", body: JSON.stringify(body) }),
   updateStrategy: (id: string, body: Partial<StrategyWrite>) =>
@@ -682,11 +732,20 @@ export const api = {
     request<ResearchResult>("/api/strategies/mine", { method: "POST", body: JSON.stringify(body) }),
   researchStrategy: (id: string, body: StrategyResearchIn = {}) =>
     request<ResearchResult>(`/api/strategies/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
-  monitorSnapshot: () => request<MonitorSnapshot>("/api/monitor"),
-
+  monitorSnapshot: (assetType: AssetType = "stock") =>
+    request<MonitorSnapshot>(`/api/monitor?asset_type=${assetType}`),
+  listDisplaySignals: (assetType: AssetType = "stock") =>
+    request<DisplaySignalCatalog>(`/api/custom-signals?asset_type=${assetType}`),
+  saveDisplaySignal: (body: DisplaySignalWrite) =>
+    request<{ ok: boolean; signal: DisplaySignalCatalog }>("/api/custom-signals", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteDisplaySignal: (id: string) =>
+    request<{ ok: boolean }>(`/api/custom-signals/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   factorOptions: () => request<{ operators: string[]; base_columns: string[]; examples: FormulaExample[] }>("/api/factors/options"),
-  listFactors: () => request<FactorCatalog>("/api/factors"),
+  listFactors: (assetType: AssetType = "stock") => request<FactorCatalog>(`/api/factors?asset_type=${assetType}`),
   createFactor: (body: FactorWrite) => request<Factor>("/api/factors", { method: "POST", body: JSON.stringify(body) }),
   updateFactor: (id: string, body: Partial<FactorWrite>) =>
     request<Factor>(`/api/factors/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -727,6 +786,11 @@ export const api = {
     const suffix = query.toString();
     return request<NewsFeed>(`/api/news${suffix ? `?${suffix}` : ""}`);
   },
+  analyzeNews: (prompt: string) =>
+    request<{ intent?: "chat"; response?: string }>("/api/news/analyze", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
   klineDaily: (symbol: string, days = 250) =>
     request<KlineDailyResponse>(`/api/kline/daily?symbol=${encodeURIComponent(symbol)}&days=${days}`),
   financialStatus: () => request<FinancialStatus>("/api/financials/status"),

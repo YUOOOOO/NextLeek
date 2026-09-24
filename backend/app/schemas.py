@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 UserRole = Literal["admin", "user"]
+AssetType = Literal["stock", "etf"]
 
 
 class LoginRequest(BaseModel):
@@ -139,6 +140,7 @@ class StrategyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     description: str = Field(default="", max_length=500)
     kind: Literal["formula", "conditions", "composite"] = "conditions"
+    asset_type: AssetType = "stock"
     formula: str = Field(default="", max_length=4000)
     conditions: list[StrategyCondition] = Field(default_factory=list, max_length=8)
     children: list[StrategyChildRef] = Field(default_factory=list, max_length=8)
@@ -211,6 +213,7 @@ class StrategyRead(BaseModel):
     description: str
     status: Literal["draft", "published"]
     kind: Literal["formula", "conditions", "composite"] = "conditions"
+    asset_type: AssetType = "stock"
     formula: str = ""
     conditions: list[StrategyCondition]
     children: list[StrategyChildRead] = []
@@ -262,6 +265,7 @@ class FactorCreate(BaseModel):
     description: str = Field(default="", max_length=500)
     formula: str = Field(min_length=1, max_length=2000)
     direction: Literal["high", "low", "none"] = "none"
+    asset_type: AssetType = "stock"
 
 
     @field_validator("code", mode="before")
@@ -305,6 +309,7 @@ class FactorRead(BaseModel):
     description: str
     formula: str
     direction: Literal["high", "low", "none"] = "none"
+    asset_type: AssetType = "stock"
     status: Literal["draft", "published"]
     owner_id: str
     owner_username: str
@@ -343,6 +348,10 @@ class FactorResearchIn(BaseModel):
 
 class StrategyGenerateIn(BaseModel):
     prompt: str = Field(min_length=1, max_length=500)
+
+
+class NewsAnalyzeIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=12000)
 
 
 class StrategyCompileIn(BaseModel):

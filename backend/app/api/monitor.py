@@ -14,15 +14,27 @@ from app.deps import get_database, require_user
 from app.models import User
 from app.services import alert_store
 from app.services import user_strategies as svc
+from app.services.display_tags import enabled_custom_specs
+from app.services.user_strategy_monitor import TAG_FIELDS
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
 
-def _overlay_quotes(rows: list[dict[str, Any]], quotes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def _overlay_quotes(
+    rows: list[dict[str, Any]],
+    quotes: dict[str, dict[str, Any]],
+    tags: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
-        live = quotes.get(str(row.get("symbol") or ""))
+        symbol = str(row.get("symbol") or "")
         item = dict(row)
+        extra = (tags or {}).get(symbol)
+        if extra:
+            for key, value in extra.items():
+                if value is not None:
+                    item[key] = value
+        live = quotes.get(symbol)
         if live:
             if live.get("close") is not None:
                 item["close"] = live["close"]
@@ -33,6 +45,49 @@ def _overlay_quotes(rows: list[dict[str, Any]], quotes: dict[str, dict[str, Any]
         out.append(item)
     out.sort(key=lambda item: float(item.get("change_pct") or 0), reverse=True)
     return out
+
+
+def _tag_map(frame: Any) -> dict[str, dict[str, Any]]:
+    if frame is None:
+        return {}
+    try:
+        empty = frame.is_empty()
+    except Exception:
+        return {}
+    if empty or "symbol" not in frame.columns:
+        return {}
+    keep = [
+        col
+        for col in frame.columns
+        if col == "symbol"
+        or col in TAG_FIELDS
+        or str(col).startswith("csg_")
+        or str(col).startswith("signal_")
+    ]
+    if len(keep) <= 1:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    extra_keys = [col for col in keep if col != "symbol"]
+    for row in frame.select(keep).to_dicts():
+        symbol = str(row.get("symbol") or "")
+        if not symbol:
+            continue
+        out[symbol] = {key: row[key] for key in extra_keys if key in row}
+    return out
+
+
+def _attach_custom_signals(frame: Any, data_dir) -> Any:
+    if frame is None or data_dir is None:
+        return frame
+    try:
+        from app.strategy import custom_signals
+
+        exprs = custom_signals.build_expressions(custom_signals.load_all(data_dir), allow_shift=False)
+        if not exprs:
+            return frame
+        return custom_signals.inject(frame, exprs)
+    except Exception:
+        return frame
 
 
 def _quote_map(request: Request) -> dict[str, dict[str, Any]]:
@@ -62,14 +117,38 @@ def _quote_map(request: Request) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _as_of(request: Request):
+def _as_of(request: Request, asset_type: str = "stock"):
     repo = getattr(request.app.state, "repo", None)
     if repo is None:
         return None
     try:
-        return repo.latest_enriched_date()
+        return repo.latest_enriched_date(asset_type)
     except Exception:
         return None
+
+
+def _load_frame(request: Request, asset_type: str):
+    repo = getattr(request.app.state, "repo", None)
+    frame = None
+    as_of = _as_of(request, asset_type)
+    if repo is not None:
+        try:
+            frame, latest = repo.get_enriched_latest_asset(asset_type)
+            if latest is not None:
+                as_of = latest
+        except Exception:
+            frame = None
+    if asset_type == "stock":
+        qs = getattr(request.app.state, "quote_service", None)
+        if qs is not None:
+            try:
+                live, live_date = qs.get_enriched_today()
+                if live is not None:
+                    frame = live
+                    as_of = live_date or as_of
+            except Exception:
+                pass
+    return frame, as_of
 
 
 @router.get("")
@@ -77,51 +156,56 @@ def monitor_snapshot(
     request: Request,
     user: User = Depends(require_user),
     database: Session = Depends(get_database),
+    asset_type: str = "stock",
 ) -> dict:
-    watches = svc.list_user_watches(database, user.id)
-    monitor = getattr(request.app.state, "user_strategy_monitor", None)
-    as_of = _as_of(request)
-    frame = None
-    qs = getattr(request.app.state, "quote_service", None)
-    if qs is not None:
-        try:
-            frame, _ = qs.get_enriched_today()
-        except Exception:
-            frame = None
-    if monitor is not None and as_of is not None:
-        monitor.fill_missing(request.app.state, user.id, as_of, frame)
+    asset_type = (asset_type or "stock").strip().lower()
+    if asset_type not in {"stock", "etf"}:
+        asset_type = "stock"
+    watches = [
+        watch
+        for watch in svc.list_user_watches(database, user.id)
+        if (getattr(watch.strategy, "asset_type", None) or "stock") == asset_type
+    ]
+    stock_frame, stock_as_of = _load_frame(request, "stock")
+    frame, as_of = (stock_frame, stock_as_of) if asset_type == "stock" else _load_frame(request, asset_type)
+    if monitor is not None:
+        monitor.fill_missing(request.app.state, user.id, stock_as_of, stock_frame)
     pools = monitor.pools_for_user(user.id) if monitor is not None else {}
-    quotes = _quote_map(request)
+    repo = getattr(request.app.state, "repo", None)
+    data_dir = None if repo is None else repo.store.data_dir
+    quotes = _quote_map(request) if asset_type == "stock" else {}
+    tags = _tag_map(_attach_custom_signals(frame, data_dir))
     strategies = []
     for watch in watches:
         strategy = watch.strategy
         if strategy is None:
             continue
-        rows = _overlay_quotes(pools.get(strategy.id, []), quotes)
+        rows = _overlay_quotes(pools.get(strategy.id, []), quotes, tags)
         strategies.append(
             {
                 "id": strategy.id,
                 "name": strategy.name,
                 "kind": strategy.kind,
+                "asset_type": getattr(strategy, "asset_type", None) or "stock",
                 "rows": rows,
                 "total": len(rows),
             }
         )
-    repo = getattr(request.app.state, "repo", None)
-    data_dir = None if repo is None else repo.store.data_dir
     events = []
     if data_dir is not None:
         events = [
             event
             for event in alert_store.list_recent(data_dir, days=7, limit=500, source="strategy")
-            if event.get("user_id") == user.id
+            if event.get("user_id") == user.id and (event.get("asset_type") or "stock") == asset_type
         ]
     return {
         "as_of": None if as_of is None else as_of.isoformat(),
+        "asset_type": asset_type,
         "strategies": strategies,
         "events": events[:200],
         "watch_count": len(strategies),
         "hit_count": sum(item["total"] for item in strategies),
+        "custom_tags": enabled_custom_specs(data_dir, asset_type) if data_dir is not None else [],
     }
 
 

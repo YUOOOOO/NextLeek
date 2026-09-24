@@ -25,6 +25,7 @@ from app.api.ai import router as ai_router
 from app.api.factors import router as factors_router
 from app.api.monitor import router as monitor_router
 from app.api.news import router as news_router
+from app.api.signals import router as signals_router
 from app.api.users import router as users_router
 from app.config import get_settings
 from app.db import create_database_engine, create_session_factory, init_database, session_scope
@@ -273,6 +274,7 @@ app.include_router(settings_router)
 app.include_router(strategies_router)
 app.include_router(factors_router)
 app.include_router(monitor_router)
+app.include_router(signals_router)
 app.include_router(news_router)
 app.include_router(ext_data_router)
 app.include_router(ai_router)

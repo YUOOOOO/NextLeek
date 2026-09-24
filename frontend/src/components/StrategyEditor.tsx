@@ -12,6 +12,7 @@ import {
   type StrategyOptions,
 } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
+import { defaultBasicFilter, useUniverse } from "../lib/universe";
 import { FormulaEditor } from "./FormulaEditor";
 
 const BOARDS = ["沪主板", "深主板", "创业板", "科创板", "北交所"];
@@ -65,14 +66,6 @@ const TEMPLATES: Array<{ label: string; conditions: StrategyCondition[] }> = [
   },
 ];
 
-const DEFAULT_FILTER: StrategyBasicFilter = {
-  price_min: 3,
-  price_max: 300,
-  market_cap_min: 10e8,
-  amount_min: 0.2e8,
-  exclude_st: true,
-  boards: [...BOARDS],
-};
 
 const EMPTY_CONDITION: StrategyCondition = {
   left: "change_pct",
@@ -293,7 +286,8 @@ function RightValueInput({
 }
 
 export function StrategyEditor({ strategy, options, onClose, onSaved }: Props) {
-  const catalog = useQuery({ queryKey: queryKeys.strategies, queryFn: api.listStrategies });
+  const { universe } = useUniverse();
+  const catalog = useQuery({ queryKey: queryKeys.strategies(universe), queryFn: () => api.listStrategies(universe) });
   const [name, setName] = useState(strategy?.name ?? "");
   const [description, setDescription] = useState(strategy?.description ?? "");
   const [kind, setKind] = useState<StrategyKind>(strategy?.kind ?? "formula");
@@ -305,7 +299,7 @@ export function StrategyEditor({ strategy, options, onClose, onSaved }: Props) {
   const [conditions, setConditions] = useState<StrategyCondition[]>(
     strategy?.conditions?.length ? strategy.conditions : [{ ...EMPTY_CONDITION }],
   );
-  const [basic, setBasic] = useState<StrategyBasicFilter>(strategy?.basic_filter ?? DEFAULT_FILTER);
+  const [basic, setBasic] = useState<StrategyBasicFilter>(strategy?.basic_filter ?? defaultBasicFilter(universe));
   const [orderBy, setOrderBy] = useState(strategy?.order_by ?? "change_pct");
   const [descending, setDescending] = useState(strategy?.descending ?? true);
   const [limit, setLimit] = useState(strategy?.limit ?? 100);
@@ -339,6 +333,7 @@ export function StrategyEditor({ strategy, options, onClose, onSaved }: Props) {
         name: name.trim(),
         description: description.trim(),
         kind,
+        asset_type: universe,
         formula: kind === "formula" ? formula : "",
         conditions: kind === "conditions" ? conditions : [],
         children: kind === "composite" ? childIds.map((id) => ({ strategy_id: id, weight: 1 })) : [],

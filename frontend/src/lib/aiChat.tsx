@@ -34,7 +34,7 @@ type AiChat = {
   prompt: string;
   setPrompt: (value: string) => void;
   pending: boolean;
-  ask: (kind: "strategy" | "factor") => void;
+  ask: (kind: "strategy" | "factor", text?: string) => void;
 };
 
 export const INTRO: ChatMsg = {
@@ -45,6 +45,11 @@ export const INTRO: ChatMsg = {
 export const MONITOR_INTRO: ChatMsg = {
   role: "bot",
   text: "你好。从你自己的或已订阅的策略里选一条监控，也可以让我把几条叠成新策略再监控。",
+};
+
+export const NEWS_INTRO: ChatMsg = {
+  role: "bot",
+  text: "从左侧把快讯加入待分析，点分析；也可以直接问这些新闻对盘面的影响。",
 };
 
 const AiChatContext = createContext<AiChat | null>(null);
@@ -145,13 +150,15 @@ export function AiChatProvider({
       const payload: AiResult =
         workspace === "monitor"
           ? await api.generateMonitorPlan(text)
-          : kind === "factor"
-            ? await api.generateFactor(text)
-            : await api.generateStrategy(text);
+          : workspace === "news"
+            ? await api.analyzeNews(text)
+            : kind === "factor"
+              ? await api.generateFactor(text)
+              : await api.generateStrategy(text);
       return { payload, kind };
     },
     onSuccess: ({ payload, kind }) => {
-      const intent = payload.intent || (workspace === "monitor" ? "chat" : kind);
+      const intent = payload.intent || (workspace === "monitor" || workspace === "news" ? "chat" : kind);
       let message: ChatMsg;
       if (intent === "chat") {
         message = { role: "bot", text: payload.response || "" };
@@ -205,13 +212,13 @@ export function AiChatProvider({
     setChat(history.data.messages.length ? history.data.messages : [intro]);
   }, [history.data, generate.isPending, chat, intro]);
 
-  function ask(kind: "strategy" | "factor") {
-    const text = prompt.trim();
+  function ask(kind: "strategy" | "factor", textOverride?: string) {
+    const text = (textOverride ?? prompt).trim();
     if (!text || generate.isPending) return;
     hydrated.current = true;
     setPrompt("");
     setChat((prev) => {
-      const next: ChatMsg[] = [...prev, { role: "user", text }, { role: "bot", text: "正在生成…", pending: true }];
+      const next: ChatMsg[] = [...prev, { role: "user", text }, { role: "bot", text: workspace === "news" ? "正在分析…" : "正在生成…", pending: true }];
       save.mutate(next);
       return next;
     });

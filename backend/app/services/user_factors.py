@@ -144,6 +144,7 @@ def serialize(
         "subscriber_count": subscriber_count,
         "subscribed": subscribed,
         "is_owner": factor.owner_id == user_id,
+        "asset_type": str(getattr(factor, "asset_type", None) or "stock"),
         "version": version,
         "warmup_bars": warmup,
         "has_unpublished_changes": factor.owner_id == user_id and _has_unpublished_changes(factor),
@@ -232,12 +233,16 @@ def create_factor(
     code: str | None = None,
     description: str = "",
     direction: str = "none",
+    asset_type: str = "stock",
 ) -> Factor:
     code = normalize_code(code)
     existing = database.scalar(select(Factor).where(Factor.code == code))
     if existing is not None:
         raise FactorError("conflict", f"代码 {code} 已被占用")
     compile_user_formula(formula)
+    asset_type = (asset_type or "stock").strip().lower()
+    if asset_type not in {"stock", "etf"}:
+        raise FactorError("invalid", "资产类型只能是股票或ETF")
     factor = Factor(
         owner_id=owner.id,
         code=code,
@@ -245,6 +250,7 @@ def create_factor(
         description=description,
         formula=formula,
         direction=normalize_direction(direction),
+        asset_type=asset_type,
         status="draft",
         version=0,
     )
@@ -346,12 +352,13 @@ def unsubscribe(database: Session, user: User, factor: Factor) -> None:
         database.commit()
 
 
-def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
+def list_catalog(database: Session, user_id: str, asset_type: str = "stock") -> dict[str, list[dict]]:
+    asset_type = (asset_type or "stock").strip().lower() or "stock"
     mine = list(
         database.scalars(
             select(Factor)
             .options(selectinload(Factor.owner))
-            .where(Factor.owner_id == user_id)
+            .where(Factor.owner_id == user_id, Factor.asset_type == asset_type)
             .order_by(Factor.updated_at.desc())
         ).all()
     )
@@ -363,6 +370,7 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
             .where(
                 FactorSubscription.user_id == user_id,
                 Factor.owner_id != user_id,
+                Factor.asset_type == asset_type,
             )
             .order_by(FactorSubscription.created_at.desc())
         ).all()
@@ -371,7 +379,7 @@ def list_catalog(database: Session, user_id: str) -> dict[str, list[dict]]:
         database.scalars(
             select(Factor)
             .options(selectinload(Factor.owner))
-            .where(Factor.status == "published")
+            .where(Factor.status == "published", Factor.asset_type == asset_type)
             .order_by(Factor.published_at.desc())
         ).all()
     )
@@ -422,9 +430,14 @@ def spec_for_run(database: Session, factor: Factor, user_id: str) -> FactorSpec:
     return payload_to_spec(payload)
 
 
-def specs_for_user(database: Session, user_id: str, codes: Iterable[str] | None = None) -> dict[str, FactorSpec]:
+def specs_for_user(
+    database: Session,
+    user_id: str,
+    codes: Iterable[str] | None = None,
+    asset_type: str = "stock",
+) -> dict[str, FactorSpec]:
     wanted = {str(code) for code in (codes or []) if code}
-    catalog = list_catalog(database, user_id)
+    catalog = list_catalog(database, user_id, asset_type=asset_type)
     visible = {item["code"]: item for item in (*catalog["mine"], *catalog["subscribed"])}
     if not wanted:
         wanted = set(visible)
