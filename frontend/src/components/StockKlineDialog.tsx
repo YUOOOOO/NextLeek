@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
-import { lastKline, num, trendFacts, trendTags, type KlineRow } from "../lib/kline";
+import { klineDate, lastKline, num, resampleKline, resampleMinuteKline, trendFacts, trendTags, type KlineRow } from "../lib/kline";
 import { useUniverse } from "../lib/universe";
 import { DailyKChart } from "./DailyKChart";
 
@@ -29,15 +29,25 @@ function fmtCell(v: unknown): string {
 }
 
 export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose: () => void }) {
-  const [tab, setTab] = useState<"kline" | "finance">("kline");
+  const [tab, setTab] = useState<"daily" | "d5" | "m15" | "m5" | "minute" | "finance">("daily");
   const kline = useQuery({
     queryKey: queryKeys.klineDaily(symbol),
-    queryFn: () => api.klineDaily(symbol, 250),
+    queryFn: () => api.klineDaily(symbol, 800),
+  });
+  const minute = useQuery({
+    queryKey: queryKeys.klineMinute(symbol),
+    queryFn: () => api.klineMinute(symbol),
+    enabled: tab === "minute" || tab === "m5" || tab === "m15",
+  });
+  const minuteRange = useQuery({
+    queryKey: queryKeys.klineMinuteRange(symbol),
+    queryFn: () => api.klineMinuteRange(symbol, 10),
+    enabled: tab === "m5" || tab === "m15",
   });
   const { universe } = useUniverse();
   useEffect(() => {
-    if (universe !== "stock") setTab("kline");
-  }, [universe]);
+    if (universe !== "stock" && tab === "finance") setTab("daily");
+  }, [universe, tab]);
   const finStatus = useQuery({
     queryKey: queryKeys.financialStatus,
     queryFn: api.financialStatus,
@@ -61,7 +71,59 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const rows = (kline.data?.rows ?? []) as KlineRow[];
+  const dailyRows = (kline.data?.rows ?? []) as KlineRow[];
+  const fiveDayRows = useMemo(() => resampleKline(dailyRows, 5), [dailyRows]);
+  const todayRows = useMemo(
+    () =>
+      ((minute.data?.rows ?? []) as KlineRow[]).map((row) => ({
+        ...row,
+        date: row.datetime ?? row.date,
+      })),
+    [minute.data?.rows],
+  );
+  const rangeRows = useMemo(
+    () =>
+      (minuteRange.data?.sessions ?? []).flatMap((session) =>
+        ((session.rows ?? []) as KlineRow[]).map((row) => ({
+          ...row,
+          date: row.datetime ?? row.date,
+        })),
+      ),
+    [minuteRange.data?.sessions],
+  );
+  const intraRows = useMemo(() => {
+    if (todayRows.length === 0) return rangeRows;
+    const today = klineDate(todayRows[0]?.date);
+    return [...rangeRows.filter((row) => klineDate(row.date) !== today), ...todayRows];
+  }, [rangeRows, todayRows]);
+  const fiveMinRows = useMemo(() => resampleMinuteKline(intraRows, 5), [intraRows]);
+  const fifteenMinRows = useMemo(() => resampleMinuteKline(intraRows, 15), [intraRows]);
+  const chartRows =
+    tab === "d5"
+      ? fiveDayRows
+      : tab === "minute"
+        ? todayRows
+        : tab === "m5"
+          ? fiveMinRows
+          : tab === "m15"
+            ? fifteenMinRows
+            : dailyRows;
+  const intraTab = tab === "minute" || tab === "m5" || tab === "m15";
+  const chartLoading =
+    tab === "minute"
+      ? minute.isLoading
+      : tab === "m5" || tab === "m15"
+        ? chartRows.length === 0 && (minuteRange.isLoading || minute.isLoading)
+        : kline.isLoading;
+  const chartError =
+    tab === "minute"
+      ? minute.error
+      : tab === "m5" || tab === "m15"
+        ? chartRows.length === 0
+          ? (minuteRange.error ?? minute.error)
+          : null
+        : kline.error;
+  const rows = dailyRows;
   const last = lastKline(rows);
   const extras = useMemo(
     () =>
@@ -87,7 +149,7 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
   const financeEmpty = !financeBlocked && (metrics.isSuccess || finStatus.isSuccess) && !latestMetric;
 
   return (
-    <div className="kline-root" role="dialog" aria-modal="true" aria-label={`${displayName} 日K`}>
+    <div className="kline-root" role="dialog" aria-modal="true" aria-label={`${displayName} 走势`}>
       <button className="kline-scrim" type="button" aria-label="关闭" onClick={onClose} />
       <section className="kline-dialog">
         <header className="kline-head">
@@ -123,8 +185,20 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
         </div>
 
         <div className="kline-tabs">
-          <button type="button" className={tab === "kline" ? "is-on" : ""} onClick={() => setTab("kline")}>
+          <button type="button" className={tab === "daily" ? "is-on" : ""} onClick={() => setTab("daily")}>
             日K
+          </button>
+          <button type="button" className={tab === "d5" ? "is-on" : ""} onClick={() => setTab("d5")}>
+            5日K
+          </button>
+          <button type="button" className={tab === "m15" ? "is-on" : ""} onClick={() => setTab("m15")}>
+            15分
+          </button>
+          <button type="button" className={tab === "m5" ? "is-on" : ""} onClick={() => setTab("m5")}>
+            5分
+          </button>
+          <button type="button" className={tab === "minute" ? "is-on" : ""} onClick={() => setTab("minute")}>
+            分时
           </button>
           {universe === "stock" ? (
             <button type="button" className={tab === "finance" ? "is-on" : ""} onClick={() => setTab("finance")}>
@@ -133,13 +207,31 @@ export function StockKlineDialog({ symbol, name, onClose }: StockRef & { onClose
           ) : null}
         </div>
 
-        {tab === "kline" ? (
+        {tab !== "finance" ? (
           <div className="kline-pane">
-            {kline.isLoading ? <div className="kline-empty">加载日K…</div> : null}
-            {kline.isError ? <div className="kline-empty">日K读取失败</div> : null}
-            {!kline.isLoading && !kline.isError && rows.length === 0 ? <div className="kline-empty">无日K数据</div> : null}
-            {rows.length > 0 ? <DailyKChart rows={rows} /> : null}
-            <p className="kline-note">走势标签只打最后一根日K实算命中。分时无本地分钟K，不画。暂无 AI 个股分析。</p>
+            {chartLoading ? (
+              <div className="kline-empty">{intraTab ? "加载分钟K…" : "加载日K…"}</div>
+            ) : null}
+            {chartError ? (
+              <div className="kline-empty">
+                {(chartError as Error).message || (intraTab ? "分钟K读取失败" : "日K读取失败")}
+              </div>
+            ) : null}
+            {!chartLoading && !chartError && chartRows.length === 0 ? (
+              <div className="kline-empty">{intraTab ? "无分钟数据" : "无日K数据"}</div>
+            ) : null}
+            {chartRows.length > 0 ? <DailyKChart rows={chartRows} axis={intraTab ? "minute" : "day"} /> : null}
+            <p className="kline-note">
+              {tab === "d5"
+                ? "5日K由日K每5个交易日合成，缠论在该周期上独立计算。"
+                : tab === "m15"
+                  ? "15分K由1分钟K按交易日每15根合成，午休不跨段。缠论在该周期独立计算。无分钟权限时为空。"
+                  : tab === "m5"
+                    ? "5分K由1分钟K按交易日每5根合成，午休不跨段。缠论在该周期独立计算。无分钟权限时为空。"
+                    : tab === "minute"
+                      ? "分时用当日1分钟K做缠论，不是均价分时线。无分钟权限时为空。"
+                      : "缠论：包含分型、笔、线段、笔中枢与线段中枢；同级别分解走势；MACD/斜率背驰出一买一卖，回抽不破为二类，中枢外回踩为三类。虚线未确认。"}
+            </p>
           </div>
         ) : universe === "stock" ? (
           <div className="kline-pane">

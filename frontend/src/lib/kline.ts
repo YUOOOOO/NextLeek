@@ -38,6 +38,103 @@ export function klineDate(v: unknown): string {
   return String(v ?? "").slice(0, 10);
 }
 
+export function klineStamp(v: unknown): string {
+  if (v instanceof Date && Number.isFinite(v.getTime())) {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())} ${p(v.getHours())}:${p(v.getMinutes())}`;
+  }
+  const raw = String(v ?? "").trim().replace("T", " ");
+  if (raw.length >= 16) return raw.slice(0, 16);
+  return raw.slice(0, 10);
+}
+
+export function klineAxisLabel(stamp: string, axis: "day" | "minute"): string {
+  if (axis === "minute") {
+    const time = stamp.slice(11, 16);
+    if (time >= "09:25" && time <= "09:45") return `${stamp.slice(5, 10)} ${time}`;
+    return time || stamp.slice(0, 10);
+  }
+  return stamp.slice(0, 10);
+}
+
+function attachMA(rows: KlineRow[]): void {
+  for (const period of [5, 10, 20] as const) {
+    const key = `ma${period}` as const;
+    const window: number[] = [];
+    let sum = 0;
+    for (const row of rows) {
+      const close = num(row.close);
+      if (close == null) {
+        row[key] = null;
+        continue;
+      }
+      window.push(close);
+      sum += close;
+      if (window.length > period) sum -= window.shift() ?? 0;
+      row[key] = window.length === period ? sum / period : null;
+    }
+  }
+}
+
+function resampleChunks(rows: KlineRow[], size: number): KlineRow[] {
+  const out: KlineRow[] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    const chunk = rows.slice(i, i + size);
+    const first = chunk[0];
+    const last = chunk[chunk.length - 1];
+    let high = Number.NEGATIVE_INFINITY;
+    let low = Number.POSITIVE_INFINITY;
+    let volume = 0;
+    let amount = 0;
+    for (const row of chunk) {
+      const h = num(row.high);
+      const l = num(row.low);
+      if (h != null) high = Math.max(high, h);
+      if (l != null) low = Math.min(low, l);
+      volume += num(row.volume) ?? 0;
+      amount += num(row.amount) ?? 0;
+    }
+    out.push({
+      date: last.date,
+      open: first.open,
+      close: last.close,
+      high: Number.isFinite(high) ? high : last.high,
+      low: Number.isFinite(low) ? low : last.low,
+      volume,
+      amount,
+    });
+  }
+  return out;
+}
+
+export function resampleKline(rows: KlineRow[], size: number): KlineRow[] {
+  if (size <= 1) return rows;
+  const out = resampleChunks(rows, size);
+  attachMA(out);
+  return out;
+}
+
+export function resampleMinuteKline(rows: KlineRow[], size: number): KlineRow[] {
+  if (size <= 1) return rows;
+  const groups: KlineRow[][] = [];
+  let cur: KlineRow[] = [];
+  let day = "";
+  for (const row of rows) {
+    const next = klineDate(row.date);
+    if (cur.length > 0 && next !== day) {
+      groups.push(cur);
+      cur = [];
+    }
+    day = next;
+    cur.push(row);
+  }
+  if (cur.length > 0) groups.push(cur);
+  const out = groups.flatMap((group) => resampleChunks(group, size));
+  attachMA(out);
+  return out;
+}
+
+
 function flagged(row: KlineRow, key: string): boolean {
   const v = row[key];
   return v === true || v === 1 || v === "1";

@@ -539,6 +539,25 @@ export type KlineDailyResponse = {
   source?: string;
 };
 
+export type KlineMinuteResponse = {
+  symbol: string;
+  name?: string | null;
+  date?: string;
+  rows: Array<Record<string, unknown>>;
+  source?: string;
+};
+
+export type KlineMinuteRangeResponse = {
+  symbol: string;
+  name?: string | null;
+  sessions: Array<{
+    date: string;
+    prev_close?: number | null;
+    rows: Array<Record<string, unknown>>;
+  }>;
+  source?: string;
+};
+
 export type FinancialStatus = {
   available: boolean;
   tables?: Record<string, { rows?: number; symbols?: number }>;
@@ -814,6 +833,10 @@ export const api = {
     }),
   klineDaily: (symbol: string, days = 250) =>
     request<KlineDailyResponse>(`/api/kline/daily?symbol=${encodeURIComponent(symbol)}&days=${days}`),
+  klineMinute: (symbol: string) =>
+    request<KlineMinuteResponse>(`/api/kline/minute?symbol=${encodeURIComponent(symbol)}&live=true`),
+  klineMinuteRange: (symbol: string, days = 10) =>
+    request<KlineMinuteRangeResponse>(`/api/kline/minute-range?symbol=${encodeURIComponent(symbol)}&days=${days}`),
   financialStatus: () => request<FinancialStatus>("/api/financials/status"),
   financialMetrics: (symbol: string) =>
     request<{ data: FinancialMetricRecord[] }>(

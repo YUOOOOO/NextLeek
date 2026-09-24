@@ -22,6 +22,8 @@ export const queryKeys = {
   news: (source: string, q: string, symbol: string) => ["news", source, q, symbol] as const,
   newsMembers: (kind: string, name: string) => ["news", "members", kind, name] as const,
   klineDaily: (symbol: string) => ["kline", "daily", symbol] as const,
+  klineMinute: (symbol: string) => ["kline", "minute", symbol] as const,
+  klineMinuteRange: (symbol: string) => ["kline", "minute-range", symbol] as const,
   financialStatus: ["financials", "status"] as const,
   financialMetrics: (symbol: string) => ["financials", "metrics", symbol] as const,
 };
