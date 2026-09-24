@@ -24,7 +24,9 @@ body,
 .m-main {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .m-tabbar {
@@ -63,8 +65,11 @@ body,
 .m-main .universe-shell,
 .m-main .ide,
 .m-main .wl-page {
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
 }
 .m-main .ide-side {
   display: none;
