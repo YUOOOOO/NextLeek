@@ -28,8 +28,8 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/strategies", label: "策略", icon: ScanSearch },
-  { to: "/news", label: "新闻", icon: Newspaper },
   { to: "/monitor", label: "监控", icon: Radio },
+  { to: "/news", label: "新闻", icon: Newspaper },
   { to: "/data", label: "数据", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
 ];

@@ -1,18 +1,21 @@
-"""财经快讯聚合：财联社 telegraph + 东财 7x24 / 个股搜索。
+"""财经快讯 + 雪球/微博公开动态。
 
-数据源与解析对齐 QuantMind TradingAgents-astock `a_stock.get_global_news` /
-`_fetch_news_eastmoney`，不依赖 Huntly。
+快讯：财联社 telegraph、东财 7x24 / 个股搜索。
+动态：微博财经话题榜（公开）；雪球热帖需 NEXTLEEK_XUEQIU_COOKIE（站点 WAF 拦游客）。
 """
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
+import re
 import threading
 import time
 import uuid
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -50,6 +53,18 @@ def _parse_unix(value: Any) -> str:
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
     except (TypeError, ValueError, OSError):
         return str(value)
+
+_HTML_TAG = re.compile(r"<[^>]+>")
+_NEWS_SOURCES = {"all", "cls", "eastmoney", "stock", "weibo", "xueqiu"}
+
+
+def _strip_html(value: Any) -> str:
+    text = html.unescape(str(value or ""))
+    return _HTML_TAG.sub(" ", text).replace("\xa0", " ")
+
+
+def _plain(value: Any) -> str:
+    return re.sub(r"\s+", " ", _strip_html(value)).strip()
 
 
 def fetch_cls(limit: int = 50) -> list[dict[str, Any]]:
@@ -188,6 +203,108 @@ def _sort_key(item: dict[str, Any]) -> str:
     return str(item.get("published_at") or "")
 
 
+def fetch_weibo_public(limit: int = 50) -> list[dict[str, Any]]:
+    """微博公开财经话题动态（topic_band category=7，免登录）。"""
+    limit = max(1, min(int(limit or 50), 80))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page in (1, 2, 3):
+        if len(out) >= limit:
+            break
+        response = _http().get(
+            "https://weibo.com/ajax/statuses/topic_band",
+            params={"sid": "v_weibodesktop", "category": "7", "page": str(page)},
+            headers={"Referer": "https://weibo.com/", "Accept": "application/json, text/plain, */*"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("ok") not in (1, True, "1") and not (payload.get("data") or {}).get("statuses"):
+            raise RuntimeError(payload.get("msg") or "微博话题榜不可用")
+        rows = (payload.get("data") or {}).get("statuses") or []
+        if not rows:
+            break
+        for item in rows:
+            topic = _plain(item.get("topic") or item.get("summary") or "")
+            mblog = item.get("mblog") or {}
+            content = _plain(mblog.get("text") or item.get("summary") or "")
+            if not topic and not content:
+                continue
+            if not topic:
+                topic = content[:80]
+            key = topic or content
+            if key in seen:
+                continue
+            seen.add(key)
+            path = quote(f"#{topic}#", safe="")
+            url = f"https://s.weibo.com/weibo?q={path}"
+            mid = str(item.get("mid") or "")
+            out.append(
+                {
+                    "id": _item_id("weibo", mid, topic),
+                    "title": topic,
+                    "content": content[:800],
+                    "published_at": "",
+                    "source": "weibo",
+                    "source_label": "微博",
+                    "url": url,
+                }
+            )
+            if len(out) >= limit:
+                break
+    return out
+
+
+def fetch_xueqiu_public(limit: int = 50) -> list[dict[str, Any]]:
+    """雪球热帖。游客会被阿里云 WAF 拦；配置 NEXTLEEK_XUEQIU_COOKIE 后走 hots.json。"""
+    from app.config import get_settings
+
+    cookie = (get_settings().xueqiu_cookie or "").strip()
+    if not cookie:
+        raise RuntimeError("雪球公开接口被 WAF 拦截，请在 .env 设置 NEXTLEEK_XUEQIU_COOKIE")
+    response = _http().get(
+        "https://xueqiu.com/statuses/hots.json",
+        params={"a": "1", "count": str(limit), "page": "1", "scope": "day", "type": "status", "meigu": "0"},
+        headers={
+            "Referer": "https://xueqiu.com/",
+            "Accept": "application/json, text/plain, */*",
+            "Cookie": cookie,
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if isinstance(payload, dict) and payload.get("error_code"):
+        raise RuntimeError(payload.get("error_description") or f"雪球错误 {payload.get('error_code')}")
+    rows = payload if isinstance(payload, list) else payload.get("items") or payload.get("list") or []
+    out: list[dict[str, Any]] = []
+    for item in rows or []:
+        user = item.get("user") or {}
+        author = _plain(user.get("screen_name") or "")
+        title = _plain(item.get("title") or "")
+        content = _plain(item.get("text") or item.get("description") or "")
+        if not title:
+            title = content[:80]
+        if not title:
+            continue
+        target = str(item.get("target") or "")
+        url = target if target.startswith("http") else f"https://xueqiu.com{target}"
+        published = _parse_unix(item.get("created_at"))
+        label = f"雪球·{author}" if author else "雪球"
+        out.append(
+            {
+                "id": _item_id("xueqiu", url, title, published),
+                "title": title,
+                "content": content[:800],
+                "published_at": published,
+                "source": "xueqiu",
+                "source_label": label,
+                "url": url,
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 def list_news(
     *,
     source: str = "all",
@@ -196,7 +313,7 @@ def list_news(
     limit: int = 80,
 ) -> dict[str, Any]:
     source = (source or "all").strip().lower()
-    if source not in {"all", "cls", "eastmoney", "stock"}:
+    if source not in _NEWS_SOURCES:
         source = "all"
     keyword = keyword.strip()
     symbol = symbol.strip()
@@ -225,7 +342,10 @@ def list_news(
             _safe("cls", lambda: fetch_cls(limit))
         if source in {"all", "eastmoney"}:
             _safe("eastmoney", lambda: fetch_eastmoney_wire(limit))
-
+        if source == "weibo":
+            _safe("weibo", lambda: fetch_weibo_public(limit))
+        if source == "xueqiu":
+            _safe("xueqiu", lambda: fetch_xueqiu_public(limit))
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     needle = keyword.lower()
@@ -239,6 +359,9 @@ def list_news(
         unique.append(item)
     unique.sort(key=_sort_key, reverse=True)
     unique = unique[:limit]
+    from app.services.news_tags import tag_news_items
+
+    unique = tag_news_items(unique)
     payload = {
         "items": unique,
         "total": len(unique),

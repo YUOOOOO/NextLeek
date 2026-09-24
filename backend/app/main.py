@@ -76,6 +76,9 @@ async def _start_market_data(app: FastAPI) -> None:
     repo = KlineRepository(store)
     app.state.datastore = store
     app.state.repo = repo
+    from app.strategy.market_data import _set_repo
+
+    _set_repo(repo)
     app.state.indicators_ready = False
     repo._on_warmup_done = lambda: setattr(app.state, "indicators_ready", True)  # noqa: SLF001
     repo.refresh_cache(background=True)

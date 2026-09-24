@@ -88,3 +88,19 @@ def test_overlay_copies_enriched_tags_then_live_quote() -> None:
     assert rows[0]["vol_ratio_5d"] == 8.7
     assert rows[0]["signal_ma20_breakout"] is True
     assert rows[0]["signal_volume_surge"] is True
+
+
+def test_monitor_snapshot_ok_without_watches(client) -> None:
+    from tests.test_auth import ADMIN, setup_admin
+
+    setup_admin(client)
+    login = client.post("/api/auth/login", json={"account": ADMIN["username"], "password": ADMIN["password"]})
+    assert login.status_code == 200
+    response = client.get("/api/monitor?asset_type=stock")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["asset_type"] == "stock"
+    assert body["strategies"] == []
+    assert body["watch_count"] == 0
+    assert body["hit_count"] == 0
+    assert isinstance(body["events"], list)

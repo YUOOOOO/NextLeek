@@ -4,14 +4,17 @@ import { Check, ExternalLink, Plus, RefreshCw, Sparkles, X } from "lucide-react"
 import { api, type NewsItem } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { AiDock } from "../components/AiDock";
+import { StockKlineDialog, type StockRef } from "../components/StockKlineDialog";
 import { AiChatProvider, NEWS_INTRO, useAiChat } from "../lib/aiChat";
 
-type SourceTab = "all" | "cls" | "eastmoney";
+type SourceTab = "all" | "cls" | "eastmoney" | "weibo" | "xueqiu";
 
 const TABS: Array<{ id: SourceTab; label: string }> = [
   { id: "all", label: "全部" },
   { id: "cls", label: "财联社" },
   { id: "eastmoney", label: "东财 7x24" },
+  { id: "weibo", label: "微博" },
+  { id: "xueqiu", label: "雪球" },
 ];
 
 const MAX_BASKET = 12;
@@ -31,6 +34,8 @@ function relativeTime(value: string): string {
 function sourceClass(source: string): string {
   if (source === "cls") return "news-badge is-cls";
   if (source === "eastmoney") return "news-badge is-em";
+  if (source === "weibo") return "news-badge is-weibo";
+  if (source === "xueqiu") return "news-badge is-xq";
   return "news-badge";
 }
 
@@ -44,13 +49,160 @@ function formatBasket(items: NewsItem[], question: string): string {
   const body = items
     .map((item, index) => {
       const summary = clip(item.content || "");
-      return `${index + 1}. [${item.source_label} ${item.published_at}] ${item.title}${summary ? `\n摘要：${summary}` : ""}`;
+      const tags = [
+        ...(item.stocks ?? []).map((stock) => `${stock.name}(${stock.symbol})`),
+        ...(item.boards ?? []),
+        ...(item.concepts ?? []),
+        ...(item.industries ?? []),
+      ];
+      const tagLine = tags.length ? `\n标的：${tags.join("、")}` : "";
+      return `${index + 1}. [${item.source_label} ${item.published_at}] ${item.title}${summary ? `\n摘要：${summary}` : ""}${tagLine}`;
     })
     .join("\n\n");
   const extra = question.trim();
   return extra
     ? `请分析以下快讯：\n\n${body}\n\n用户问题：${extra}`
     : `请分析以下快讯对 A 股盘面的影响，给出要点、主线或板块线索，以及需要继续观察的风险。\n\n${body}`;
+}
+
+function NewsTags({
+  item,
+  onStock,
+  onBoard,
+}: {
+  item: NewsItem;
+  onStock: (ref: StockRef) => void;
+  onBoard: (kind: "board" | "concept" | "industry", name: string) => void;
+}) {
+  const chips: Array<{
+    key: string;
+    label: string;
+    kind: "stock" | "board" | "concept" | "industry";
+    symbol?: string;
+  }> = [
+    ...(item.stocks ?? []).map((stock) => ({
+      key: `s-${stock.symbol}`,
+      label: stock.name,
+      kind: "stock" as const,
+      symbol: stock.symbol,
+    })),
+    ...(item.boards ?? []).map((board) => ({
+      key: `b-${board}`,
+      label: board,
+      kind: "board" as const,
+    })),
+    ...(item.concepts ?? []).map((name) => ({
+      key: `c-${name}`,
+      label: name,
+      kind: "concept" as const,
+    })),
+    ...(item.industries ?? []).map((name) => ({
+      key: `i-${name}`,
+      label: name,
+      kind: "industry" as const,
+    })),
+  ];
+  if (!chips.length) return null;
+  return (
+    <div className="news-tags">
+      {chips.map((chip) => (
+        <button
+          key={chip.key}
+          type="button"
+          className={`news-tag is-${chip.kind}`}
+          title={`查看${chip.label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (chip.kind === "stock" && chip.symbol) onStock({ symbol: chip.symbol, name: chip.label });
+            else if (chip.kind !== "stock") onBoard(chip.kind, chip.label);
+          }}
+        >
+          {chip.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const BOARD_KIND_LABEL: Record<string, string> = {
+  board: "板块",
+  concept: "概念",
+  industry: "行业",
+};
+
+function BoardMembersDialog({
+  kind,
+  name,
+  onClose,
+  onStock,
+}: {
+  kind: "board" | "concept" | "industry";
+  name: string;
+  onClose: () => void;
+  onStock: (ref: StockRef) => void;
+}) {
+  const members = useQuery({
+    queryKey: queryKeys.newsMembers(kind, name),
+    queryFn: () => api.newsMembers(kind, name),
+  });
+  const rows = members.data?.rows ?? [];
+  const emptyHint =
+    kind === "board"
+      ? "没有成分股"
+      : "暂无成分股。概念/行业需先在数据页拉取同花顺扩展表。";
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="kline-root news-board-root" role="dialog" aria-modal="true" aria-label={`${name} 成分`}>
+      <button className="kline-scrim" type="button" aria-label="关闭" onClick={onClose} />
+      <section className="kline-dialog news-board-dialog">
+        <header className="kline-head">
+          <div>
+            <div className="kline-title">
+              {name}
+              <span className="kline-code">{BOARD_KIND_LABEL[kind] || kind}</span>
+            </div>
+            <div className="kline-quote">
+              {members.data?.total != null
+                ? members.data.total > rows.length
+                  ? `显示 ${rows.length} / ${members.data.total} 只`
+                  : `${members.data.total} 只`
+                : ""}
+            </div>
+          </div>
+          <button className="btn-quiet" type="button" onClick={onClose} aria-label="关闭">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="news-board-list">
+          {members.isLoading ? <p className="muted">加载成分…</p> : null}
+          {members.isError ? <p className="muted">成分加载失败</p> : null}
+          {!members.isLoading && !rows.length ? <p className="muted">{emptyHint}</p> : null}
+          {rows.map((row) => (
+            <button
+              key={row.symbol}
+              type="button"
+              className="news-board-row"
+              onClick={() => onStock({ symbol: row.symbol, name: row.name })}
+            >
+              <span>
+                <strong>{row.name}</strong>
+                <span className="kline-code">{row.symbol}</span>
+              </span>
+              <span className="news-tag is-board">{row.board}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 export function News() {
@@ -65,6 +217,8 @@ function NewsShell() {
   const { ask, pending, prompt } = useAiChat();
   const [source, setSource] = useState<SourceTab>("all");
   const [keyword, setKeyword] = useState("");
+  const [preview, setPreview] = useState<StockRef | null>(null);
+  const [board, setBoard] = useState<{ kind: "board" | "concept" | "industry"; name: string } | null>(null);
   const [symbol, setSymbol] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [basket, setBasket] = useState<NewsItem[]>([]);
@@ -209,6 +363,7 @@ function NewsShell() {
                       </button>
                     </div>
                     <strong>{item.title}</strong>
+                    <NewsTags item={item} onStock={setPreview} onBoard={(kind, name) => setBoard({ kind, name })} />
                     {item.content ? <p>{item.content}</p> : null}
                   </div>
                 );
@@ -232,6 +387,7 @@ function NewsShell() {
                     </button>
                   </div>
                   <h2>{selected.title}</h2>
+                  <NewsTags item={selected} onStock={setPreview} onBoard={(kind, name) => setBoard({ kind, name })} />
                   <p>{selected.content || "暂无正文摘要"}</p>
                   {selected.url ? (
                     <a className="news-link" href={selected.url} target="_blank" rel="noreferrer">
@@ -316,6 +472,15 @@ function NewsShell() {
           </button>
         </nav>
       </aside>
+      {board ? (
+        <BoardMembersDialog
+          kind={board.kind}
+          name={board.name}
+          onClose={() => setBoard(null)}
+          onStock={setPreview}
+        />
+      ) : null}
+      {preview ? <StockKlineDialog {...preview} onClose={() => setPreview(null)} /> : null}
     </div>
   );
 }

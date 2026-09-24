@@ -22,6 +22,20 @@ def list_news(
     return news_svc.list_news(source=source, keyword=q, symbol=symbol, limit=limit)
 
 
+@router.get("/members")
+def news_members(
+    kind: str = Query("board"),
+    name: str = Query("", min_length=1, max_length=40),
+    limit: int = Query(200, ge=1, le=500),
+    _: User = Depends(require_user),
+) -> dict:
+    from app.services.news_tags import list_members
+
+    kind = kind.strip().lower()
+    if kind not in {"board", "concept", "industry"}:
+        raise HTTPException(status_code=400, detail="kind 须为 board/concept/industry")
+    return list_members(kind, name, limit=limit)
+
 @router.post("/analyze")
 async def analyze_news(
     payload: NewsAnalyzeIn,

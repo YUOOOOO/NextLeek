@@ -105,6 +105,11 @@ class Settings(BaseSettings):
 
     # TickFlow
     tickflow_api_key: str = Field(default="", description="留空启用 free 模式")
+    xueqiu_cookie: str = Field(
+        default="",
+        description="雪球游客/登录 Cookie，未配置时雪球源会因 WAF 失败",
+        validation_alias=_nextleek_alias("NEXTLEEK_XUEQIU_COOKIE", "XUEQIU_COOKIE"),
+    )
 
     # AI
     ai_provider: str = "openai_compat"

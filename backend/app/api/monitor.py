@@ -168,6 +168,7 @@ def monitor_snapshot(
     ]
     stock_frame, stock_as_of = _load_frame(request, "stock")
     frame, as_of = (stock_frame, stock_as_of) if asset_type == "stock" else _load_frame(request, asset_type)
+    monitor = getattr(request.app.state, "user_strategy_monitor", None)
     if monitor is not None:
         monitor.fill_missing(request.app.state, user.id, stock_as_of, stock_frame)
     pools = monitor.pools_for_user(user.id) if monitor is not None else {}

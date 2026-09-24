@@ -20,6 +20,7 @@ export const queryKeys = {
   monitor: (assetType: AssetType) => ["monitor", assetType] as const,
   displaySignals: (assetType: AssetType) => ["display-signals", assetType] as const,
   news: (source: string, q: string, symbol: string) => ["news", source, q, symbol] as const,
+  newsMembers: (kind: string, name: string) => ["news", "members", kind, name] as const,
   klineDaily: (symbol: string) => ["kline", "daily", symbol] as const,
   financialStatus: ["financials", "status"] as const,
   financialMetrics: (symbol: string) => ["financials", "metrics", symbol] as const,

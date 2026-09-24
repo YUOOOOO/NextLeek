@@ -552,6 +552,12 @@ export type FinancialMetricRecord = {
   [key: string]: unknown;
 };
 
+export type NewsStockTag = {
+  symbol: string;
+  name: string;
+  board: string;
+};
+
 export type NewsItem = {
   id: string;
   title: string;
@@ -560,6 +566,17 @@ export type NewsItem = {
   source: string;
   source_label: string;
   url: string;
+  stocks?: NewsStockTag[];
+  boards?: string[];
+  concepts?: string[];
+  industries?: string[];
+};
+
+export type NewsMembers = {
+  kind: "board" | "concept" | "industry" | string;
+  name: string;
+  total: number;
+  rows: NewsStockTag[];
 };
 
 export type NewsFeed = {
@@ -786,6 +803,10 @@ export const api = {
     const suffix = query.toString();
     return request<NewsFeed>(`/api/news${suffix ? `?${suffix}` : ""}`);
   },
+  newsMembers: (kind: string, name: string) =>
+    request<NewsMembers>(
+      `/api/news/members?kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name)}`,
+    ),
   analyzeNews: (prompt: string) =>
     request<{ intent?: "chat"; response?: string }>("/api/news/analyze", {
       method: "POST",
