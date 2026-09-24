@@ -489,13 +489,17 @@ export type StockMonitorWatch = {
   id: string;
   symbol: string;
   name: string;
+  theory?: string;
   period: string;
   period_label: string;
   signal: string;
   signal_label: string;
+  signal_labels?: string[];
+  hit_signals?: string[];
   hit?: boolean;
   hit_key?: string | null;
   summary?: string;
+  position?: string;
   close?: number | null;
   change_pct?: number | null;
 };
@@ -804,7 +808,7 @@ export const api = {
     request<ResearchResult>(`/api/strategies/${id}/research`, { method: "POST", body: JSON.stringify(body) }),
   monitorSnapshot: (assetType: AssetType = "stock") =>
     request<MonitorSnapshot>(`/api/monitor?asset_type=${assetType}`),
-  createStockMonitor: (body: { symbol: string; name?: string; period?: string; signal?: string }) =>
+  createStockMonitor: (body: { symbol: string; name?: string; period?: string; theory?: string; signal?: string }) =>
     request<StockMonitorWatch>("/api/monitor/stocks", { method: "POST", body: JSON.stringify(body) }),
   deleteStockMonitor: (id: string) =>
     request<void>(`/api/monitor/stocks/${encodeURIComponent(id)}`, { method: "DELETE" }),

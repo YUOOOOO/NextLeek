@@ -182,8 +182,8 @@ class StockMonitor(Base):
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     name: Mapped[str] = mapped_column(String(64), default="")
     period: Mapped[str] = mapped_column(String(8), default="day")
-    signal: Mapped[str] = mapped_column(String(8), default="b2")
-    last_hit_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signal: Mapped[str] = mapped_column(String(8), default="all")
+    last_hit_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_eval_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

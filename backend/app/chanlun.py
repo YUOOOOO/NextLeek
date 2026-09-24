@@ -665,6 +665,49 @@ def chanlun_summary(result: ChanlunResult) -> str:
     return " · ".join(p for p in parts if p)
 
 
+def chanlun_position(result: ChanlunResult, bar_count: int) -> str:
+    last = result.zoushi[-1] if result.zoushi else None
+    if last and last.kind == "up":
+        stage = "上涨趋势"
+    elif last and last.kind == "down":
+        stage = "下跌趋势"
+    elif last:
+        stage = "盘整"
+    elif result.xianduan:
+        stage = "走势未成"
+    elif result.bi:
+        stage = "线段未成"
+    elif result.fenxing:
+        stage = "笔未成"
+    else:
+        stage = "K线不足"
+    last_xd = result.xianduan[-1] if result.xianduan else None
+    last_bi = result.bi[-1] if result.bi else None
+    if last_xd is not None:
+        direction = "线段向上" if last_xd.to.kind == "top" else "线段向下"
+    elif last_bi is not None:
+        direction = "笔向上" if last_bi.to.kind == "top" else "笔向下"
+    else:
+        direction = ""
+    last_sig = result.signals[-1] if result.signals else None
+    sig = ""
+    if last_sig is not None:
+        ago = max(0, bar_count - 1 - last_sig.at.x)
+        when = "最新K" if ago <= 0 else ("1根前" if ago == 1 else f"{ago}根前")
+        sig = f"{SIGNAL_LABELS[last_sig.kind]} · {when}"
+    x = bar_count - 1
+    hub_label = ""
+    if result.xd_zhongshu:
+        hub = result.xd_zhongshu[-1]
+        if hub.start_x <= x <= hub.end_x:
+            hub_label = "中枢内"
+    elif result.zhongshu:
+        hub = result.zhongshu[-1]
+        if hub.start_x <= x <= hub.end_x:
+            hub_label = "笔中枢内"
+    return " · ".join(part for part in (stage, direction, sig, hub_label) if part)
+
+
 def build_chanlun(rows: list[dict]) -> ChanlunResult:
     bars = include_bars(rows)
     fenxing = find_fenxing(bars, rows)

@@ -60,17 +60,46 @@ body,
   border-radius: 0;
 }
 
+.m-main .universe-shell,
+.m-main .ide,
+.m-main .wl-page {
+  height: 100%;
+  min-height: 0;
+}
+.m-main .ide-side {
+  display: none;
+}
+.m-main .universe-bar {
+  padding: 6px 10px 0;
+}
+.m-main .mon-toolbar {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.m-main .mon-toolbar-stat:nth-child(n + 5) {
+  display: none;
+}
 .mon-split {
   flex-direction: column;
+  overflow: auto;
 }
-
 .mon-watches,
 .mon-feed {
   width: 100%;
   flex: none;
-  max-height: 42%;
+  max-height: none;
+  border-right: 0;
 }
-
+.mon-watches {
+  border-bottom: 1px solid var(--ds-color-border-default);
+}
+.mon-board {
+  min-height: 240px;
+  flex: 1;
+}
+.mon-pool-meta {
+  white-space: normal;
+}
 .ide-editor {
   min-height: 0;
 }

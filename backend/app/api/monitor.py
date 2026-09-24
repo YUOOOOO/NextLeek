@@ -26,7 +26,8 @@ class StockMonitorIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=16)
     name: str = ""
     period: str = "day"
-    signal: str = "b2"
+    theory: str = "chanlun"
+    signal: str = "all"
 
 
 
@@ -259,6 +260,7 @@ def create_stock_monitor(
             name=name,
             period=payload.period,
             signal=payload.signal,
+            theory=payload.theory,
         )
     except stock_mon.StockMonitorError as exc:
         raise _stock_http(exc) from exc

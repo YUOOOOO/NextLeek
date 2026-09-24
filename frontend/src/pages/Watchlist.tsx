@@ -65,36 +65,38 @@ export function Watchlist() {
         <span className="mon-col-count">{items.length} 只</span>
       </div>
       <div className="mon-add wl-search">
-        <input
-          className="mon-add-input"
-          value={picked ? `${picked.name} ${picked.symbol}` : query}
-          placeholder="代码 / 名称 / 拼音，如 000001、平安、payh"
-          onChange={(event) => {
-            setPicked(null);
-            setQuery(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && canAdd) add.mutate();
-          }}
-        />
-        {hits.length > 0 ? (
-          <div className="mon-add-hits">
-            {hits.map((item) => (
-              <button
-                key={item.symbol}
-                type="button"
-                onClick={() => {
-                  setPicked({ symbol: item.symbol, name: item.name });
-                  setQuery("");
-                }}
-              >
-                <span>{item.name}</span>
-                <span className="mon-sym-code">{item.symbol}</span>
-              </button>
-            ))}
+        <div className="wl-search-bar">
+          <div className="wl-search-field">
+            <input
+              className="mon-add-input"
+              value={picked ? `${picked.name} ${picked.symbol}` : query}
+              placeholder="代码 / 名称 / 拼音，如 000001、平安、payh"
+              onChange={(event) => {
+                setPicked(null);
+                setQuery(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && canAdd) add.mutate();
+              }}
+            />
+            {hits.length > 0 ? (
+              <div className="mon-add-hits">
+                {hits.map((item) => (
+                  <button
+                    key={item.symbol}
+                    type="button"
+                    onClick={() => {
+                      setPicked({ symbol: item.symbol, name: item.name });
+                      setQuery("");
+                    }}
+                  >
+                    <span>{item.name}</span>
+                    <span className="mon-sym-code">{item.symbol}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        <div className="mon-add-row">
           <button type="button" className="btn btn-primary" disabled={!canAdd || add.isPending} onClick={() => add.mutate()}>
             添加
           </button>

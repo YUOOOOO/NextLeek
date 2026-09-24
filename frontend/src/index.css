@@ -2116,6 +2116,15 @@ select {
 .mon-pool-meta {
   font-size: 11px;
   color: var(--ds-color-text-placeholder);
+  line-height: 1.35;
+  white-space: normal;
+}
+.mon-pos {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ds-color-text-secondary);
 }
 .mon-section {
   padding: 10px 12px 4px;
@@ -2145,6 +2154,37 @@ select {
   grid-template-columns: 1fr 1fr auto;
   gap: 6px;
 }
+.mon-add-field {
+  position: relative;
+}
+.mon-add-field .mon-add-hits {
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 8;
+}
+.mon-add-label {
+  color: var(--ds-color-text-placeholder);
+  font-size: 11px;
+}
+.mon-add-pos {
+  padding: 6px 8px;
+  border: 1px solid var(--ds-color-border-default);
+  border-radius: 4px;
+  background: var(--ds-color-bg-surface-1);
+  color: var(--ds-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.mon-add-pos strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ds-color-text-primary);
+  font-weight: 650;
+}
+.mon-theory-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
 .mon-add-hits {
   position: absolute;
   z-index: 5;
@@ -2155,7 +2195,9 @@ select {
   overflow: auto;
   border: 1px solid var(--ds-color-border-default);
   border-radius: 4px;
-  background: var(--ds-color-bg-container);
+  background: var(--ds-color-bg-surface-1);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  isolation: isolate;
 }
 .mon-add-hits button {
   display: flex;
@@ -2284,11 +2326,24 @@ select {
   height: 100%;
 }
 .wl-search {
+  z-index: 6;
   padding: 10px 12px 8px;
 }
-.wl-search .mon-add-row {
-  grid-template-columns: auto;
-  justify-content: start;
+.wl-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wl-search-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.wl-search .mon-add-hits {
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 8;
 }
 
 

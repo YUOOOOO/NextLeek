@@ -9,6 +9,7 @@ import { UniverseShell } from "../components/UniverseBar";
 import { AiChatProvider, MONITOR_INTRO } from "../lib/aiChat";
 import { trendTags } from "../lib/kline";
 import { useUniverse } from "../lib/universe";
+import { isMobileApp } from "../lib/device";
 
 const KIND_LABEL: Record<string, string> = {
   formula: "公式",
@@ -17,25 +18,17 @@ const KIND_LABEL: Record<string, string> = {
   chanlun: "缠论",
 };
 
-const SIGNAL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "b1", label: "买1" },
-  { value: "b2", label: "买2" },
-  { value: "b3", label: "买3" },
-  { value: "s1", label: "卖1" },
-  { value: "s2", label: "卖2" },
-  { value: "s3", label: "卖3" },
-];
+const THEORY_OPTIONS: Array<{ value: string; label: string }> = [{ value: "chanlun", label: "缠论" }];
 
-const PERIOD_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "day", label: "日K" },
-  { value: "d5", label: "5日K" },
-];
 
 type BoardRow = MonitorRow & {
   strategy: { id: string; name: string; kind: string };
   hit?: boolean;
   summary?: string;
+  position?: string;
+  signal?: string;
   signal_label?: string;
+  signal_labels?: string[];
   period_label?: string;
 };
 
@@ -82,6 +75,7 @@ function useMonitorStream() {
 }
 
 export function Monitor() {
+  const mobile = isMobileApp();
   useMonitorStream();
   const { universe } = useUniverse();
   const snapshot = useQuery({
@@ -105,13 +99,13 @@ export function Monitor() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<{ symbol: string; name: string } | null>(null);
-  const [period, setPeriod] = useState("day");
-  const [signal, setSignal] = useState("b2");
+  const [theory, setTheory] = useState("chanlun");
   const search = useQuery({
     queryKey: ["instruments", "search", query],
     queryFn: () => api.searchInstruments(query),
     enabled: query.trim().length >= 1,
   });
+  const addTarget = picked ?? (query.trim() ? search.data?.results[0] ?? null : null);
 
   const stopWatch = useMutation({
     mutationFn: (id: string) => api.stopStrategyMonitor(id),
@@ -127,8 +121,7 @@ export function Monitor() {
       return api.createStockMonitor({
         symbol: target.symbol,
         name: target.name,
-        period,
-        signal,
+        theory,
       });
     },
     onSuccess: () => {
@@ -283,11 +276,14 @@ export function Monitor() {
       change_pct: item.change_pct,
       hit: item.hit,
       summary: item.summary,
+      position: item.position,
+      signal: item.signal,
       signal_label: item.signal_label,
+      signal_labels: item.signal_labels ?? [],
       period_label: item.period_label,
       strategy: {
         id: stockKey(item.id),
-        name: `${item.signal_label} · ${item.period_label}`,
+        name: item.signal === "all" ? "缠论" : `${item.signal_label} · ${item.period_label}`,
         kind: "chanlun",
       },
     }));
@@ -324,7 +320,7 @@ export function Monitor() {
   const data = snapshot.data;
   const emptyWatches = listTab === "stock" ? stockWatches.length === 0 : liveRows.length === 0;
   const stockHits = stockWatches.filter((item) => item.hit).length;
-  const canAdd = Boolean(picked || search.data?.results[0]);
+  const canAdd = Boolean(addTarget);
   const showRuleCol = selectedId === "all" || selectedId === "stocks";
   const switchListTab = (tab: "strategy" | "stock") => {
     setListTab(tab);
@@ -418,44 +414,40 @@ export function Monitor() {
                     </>
                   ) : (
                     <>
-                      <div className="mon-section">缠论</div>
+                      <div className="mon-section">个股</div>
                       <div className="mon-add">
-                        <input
-                          className="mon-add-input"
-                          value={picked ? `${picked.name} ${picked.symbol}` : query}
-                          placeholder="代码 / 名称 / 拼音"
-                          onChange={(event) => {
-                            setPicked(null);
-                            setQuery(event.target.value);
-                          }}
-                        />
-                        {query.trim() && !picked && (search.data?.results.length ?? 0) > 0 ? (
-                          <div className="mon-add-hits">
-                            {search.data?.results.map((item) => (
-                              <button
-                                key={item.symbol}
-                                type="button"
-                                onClick={() => {
-                                  setPicked({ symbol: item.symbol, name: item.name });
-                                  setQuery("");
-                                }}
-                              >
-                                <span>{item.name}</span>
-                                <span className="mon-sym-code">{item.symbol}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        <div className="mon-add-row">
-                          <select value={period} onChange={(event) => setPeriod(event.target.value)}>
-                            {PERIOD_OPTIONS.map((item) => (
-                              <option key={item.value} value={item.value}>
-                                {item.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select value={signal} onChange={(event) => setSignal(event.target.value)}>
-                            {SIGNAL_OPTIONS.map((item) => (
+                        <div className="mon-add-field">
+                          <input
+                            className="mon-add-input"
+                            value={picked ? `${picked.name} ${picked.symbol}` : query}
+                            placeholder="代码 / 名称 / 拼音"
+                            onChange={(event) => {
+                              setPicked(null);
+                              setQuery(event.target.value);
+                            }}
+                          />
+                          {query.trim() && !picked && (search.data?.results.length ?? 0) > 0 ? (
+                            <div className="mon-add-hits">
+                              {search.data?.results.map((item) => (
+                                <button
+                                  key={item.symbol}
+                                  type="button"
+                                  onClick={() => {
+                                    setPicked({ symbol: item.symbol, name: item.name });
+                                    setQuery("");
+                                  }}
+                                >
+                                  <span>{item.name}</span>
+                                  <span className="mon-sym-code">{item.symbol}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="mon-add-label">理论</div>
+                        <div className="mon-add-row mon-theory-row">
+                          <select value={theory} onChange={(event) => setTheory(event.target.value)}>
+                            {THEORY_OPTIONS.map((item) => (
                               <option key={item.value} value={item.value}>
                                 {item.label}
                               </option>
@@ -481,21 +473,26 @@ export function Monitor() {
                           <span className="ide-row-name">全部</span>
                           <span className="mon-watch-count">{stockHits}</span>
                         </div>
-                        <div className="mon-pool-meta">{stockWatches.length} 条缠论</div>
+                        <div className="mon-pool-meta">{stockWatches.length} 只</div>
                       </button>
                       {stockWatches.map((item) => (
                         <button
                           key={item.id}
                           type="button"
                           className={`ide-row${selectedId === stockKey(item.id) ? " is-on" : ""}`}
-                          onClick={() => setSelectedId(stockKey(item.id))}
+                          onClick={() => {
+                            setSelectedId(stockKey(item.id));
+                            if (mobile) setPreview({ symbol: item.symbol, name: item.name });
+                          }}
                         >
                           <div className="ide-row-top">
                             <span className="ide-row-name">{item.name}</span>
                             <span className="mon-watch-count">{item.hit ? "中" : "等"}</span>
                           </div>
                           <div className="mon-pool-meta">
-                            {item.signal_label} · {item.period_label}
+                            {item.position || (item.hit && (item.signal_labels?.length ?? 0) > 0
+                              ? item.signal_labels!.join(" ")
+                              : item.signal_label || "缠论")}
                           </div>
                         </button>
                       ))}
@@ -509,9 +506,9 @@ export function Monitor() {
                     {selected
                       ? selected.strategy.name
                       : selectedStock
-                        ? `${selectedStock.name} ${selectedStock.signal_label}`
+                        ? `${selectedStock.name} ${selectedStock.position || selectedStock.signal_labels?.join(" ") || selectedStock.signal_label || "缠论"}`
                         : selectedId === "stocks"
-                          ? "个股缠论"
+                          ? "个股监控"
                           : "当前命中"}
                   </span>
                   <span className="mon-col-count">{boardRows.length} 只</span>
@@ -533,7 +530,7 @@ export function Monitor() {
                 {emptyWatches ? (
                   <div className="mon-empty">
                     {listTab === "stock"
-                      ? "还没有个股缠论监控。左侧搜索标的添加买卖点。"
+                      ? "还没有个股监控。搜索标的，选择理论后添加。命中买1/买2等会显示在列表和日志里。"
                       : "还没有策略监控。右侧从已有策略创建。"}
                   </div>
                 ) : boardRows.length === 0 ? (
@@ -544,7 +541,7 @@ export function Monitor() {
                       <thead>
                         <tr>
                           <th>标的</th>
-                          {showRuleCol ? <th>{listTab === "stock" ? "规则" : "策略"}</th> : null}
+                          {showRuleCol ? <th>{listTab === "stock" ? "理论" : "策略"}</th> : null}
                           <th>信号</th>
                           <th className="text-right">现价</th>
                           <th className="text-right">涨跌</th>
@@ -567,17 +564,22 @@ export function Monitor() {
                               {showRuleCol ? <td className="mon-sym-code">{row.strategy.name}</td> : null}
                               <td>
                                 <div className="kline-tags mon-tags">
-                                  {row.signal_label ? (
-                                    <span className={`kline-tag ${row.hit ? "is-bull" : "is-neutral"}`}>
-                                      {row.hit ? `出现${row.signal_label}` : `等待${row.signal_label}`}
-                                    </span>
-                                  ) : null}
+                                  {row.position ? <span className="mon-pos">{row.position}</span> : null}
+                                  {row.signal_labels && row.signal_labels.length > 0
+                                    ? row.signal_labels.map((label) => (
+                                        <span key={label} className="kline-tag is-bull">
+                                          出现{label}
+                                        </span>
+                                      ))
+                                    : null}
                                   {tags.map((tag) => (
                                     <span key={tag.id} className={`kline-tag is-${tag.tone}`}>
                                       {tag.label}
                                     </span>
                                   ))}
-                                  {!row.signal_label && tags.length === 0 ? <span className="mon-sym-code">—</span> : null}
+                                  {!row.position && !row.signal_labels?.length && tags.length === 0 ? (
+                                    <span className="mon-sym-code">—</span>
+                                  ) : null}
                                 </div>
                               </td>
                               <td className="text-right font-mono">{fmtPrice(row.close)}</td>
@@ -633,6 +635,7 @@ export function Monitor() {
             </div>
           )}
         </section>
+        {mobile ? null : (
         <aside className="ide-side">
           {sideOpen ? (
             <div className="ide-side-panel" style={{ width: sideWidth }}>
@@ -671,6 +674,7 @@ export function Monitor() {
             </button>
           </nav>
         </aside>
+        )}
         {preview ? <StockKlineDialog symbol={preview.symbol} name={preview.name} onClose={() => setPreview(null)} /> : null}
       </div>
       </UniverseShell>

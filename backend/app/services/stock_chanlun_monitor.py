@@ -10,14 +10,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.chanlun import SIGNAL_LABELS, build_chanlun, chanlun_summary
+from app.chanlun import SIGNAL_LABELS, build_chanlun, chanlun_position, chanlun_summary
 from app.models import StockMonitor
 from app.security import utcnow
 
 logger = logging.getLogger(__name__)
 
 PERIODS = {"day", "d5"}
-SIGNALS = set(SIGNAL_LABELS)
+THEORIES = {"chanlun"}
+SIGNALS = set(SIGNAL_LABELS) | {"all"}
 PERIOD_LABELS = {"day": "日K", "d5": "5日K"}
 RECENT_BARS = 20
 DAILY_LOOKBACK_DAYS = 800
@@ -43,11 +44,11 @@ def _normalize_symbol(symbol: str) -> str:
 
 def _validate(period: str, signal: str) -> tuple[str, str]:
     period = (period or "day").strip().lower()
-    signal = (signal or "b2").strip().lower()
+    signal = (signal or "all").strip().lower()
     if period not in PERIODS:
         raise StockMonitorError("周期仅支持日K / 5日K")
     if signal not in SIGNALS:
-        raise StockMonitorError("信号必须是买1/卖1/买2/卖2/买3/卖3")
+        raise StockMonitorError("信号必须是买1/卖1/买2/卖2/买3/卖3，或全部")
     return period, signal
 
 
@@ -56,10 +57,11 @@ def to_read(row: StockMonitor, extra: dict[str, Any] | None = None) -> dict[str,
         "id": row.id,
         "symbol": row.symbol,
         "name": row.name or row.symbol,
+        "theory": "chanlun",
         "period": row.period,
         "period_label": PERIOD_LABELS.get(row.period, row.period),
         "signal": row.signal,
-        "signal_label": SIGNAL_LABELS.get(row.signal, row.signal),
+        "signal_label": "缠论" if row.signal == "all" else SIGNAL_LABELS.get(row.signal, row.signal),
         "created_at": None if row.created_at is None else row.created_at.isoformat(),
     }
     if extra:
@@ -84,8 +86,11 @@ def create(
     symbol: str,
     name: str = "",
     period: str = "day",
-    signal: str = "b2",
+    signal: str = "all",
+    theory: str = "chanlun",
 ) -> StockMonitor:
+    if (theory or "chanlun").strip().lower() not in THEORIES:
+        raise StockMonitorError("暂只支持缠论")
     symbol = _normalize_symbol(symbol)
     period, signal = _validate(period, signal)
     existing = database.scalar(
@@ -183,17 +188,29 @@ def load_rows(app_state: Any, symbol: str, period: str) -> list[dict[str, Any]]:
 def evaluate_rows(rows: list[dict[str, Any]], signal: str) -> dict[str, Any]:
     result = build_chanlun(rows)
     summary = chanlun_summary(result)
-    matches = [s for s in result.signals if s.kind == signal]
-    last = matches[-1] if matches else None
-    recent = last is not None and last.at.x >= max(0, len(rows) - RECENT_BARS)
-    key = f"{last.kind}:{last.at.x}:{last.at.price}" if recent and last is not None else None
+    position = chanlun_position(result, len(rows))
+    kinds = list(SIGNAL_LABELS) if signal == "all" else [signal]
+    cutoff = max(0, len(rows) - RECENT_BARS)
+    hit_kinds: list[str] = []
+    keys: list[str] = []
+    last_date = None
+    for kind in kinds:
+        matches = [s for s in result.signals if s.kind == kind]
+        last = matches[-1] if matches else None
+        if last is not None and last.at.x >= cutoff:
+            hit_kinds.append(kind)
+            keys.append(f"{last.kind}:{last.at.x}:{last.at.price}")
+            last_date = last.at.date
     last_close = _num(rows[-1].get("close")) if rows else None
     last_pct = _num(rows[-1].get("change_pct")) if rows else None
     return {
-        "hit": bool(recent),
-        "hit_key": key,
+        "hit": bool(hit_kinds),
+        "hit_key": "|".join(keys) if keys else None,
+        "hit_signals": hit_kinds,
+        "signal_labels": [SIGNAL_LABELS.get(kind, kind) for kind in hit_kinds],
         "summary": summary,
-        "signal_at": None if last is None else last.at.date,
+        "position": position,
+        "signal_at": last_date,
         "close": last_close,
         "change_pct": last_pct,
         "xianduan": len(result.xianduan),
@@ -243,29 +260,34 @@ def evaluate_user(
             extra = _cached_eval(app_state, watch.symbol, watch.period, watch.signal)
         except Exception as exc:  # noqa: BLE001
             logger.warning("stock chanlun %s failed: %s", watch.symbol, exc)
-            extra = {"hit": False, "hit_key": None, "summary": "评估失败", "close": None, "change_pct": None}
+            extra = {"hit": False, "hit_key": None, "hit_signals": [], "signal_labels": [], "summary": "评估失败", "position": "", "close": None, "change_pct": None}
         hit_key = extra.get("hit_key")
-        if emit_events and not first and hit_key and hit_key != watch.last_hit_key:
-            label = SIGNAL_LABELS.get(watch.signal, watch.signal)
+        if emit_events and not first:
+            prev_keys = set(filter(None, (watch.last_hit_key or "").split("|")))
+            curr_keys = set(filter(None, str(hit_key or "").split("|")))
             period_label = PERIOD_LABELS.get(watch.period, watch.period)
-            events.append(
-                {
-                    "source": "stock_chanlun",
-                    "type": "signal_hit",
-                    "rule_id": watch.id,
-                    "strategy_id": watch.id,
-                    "user_id": user_id,
-                    "asset_type": "stock",
-                    "symbol": watch.symbol,
-                    "name": watch.name or watch.symbol,
-                    "message": f"{watch.name or watch.symbol} {period_label}出现缠论{label}",
-                    "price": extra.get("close"),
-                    "change_pct": extra.get("change_pct"),
-                    "signals": [label],
-                    "severity": "info",
-                    "ts": int(time.time() * 1000),
-                }
-            )
+            name = watch.name or watch.symbol
+            for key in sorted(curr_keys - prev_keys):
+                kind = key.split(":", 1)[0]
+                label = SIGNAL_LABELS.get(kind, kind)
+                events.append(
+                    {
+                        "source": "stock_chanlun",
+                        "type": "signal_hit",
+                        "rule_id": watch.id,
+                        "strategy_id": watch.id,
+                        "user_id": user_id,
+                        "asset_type": "stock",
+                        "symbol": watch.symbol,
+                        "name": name,
+                        "message": f"{name} {period_label}出现缠论{label}",
+                        "price": extra.get("close"),
+                        "change_pct": extra.get("change_pct"),
+                        "signals": [label],
+                        "severity": "info",
+                        "ts": int(time.time() * 1000),
+                    }
+                )
         if watch.last_hit_key != hit_key or watch.last_eval_at is None:
             watch.last_hit_key = hit_key
             watch.last_eval_at = utcnow()

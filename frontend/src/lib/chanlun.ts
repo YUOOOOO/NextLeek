@@ -609,13 +609,20 @@ export function buildSignals(xd: Xianduan[], xdZs: Zhongshu[], beichi: Beichi[])
   return out;
 }
 
+const SIGNAL_ZH: Record<SignalKind, string> = {
+  b1: "买1",
+  s1: "卖1",
+  b2: "买2",
+  s2: "卖2",
+  b3: "买3",
+  s3: "卖3",
+};
+
 export function chanlunSummary(result: ChanlunResult): string {
   const last = result.zoushi[result.zoushi.length - 1];
   const kind =
     last?.kind === "up" ? "上涨趋势" : last?.kind === "down" ? "下跌趋势" : last ? "盘整" : "";
-  const sig = result.signals
-    .map((s) => ({ b1: "买1", s1: "卖1", b2: "买2", s2: "卖2", b3: "买3", s3: "卖3" })[s.kind])
-    .join(" ");
+  const sig = result.signals.map((s) => SIGNAL_ZH[s.kind]).join(" ");
   return [
     `分型 ${result.fenxing.length}`,
     `笔 ${result.bi.length}`,
@@ -626,6 +633,62 @@ export function chanlunSummary(result: ChanlunResult): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+export type ChanlunPosition = {
+  trend: string;
+  xd: string;
+  lastLabel: string | null;
+  lastAgo: string | null;
+  inZhongshu: boolean;
+  text: string;
+};
+
+export function chanlunPosition(result: ChanlunResult, barCount: number): ChanlunPosition {
+  const lastZs = result.zoushi[result.zoushi.length - 1];
+  const lastXd = result.xianduan[result.xianduan.length - 1];
+  const lastBi = result.bi[result.bi.length - 1];
+  const trend = lastZs
+    ? lastZs.kind === "up"
+      ? "上涨趋势"
+      : lastZs.kind === "down"
+        ? "下跌趋势"
+        : "盘整"
+    : result.xianduan.length
+      ? "走势未成"
+      : result.bi.length
+        ? "线段未成"
+        : result.fenxing.length
+          ? "笔未成"
+          : "K线不足";
+  const xd = lastXd
+    ? lastXd.to.kind === "top"
+      ? "线段向上"
+      : "线段向下"
+    : lastBi
+      ? lastBi.to.kind === "top"
+        ? "笔向上"
+        : "笔向下"
+      : "";
+  const lastSig = result.signals[result.signals.length - 1];
+  const lastLabel = lastSig ? SIGNAL_ZH[lastSig.kind] : null;
+  const barsAgo = lastSig ? Math.max(0, barCount - 1 - lastSig.at.x) : null;
+  const lastAgo =
+    barsAgo == null ? null : barsAgo <= 0 ? "最新K" : barsAgo === 1 ? "1根前" : `${barsAgo}根前`;
+  const x = barCount - 1;
+  const xdHub = result.xdZhongshu[result.xdZhongshu.length - 1];
+  const biHub = result.zhongshu[result.zhongshu.length - 1];
+  const inZhongshu = Boolean(
+    (xdHub && x >= xdHub.startX && x <= xdHub.endX) ||
+      (!xdHub && biHub && x >= biHub.startX && x <= biHub.endX),
+  );
+  const hubLabel = xdHub && x >= xdHub.startX && x <= xdHub.endX
+    ? "中枢内"
+    : !xdHub && biHub && x >= biHub.startX && x <= biHub.endX
+      ? "笔中枢内"
+      : "";
+  const text = [trend, xd, lastLabel ? `${lastLabel} · ${lastAgo}` : "", hubLabel].filter(Boolean).join(" · ");
+  return { trend, xd, lastLabel, lastAgo, inZhongshu, text };
 }
 
 export function buildChanlun(rows: KlineRow[]): ChanlunResult {
