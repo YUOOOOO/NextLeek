@@ -14,6 +14,7 @@ from app.main import app
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
     monkeypatch.setenv("NEXTLEEK_DATABASE_URL", f"sqlite:///{tmp_path / 'nextleek.db'}")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "market"))
+    monkeypatch.setattr("app.auth.bootstrap_admin", lambda *args, **kwargs: None)
     get_settings.cache_clear()
     with TestClient(app) as test_client:
         yield test_client

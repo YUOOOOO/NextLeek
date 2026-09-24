@@ -13,7 +13,13 @@ _IS_FROZEN = getattr(sys, "frozen", False)
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent
+    """Dev: <repo>/backend/app/config.py → <repo>. Docker: /app/app/config.py → /app."""
+    here = Path(__file__).resolve().parent
+    parent = here.parent
+    repo = parent.parent
+    if (repo / "tiers.yaml").exists() or (repo / "frontend").is_dir():
+        return repo
+    return parent
 
 
 def _resource_root() -> Path:
@@ -138,8 +144,14 @@ class Settings(BaseSettings):
 
     auth_password: str = ""
 
-    data_dir: Path = _user_data_root()
-    tiers_yaml: Path = _RESOURCE_ROOT / "tiers.yaml" if _IS_FROZEN else _PROJECT_ROOT / "tiers.yaml"
+    data_dir: Path = Field(
+        default_factory=_user_data_root,
+        validation_alias=_nextleek_alias("NEXTLEEK_DATA_DIR", "DATA_DIR"),
+    )
+    tiers_yaml: Path = Field(
+        default=_RESOURCE_ROOT / "tiers.yaml" if _IS_FROZEN else _PROJECT_ROOT / "tiers.yaml",
+        validation_alias=_nextleek_alias("NEXTLEEK_TIERS_YAML", "TIERS_YAML"),
+    )
     static_dir: Path = Field(
         default=_RESOURCE_ROOT / "static" if _IS_FROZEN else (_PROJECT_ROOT / "frontend" / "dist"),
         validation_alias=_nextleek_alias("NEXTLEEK_STATIC_DIR", "STATIC_DIR"),
@@ -149,6 +161,10 @@ class Settings(BaseSettings):
     def _resolve_paths(self) -> Settings:
         if not self.data_dir.is_absolute():
             self.data_dir = (_PROJECT_ROOT / self.data_dir).resolve()
+        if not self.tiers_yaml.is_absolute():
+            self.tiers_yaml = (_PROJECT_ROOT / self.tiers_yaml).resolve()
+        if not self.static_dir.is_absolute():
+            self.static_dir = (_PROJECT_ROOT / self.static_dir).resolve()
         if self.backtest_matrix_cache_max_mb <= 0:
             raise ValueError("backtest_matrix_cache_max_mb must be positive")
         if self.backtest_matrix_cache_prewarm_years <= 0:

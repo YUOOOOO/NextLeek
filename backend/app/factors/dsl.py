@@ -34,7 +34,7 @@ BASE_COLUMNS: frozenset[str] = frozenset({
 })
 
 MAX_AST_DEPTH = 12
-MAX_TOKENS = 200
+MAX_TOKENS = 512
 WINDOW_MIN, WINDOW_MAX = 2, 512
 DELAY_MAX = 512
 POWER_ABS_MAX = 4.0
@@ -140,6 +140,12 @@ def _tokenize(text: str) -> tuple[list[tuple[str, Any, int]], DslError | None]:
 # AST 节点: dict(kind, value, children, offset[, _constants])
 
 
+def _bool_chain(left: dict, op: str, right: dict, offset: int) -> dict:
+    if left.get("kind") == "bin" and left.get("value") == op:
+        return {**left, "children": [*left["children"], right]}
+    return {"kind": "bin", "value": op, "children": [left, right], "offset": offset}
+
+
 class _Parser:
     _CMP = frozenset({">", ">=", "<", "<=", "==", "!="})
 
@@ -176,7 +182,7 @@ class _Parser:
             right, error = self._and_expr()
             if error:
                 return None, error
-            left = {"kind": "bin", "value": "or", "children": [left, right], "offset": token[2]}
+            left = _bool_chain(left, "or", right, token[2])
         return left, None
 
     def _and_expr(self):
@@ -188,7 +194,7 @@ class _Parser:
             right, error = self._cmp_expr()
             if error:
                 return None, error
-            left = {"kind": "bin", "value": "and", "children": [left, right], "offset": token[2]}
+            left = _bool_chain(left, "and", right, token[2])
         return left, None
 
     def _cmp_expr(self):
@@ -446,6 +452,16 @@ def _compile_node(node: dict) -> tuple[pl.Expr | None, bool, bool]:
         return -operand, needs_window, False
     if kind == "bin":
         op = node["value"]
+        if op in ("and", "or"):
+            expr = None
+            for child in node["children"]:
+                piece, win, _ = _compile_node(child)
+                if piece is None:
+                    return None, False, False
+                if win:
+                    piece = piece.over("symbol")
+                expr = piece if expr is None else (expr & piece if op == "and" else expr | piece)
+            return expr, False, True
         left, left_window, _ = _compile_node(node["children"][0])
         right, right_window, _ = _compile_node(node["children"][1])
         if left is None or right is None:
@@ -464,10 +480,6 @@ def _compile_node(node: dict) -> tuple[pl.Expr | None, bool, bool]:
             return _safe_div(left, right), False, False
         if op in _CMP_METHOD:
             return getattr(left, _CMP_METHOD[op])(right), False, True
-        if op == "and":
-            return left & right, False, True
-        if op == "or":
-            return left | right, False, True
         return None, False, False
     if kind == "call":
         return _compile_call(node)

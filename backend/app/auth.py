@@ -81,8 +81,10 @@ def create_user(database: Session, payload: UserCreate, *, first_admin: bool = F
 def bootstrap_admin(database: Session, settings: Settings) -> User | None:
     if is_configured(database):
         return None
+    email = (settings.bootstrap_admin_email or "").strip()
     password = settings.bootstrap_admin_password
-    if settings.bootstrap_admin_email is None or password is None:
+    secret = password.get_secret_value() if password is not None else ""
+    if not email or not secret:
         return None
     return create_user(
         database,

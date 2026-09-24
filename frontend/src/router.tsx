@@ -7,8 +7,9 @@ import { GeneralSettings, Settings } from "./pages/Settings";
 import { Strategies } from "./pages/Strategies";
 import { Factors } from "./pages/Factors";
 import { Monitor } from "./pages/Monitor";
-import { AiSettings } from "./pages/AiSettings";
+import { News } from "./pages/News";
 import { Users } from "./pages/Users";
+import { AiSettings } from "./pages/AiSettings";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <Auth /> },
@@ -20,6 +21,7 @@ export const router = createBrowserRouter([
       { path: "strategies", element: <Strategies /> },
       { path: "factors", element: <Factors /> },
       { path: "monitor", element: <Monitor /> },
+      { path: "news", element: <News /> },
       { path: "data", element: <Data /> },
       {
         path: "settings",

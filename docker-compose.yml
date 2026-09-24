@@ -1,32 +1,23 @@
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: nextleek
-      POSTGRES_PASSWORD: nextleek
-      POSTGRES_DB: nextleek
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nextleek"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  app:
+  nextleek:
     build: .
+    image: nextleek:local
+    container_name: nextleek
+    restart: unless-stopped
     ports:
       - "3018:3018"
     environment:
-      NEXTLEEK_DATABASE_URL: postgresql+psycopg://nextleek:nextleek@db:5432/nextleek
+      TZ: Asia/Shanghai
+      DATA_DIR: /app/data
+      TIERS_YAML: /app/tiers.yaml
       NEXTLEEK_STATIC_DIR: /app/static
+      NEXTLEEK_DATABASE_URL: sqlite:////app/data/nextleek.db
+      NEXTLEEK_CORS_ORIGINS: http://localhost:3018,https://leek.yuchaoqun.com
       NEXTLEEK_COOKIE_SECURE: "false"
     volumes:
-      - appdata:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
+      - nextleek-data:/app/data
+    extra_hosts:
+      - host.docker.internal:host-gateway
 
 volumes:
-  pgdata:
-  appdata:
+  nextleek-data:

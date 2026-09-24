@@ -134,3 +134,20 @@ def test_compile_ignores_hash_and_slash_comments() -> None:
     compiled = compile_formula("# NextLeek 公式  版本: DSL v1\nclose > ts_mean(close, 120) // 均线\n")
     assert compiled.ok is True
     assert compiled.errors == []
+
+
+def test_compile_allows_ai_length_formulas_under_token_cap() -> None:
+    from app.factors.dsl import MAX_TOKENS, _tokenize, compile_formula
+
+    medium = " and ".join(f"close > ts_mean(close, {n})" for n in range(5, 40))
+    tokens, err = _tokenize(medium)
+    assert err is None
+    assert 200 < len(tokens) < MAX_TOKENS
+    compiled = compile_formula(medium)
+    assert compiled.ok is True
+    assert compiled.errors == []
+
+    huge = " and ".join(f"close > ts_mean(close, {n})" for n in range(5, 90))
+    overflow = compile_formula(huge)
+    assert overflow.ok is False
+    assert overflow.errors[0].code == "E007"

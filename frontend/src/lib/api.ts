@@ -503,6 +503,25 @@ export type FinancialMetricRecord = {
   [key: string]: unknown;
 };
 
+export type NewsItem = {
+  id: string;
+  title: string;
+  content: string;
+  published_at: string;
+  source: string;
+  source_label: string;
+  url: string;
+};
+
+export type NewsFeed = {
+  items: NewsItem[];
+  total: number;
+  source: string;
+  symbol?: string | null;
+  errors: Array<{ source: string; error: string }>;
+  fetched_at: string;
+};
+
 
 export const api = {
   health: () => request<{ status: string; version: string }>("/api/health"),
@@ -699,6 +718,15 @@ export const api = {
     context_window?: number;
   }) => request<TickflowSettings>("/api/settings/ai", { method: "POST", body: JSON.stringify(body) }),
   clearAiSettings: () => request<{ ok: boolean }>("/api/settings/ai", { method: "DELETE" }),
+  newsList: (params?: { source?: string; q?: string; symbol?: string; limit?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.source) query.set("source", params.source);
+    if (params?.q) query.set("q", params.q);
+    if (params?.symbol) query.set("symbol", params.symbol);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const suffix = query.toString();
+    return request<NewsFeed>(`/api/news${suffix ? `?${suffix}` : ""}`);
+  },
   klineDaily: (symbol: string, days = 250) =>
     request<KlineDailyResponse>(`/api/kline/daily?symbol=${encodeURIComponent(symbol)}&days=${days}`),
   financialStatus: () => request<FinancialStatus>("/api/financials/status"),

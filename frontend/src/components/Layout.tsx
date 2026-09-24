@@ -4,13 +4,14 @@ import {
   Database,
   Menu,
   Moon,
+  Newspaper,
   Radio,
   ScanSearch,
   Settings,
   Sun,
   X,
   type LucideIcon,
-} from "lucide-react";
+ } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
@@ -27,6 +28,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/strategies", label: "策略", icon: ScanSearch },
+  { to: "/news", label: "新闻", icon: Newspaper },
   { to: "/monitor", label: "监控", icon: Radio },
   { to: "/data", label: "数据", icon: Database },
   { to: "/settings", label: "设置", icon: Settings },
@@ -111,7 +113,7 @@ export function Layout() {
     return <Navigate to="/login" replace />;
   }
 
-  const flushPage = location.pathname === "/strategies" || location.pathname === "/monitor";
+  const flushPage = location.pathname === "/strategies" || location.pathname === "/monitor" || location.pathname === "/news";
 
 
   const nav = (compact: boolean, onNavigate?: () => void) => (

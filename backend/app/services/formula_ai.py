@@ -29,6 +29,7 @@ _SYSTEM = """你是 A 股量化公式助手。只输出一个 JSON 对象，不�
 - 窗口 n 必须是数字字面量，范围 2-512
 - 不要引用未给出的列名
 - 涨跌幅用小数，5% 写成 0.05
+- 公式必须短：最多 5 个条件，用 and/or 连接；不要堆砌重复均线或注释。编译器 token 上限 512，超长会失败
 JSON 字段: intent(chat|strategy|factor|condition), response(chat 必填), name, formula, description, direction(high|low|none), code(仅因子, 小写字母数字下划线)
 """
 
@@ -80,7 +81,33 @@ async def generate_formula(prompt: str, kind: Kind) -> dict[str, Any]:
     try:
         compiled = formula_runtime.compile_user_formula(formula, require_bool=(intent != "factor"))
     except ValueError as exc:
-        raise FormulaAIError(str(exc)) from exc
+        text = await generate_ai_text(
+            [
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": f"{hint}。需求：{prompt.strip()}"},
+                {"role": "assistant", "content": text},
+                {
+                    "role": "user",
+                    "content": (
+                        f"公式编译失败：{exc}。请输出更短的合法公式：最多 5 个条件，"
+                        "不要注释，不要重复窗口。只输出 JSON。"
+                    ),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=None,
+        )
+        data = _extract_json(text)
+        intent = str(data.get("intent") or intent).strip() or intent
+        if intent not in {"strategy", "factor", "condition"}:
+            intent = kind
+        formula = str(data.get("formula") or "").strip()
+        name = str(data.get("name") or "").strip() or name
+        description = str(data.get("description") or "").strip() or description
+        try:
+            compiled = formula_runtime.compile_user_formula(formula, require_bool=(intent != "factor"))
+        except ValueError as retry_exc:
+            raise FormulaAIError(str(retry_exc)) from retry_exc
     result: dict[str, Any] = {
         "intent": intent,
         "name": name[:40],
