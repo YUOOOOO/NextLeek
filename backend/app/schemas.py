@@ -380,3 +380,14 @@ class FormulaPreview(BaseModel):
     warmup_bars: int = 1
     dependencies: list[str] = []
     errors: list[dict] = []
+
+
+# ── 选股管线 ──
+
+class SelectionRunIn(BaseModel):
+    strategy_id: str = Field(min_length=1, max_length=64)
+    date: str | None = None          # ISO date, None=最新
+    sector_filter: bool = True
+    phase_filter: bool = True
+    limit: int = Field(default=50, ge=1, le=200)
+    position_limit: float | None = Field(default=None, ge=0, le=1)

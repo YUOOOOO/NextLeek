@@ -28,6 +28,7 @@ from app.api.news import router as news_router
 from app.api.signals import router as signals_router
 from app.api.users import router as users_router
 from app.api.watchlist import router as watchlist_router
+from app.api.selection import router as selection_router
 from app.config import get_settings
 from app.db import create_database_engine, create_session_factory, init_database, session_scope
 from app.tickflow.capabilities import CapabilityDenied
@@ -283,6 +284,7 @@ app.include_router(news_router)
 app.include_router(ext_data_router)
 app.include_router(ai_router)
 app.include_router(watchlist_router)
+app.include_router(selection_router)
 
 _MOBILE_UA = re.compile(
     r"Android|webOS|iPhone|iPod|iPad|BlackBerry|IEMobile|Opera Mini|Mobile",
