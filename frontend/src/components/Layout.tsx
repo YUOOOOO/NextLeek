@@ -10,6 +10,7 @@ import {
   Settings,
   Star,
   Sun,
+  Target,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +30,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/watchlist", label: "自选", icon: Star },
+  { to: "/selection", label: "选股", icon: Target },
   { to: "/strategies", label: "策略", icon: ScanSearch },
   { to: "/monitor", label: "监控", icon: Radio },
   { to: "/news", label: "新闻", icon: Newspaper },

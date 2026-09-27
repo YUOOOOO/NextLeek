@@ -822,6 +822,31 @@ export const api = {
   removeWatchlist: (symbol: string) =>
     request<void>(`/api/watchlist/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
 
+  // ── 选股管线 ──
+  runSelection: (body: { strategy_id: string; date?: string; phase_filter?: boolean; sector_filter?: boolean; limit?: number; position_limit?: number }) =>
+    request<Record<string, unknown>>("/api/selection/run", { method: "POST", body: JSON.stringify(body) }),
+  selectionStrategies: () =>
+    request<Array<{ id: string; name: string; description: string; tags: string[]; scoring: Record<string, number> }>>("/api/selection/strategies"),
+  selectionEnvironment: (date?: string) =>
+    request<Record<string, unknown>>(`/api/selection/environment${date ? `?target_date=${date}` : ""}`),
+
+  // ── 个股跟踪 ──
+  startTrack: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/api/selection/track", { method: "POST", body: JSON.stringify(body) }),
+  listTracks: (status?: string) =>
+    request<Record<string, unknown>[]>(`/api/selection/tracks${status ? `?status=${status}` : ""}`),
+  getTrack: (symbol: string) =>
+    request<Record<string, unknown>>(`/api/selection/tracks/${encodeURIComponent(symbol)}`),
+  closeTrack: (symbol: string, body: { exit_price: number; reason: string }) =>
+    request<Record<string, unknown>>(`/api/selection/tracks/${encodeURIComponent(symbol)}/close`, { method: "POST", body: JSON.stringify(body) }),
+  removeTrack: (symbol: string) =>
+    request<void>(`/api/selection/tracks/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
+  trackStats: () =>
+    request<Record<string, unknown>>("/api/selection/tracks/stats"),
+
+  // ── 个股分析 ──
+  stockAnalysis: (symbol: string) =>
+    request<Record<string, unknown>>(`/api/analysis/${encodeURIComponent(symbol)}`),
 
   listDisplaySignals: (assetType: AssetType = "stock") =>
     request<DisplaySignalCatalog>(`/api/custom-signals?asset_type=${assetType}`),
