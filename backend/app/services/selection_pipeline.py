@@ -214,7 +214,7 @@ class SelectionPipeline:
     def _latest_date(self) -> date:
         """获取最新数据日期"""
         from datetime import date as dt_date
-        latest = self.repo.get_enriched_latest_date("stock")
+        latest = self.repo.latest_enriched_date("stock")
         if latest is not None:
             return latest
         return dt_date.today()
@@ -310,8 +310,8 @@ class SelectionPipeline:
 
     def _basic_filter(self, df: pl.DataFrame) -> pl.DataFrame:
         """基础过滤"""
-        from app.strategy.engine import StrategyEngine
-        return StrategyEngine._apply_basic_filter(df, StrategyEngine.DEFAULT_BASIC_FILTER)
+        from app.strategy.engine import DEFAULT_BASIC_FILTER, StrategyEngine
+        return StrategyEngine._apply_basic_filter(df, DEFAULT_BASIC_FILTER)
 
     def _execute_strategy(
         self,
@@ -319,28 +319,43 @@ class SelectionPipeline:
         strategy_id: str,
         target_date: date,
     ) -> tuple[pl.DataFrame, str]:
-        """执行策略评分，返回 (带分数的DataFrame, 策略名称)"""
-        from app.strategy.engine import StrategyEngine
+        """执行内置策略条件，返回带排序分数的 DataFrame。"""
+        from app.services.screener import ScreenerService
 
-        engine = StrategyEngine()
-
-        # 获取策略信息
         meta = self._get_strategy_meta(strategy_id)
         strategy_name = meta.get("name", strategy_id) if meta else strategy_id
-
-        # 获取策略的 scoring 配置
-        scoring = meta.get("scoring", {}) if meta else {}
-        if not scoring:
+        conditions = meta.get("conditions", []) if meta else []
+        if not conditions:
             return pl.DataFrame(), strategy_name
 
-        # 对 df 中的每只股票计算评分
-        # 策略引擎的 _apply_scoring 需要特定的输入格式
         try:
-            scored = self._score_dataframe(df, scoring, engine)
-            return scored, strategy_name
+            result = ScreenerService(self.repo, "stock").run_conditions(
+                target_date,
+                conditions,
+                order_by=meta.get("order_by", "change_pct"),
+                descending=True,
+                limit=0,
+                current=df,
+            )
         except Exception as e:  # noqa: BLE001
-            logger.warning("strategy scoring failed: %s", e)
+            logger.warning("strategy conditions failed: %s", e)
             return pl.DataFrame(), strategy_name
+
+        if not result.rows:
+            return pl.DataFrame(), strategy_name
+        scored = pl.DataFrame(result.rows)
+        order_by = meta.get("order_by", "change_pct")
+        if order_by not in scored.columns:
+            scored = scored.with_columns(pl.lit(50.0).alias("score"))
+        else:
+            value = pl.col(order_by).cast(pl.Float64, strict=False)
+            bounds = scored.select(value.min().alias("min"), value.max().alias("max")).row(0)
+            low, high = bounds
+            scored = scored.with_columns(
+                (pl.lit(50.0) if low is None or high is None or high == low else
+                 ((value - low) / (high - low) * 100)).alias("score")
+            )
+        return scored.with_columns(pl.lit(strategy_id).alias("strategy_id")), strategy_name
 
     def _get_strategy_meta(self, strategy_id: str) -> dict[str, Any] | None:
         """获取策略元数据（从 market_catalog 的内置策略定义或数据库）"""

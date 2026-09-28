@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.deps import get_data_dir, require_csrf, require_user
+from app.deps import require_csrf, require_user
 from app.models import User
 from app.schemas import SelectionRunIn
 
