@@ -8,6 +8,7 @@ import { Strategies } from "./pages/Strategies";
 import { Factors } from "./pages/Factors";
 import { Monitor } from "./pages/Monitor";
 import { StockAnalysis } from "./pages/StockAnalysis";
+import { StockAnalysisHub } from "./pages/StockAnalysisHub";
 import { News } from "./pages/News";
 import { Users } from "./pages/Users";
 import { AiSettings } from "./pages/AiSettings";
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "strategies", element: <Strategies /> },
       { path: "factors", element: <Factors /> },
       { path: "monitor", element: <Monitor /> },
+      { path: "analysis", element: <StockAnalysisHub /> },
       { path: "analysis/:symbol", element: <StockAnalysis /> },
       { path: "news", element: <News /> },
       { path: "data", element: <Data /> },

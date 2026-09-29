@@ -70,6 +70,46 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
+export type StockAnalysisStreamEvent =
+  | { type: "meta"; symbol: string; summary: string; levels: Record<string, unknown>; close: number | null }
+  | { type: "delta"; content: string }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+export async function streamStockAnalysis(
+  symbol: string,
+  focus: string,
+  onEvent: (event: StockAnalysisStreamEvent) => void,
+): Promise<void> {
+  const csrf = readCookie("nextleek_csrf");
+  const response = await fetch("/api/analysis/ai", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
+    body: JSON.stringify({ symbol, focus }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(typeof payload.detail === "string" ? payload.detail : `请求失败 (${response.status})`);
+  }
+  if (!response.body) throw new Error("AI 分析没有返回数据流");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      onEvent(JSON.parse(line) as StockAnalysisStreamEvent);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) onEvent(JSON.parse(buffer) as StockAnalysisStreamEvent);
+}
+
 export type TableStats = {
   rows?: number;
   symbols?: number;
@@ -846,7 +886,7 @@ export const api = {
 
   // ── 个股分析 ──
   stockAnalysis: (symbol: string) =>
-    request<Record<string, unknown>>(`/api/analysis/${encodeURIComponent(symbol)}`),
+    request<Record<string, unknown>>(`/api/selection/analysis/${encodeURIComponent(symbol)}`),
 
   listDisplaySignals: (assetType: AssetType = "stock") =>
     request<DisplaySignalCatalog>(`/api/custom-signals?asset_type=${assetType}`),

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  CandlestickChart,
   Database,
   Menu,
   Moon,
@@ -29,6 +30,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { to: "/watchlist", label: "自选", icon: Star },
+  { to: "/analysis", label: "个股分析", icon: CandlestickChart },
   { to: "/strategies", label: "策略", icon: ScanSearch },
   { to: "/monitor", label: "监控", icon: Radio },
   { to: "/news", label: "新闻", icon: Newspaper },
@@ -119,7 +121,8 @@ export function Layout() {
     location.pathname === "/strategies" ||
     location.pathname === "/monitor" ||
     location.pathname === "/news" ||
-    location.pathname === "/watchlist";
+    location.pathname === "/watchlist" ||
+    location.pathname === "/analysis";
 
 
   const nav = (compact: boolean, onNavigate?: () => void) => (

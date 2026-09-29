@@ -3573,3 +3573,37 @@ button.news-tag:hover {
     flex-wrap: wrap;
   }
 }
+
+/* ── 独立个股分析入口与 AI 报告 ── */
+.analysis-hub {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px;
+}
+.analysis-hub-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+.analysis-hub-head h1 { margin: 4px 0 6px; font-size: 28px; color: var(--ds-color-text-primary); }
+.analysis-hub-head p { margin: 0; color: var(--ds-color-text-description); }
+.eyebrow { color: var(--ds-color-brand); font: 11px var(--ds-font-mono); letter-spacing: .08em; }
+.analysis-hub-icon { color: var(--ds-color-brand); }
+.analysis-search { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--ds-color-border-default); border-radius: 10px; background: var(--ds-color-bg-surface-1); }
+.analysis-search input, .ai-analysis-controls input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ds-color-text-primary); }
+.analysis-search button, .ai-analysis-controls button { border: 0; border-radius: 6px; padding: 8px 14px; background: var(--ds-btn-primary-bg); color: var(--ds-btn-primary-text); cursor: pointer; }
+.analysis-search-results { margin-top: 6px; border: 1px solid var(--ds-color-border-default); border-radius: 8px; overflow: hidden; background: var(--ds-color-bg-surface-1); }
+.analysis-search-results button { display: flex; justify-content: space-between; width: 100%; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--ds-color-border-default); background: transparent; color: var(--ds-color-text-secondary); cursor: pointer; }
+.analysis-search-results button:hover, .analysis-watch-card:hover { background: var(--ds-color-bg-hover); }
+.analysis-search-results code, .analysis-watch-card code { color: var(--ds-color-text-description); font-family: var(--ds-font-mono); }
+.analysis-hub-section { margin-top: 30px; }
+.section-title { margin-bottom: 10px; color: var(--ds-color-text-primary); font-weight: 600; }
+.analysis-watch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.analysis-watch-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px; border: 1px solid var(--ds-color-border-default); border-radius: 8px; background: var(--ds-color-bg-surface-1); color: var(--ds-color-text-primary); cursor: pointer; }
+.analysis-empty, .ai-analysis-empty { padding: 18px; color: var(--ds-color-text-description); border: 1px dashed var(--ds-color-border-default); border-radius: 8px; }
+.ai-analysis-card { margin: 0 16px 16px; padding: 16px; border: 1px solid var(--ds-color-border-default); border-radius: 8px; background: var(--ds-color-bg-surface-1); }
+.ai-analysis-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.ai-analysis-head h3 { margin: 0 0 4px; color: var(--ds-color-text-primary); }
+.ai-analysis-head p { margin: 0; color: var(--ds-color-text-description); font-size: 12px; }
+.ai-live, .ai-idle { padding: 3px 8px; border-radius: 999px; font-size: 11px; }
+.ai-live { color: #22c55e; background: rgba(34,197,94,.12); }
+.ai-idle { color: var(--ds-color-text-description); background: var(--ds-color-bg-surface-2); }
+.ai-analysis-controls { display: flex; gap: 8px; margin: 14px 0; padding: 8px 10px; border: 1px solid var(--ds-color-border-default); border-radius: 8px; }
+.ai-analysis-report { max-height: 520px; overflow: auto; margin: 0; white-space: pre-wrap; font: 13px/1.7 var(--ds-font-body); color: var(--ds-color-text-secondary); }
+.ai-analysis-error { margin: 8px 0; color: #ef4444; }

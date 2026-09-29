@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   TrendingUp,
@@ -10,7 +10,7 @@ import {
   Target,
   Crosshair,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { streamStockAnalysis, api } from "../lib/api";
 import { StockKlineDialog } from "../components/StockKlineDialog";
 
 // ── 类型 ──
@@ -79,24 +79,56 @@ function fmtPct(v: number | null | undefined) {
 
 export function StockAnalysis() {
   const { symbol } = useParams<{ symbol: string }>();
+  const queryClient = useQueryClient();
   const [showKline, setShowKline] = useState(false);
-
-  const { data: analysis, isLoading } = useQuery({
+  const [aiReport, setAiReport] = useState("");
+  const [aiFocus, setAiFocus] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const { data: analysis, isLoading, error: analysisError } = useQuery<StockAnalysisData>({
     queryKey: ["analysis", symbol],
-    queryFn: () => api.stockAnalysis(symbol!),
+    queryFn: async () => (await api.stockAnalysis(symbol!)) as unknown as StockAnalysisData,
     enabled: !!symbol,
+    refetchInterval: 30000,
   });
 
+  useEffect(() => {
+    const source = new EventSource("/api/monitor/stream");
+    const refresh = () => {
+      void queryClient.invalidateQueries({ queryKey: ["analysis", symbol] });
+    };
+    source.addEventListener("pool_updated", refresh);
+    source.addEventListener("strategy_alert", refresh);
+    return () => source.close();
+  }, [queryClient, symbol]);
+
+  async function runAiAnalysis() {
+    if (!symbol || aiBusy) return;
+    setAiBusy(true);
+    setAiError("");
+    setAiReport("");
+    try {
+      await streamStockAnalysis(symbol, aiFocus, (event) => {
+        if (event.type === "delta") setAiReport((value) => value + event.content);
+        if (event.type === "error") setAiError(event.message);
+      });
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : "AI 分析失败");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   if (isLoading) return <div className="analysis-loading">分析中...</div>;
-  if (!analysis) return <div className="analysis-error">无法加载分析</div>;
+  if (!analysis) return <div className="analysis-error">{analysisError instanceof Error ? analysisError.message : "无法加载分析"}</div>;
 
   return (
     <div className="stock-analysis-page">
       {/* 顶部导航 */}
       <div className="analysis-header">
-        <Link to="/selection" className="back-link">
+        <Link to="/analysis" className="back-link">
           <ArrowLeft size={16} />
-          返回选股
+          返回个股分析
         </Link>
         <div className="stock-title">
           <h2>{analysis.name}</h2>
@@ -108,6 +140,9 @@ export function StockAnalysis() {
         <button className="kline-btn" onClick={() => setShowKline(true)}>
           <TrendingUp size={14} />
           K线图
+        </button>
+        <button className="kline-btn" onClick={runAiAnalysis} disabled={aiBusy}>
+          {aiBusy ? "分析中…" : "AI 分析"}
         </button>
       </div>
 
@@ -123,9 +158,25 @@ export function StockAnalysis() {
         <div className="analysis-right">
           <ReasonCard analysis={analysis} />
           <BuySellCard analysis={analysis} />
-          <AlertHistoryCard symbol={analysis.symbol} />
+          <AlertHistoryCard />
         </div>
       </div>
+
+      <section className="ai-analysis-card">
+        <div className="ai-analysis-head">
+          <div>
+            <h3>AI 结构分析</h3>
+            <p>基于最新 K 线、技术指标、关键价位和财务数据生成客观报告。</p>
+          </div>
+          <span className={aiBusy ? "ai-live" : "ai-idle"}>{aiBusy ? "实时生成" : "按需运行"}</span>
+        </div>
+        <div className="ai-analysis-controls">
+          <input value={aiFocus} onChange={(event) => setAiFocus(event.target.value)} placeholder="可选：关注量价、支撑压力或风险" />
+          <button type="button" className="kline-btn" onClick={runAiAnalysis} disabled={aiBusy}>{aiBusy ? "分析中…" : "开始分析"}</button>
+        </div>
+        {aiError ? <div className="ai-analysis-error">{aiError}</div> : null}
+        {aiReport ? <pre className="ai-analysis-report">{aiReport}</pre> : <div className="ai-analysis-empty">尚未生成 AI 报告。</div>}
+      </section>
 
       {/* K线弹窗 */}
       {showKline && (
@@ -360,8 +411,7 @@ function BuySellCard({ analysis }: { analysis: StockAnalysisData }) {
   );
 }
 
-function AlertHistoryCard({ symbol }: { symbol: string }) {
-  // 这里可以从跟踪记录中获取告警历史
+function AlertHistoryCard() {
   return (
     <div className="card alert-card">
       <h3>
