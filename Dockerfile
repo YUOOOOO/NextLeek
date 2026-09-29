@@ -24,6 +24,7 @@ WORKDIR /build/mobile
 RUN if [ "$USE_CN_MIRROR" = "1" ]; then npm config set registry "$NPM_REGISTRY"; fi
 COPY mobile/package.json mobile/package-lock.json ./
 RUN npm ci
+RUN ln -s /build/mobile/node_modules /build/node_modules
 COPY frontend /build/frontend
 COPY mobile /build/mobile
 RUN npm run build
