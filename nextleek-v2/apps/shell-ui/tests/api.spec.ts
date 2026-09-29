@@ -2,19 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { createMemoryApi } from '../src/api'
 
 describe('memory adapter', () => {
-  it('keeps creator drafts isolated from installed plugins', async () => {
+  it('installs market plugins into the local list', async () => {
     const api = createMemoryApi([])
-    await api.createDraft('safe', { id:'com.example.safe',name:'Safe',version:'0.1.0',entry:'ui/index.html',capabilities:[],permissions:[] })
-    expect((await api.validateDraft('safe')).valid).toBe(true)
     expect(await api.listPlugins()).toEqual([])
+    const catalog = await api.refreshMarket()
+    const installed = await api.installMarketPlugin(catalog.plugins[0])
+    expect(installed.manifest.id).toBe('com.example.clock')
+    expect((await api.listPlugins()).map(plugin => plugin.manifest.id)).toEqual(['com.example.clock'])
+  })
+
+  it('persists marketplace URL without AI settings', async () => {
+    const api = createMemoryApi([])
+    const saved = await api.setMarketUrl('https://example.com/index.json')
+    expect(saved.settings.marketUrl).toBe('https://example.com/index.json')
+    expect(saved.settings).not.toHaveProperty('ai')
   })
 })
-  it('round-trips AI settings and returns a draft-only generation result', async () => {
-    const api = createMemoryApi([])
-    const settings = {enabled:true, baseUrl:'https://example.com/v1', apiKey:'secret', model:'demo', temperature:0.3}
-    await api.setAiSettings(settings)
-    expect((await api.readSettings()).settings.ai).toEqual(settings)
-    const result = await api.generatePlugin({instruction:'生成时钟', currentDraft:{manifest:{id:'com.example.clock',name:'Clock',version:'1.0.0',entry:'ui/index.html',capabilities:[],permissions:[]}, files:{'ui/index.html':'old','ui/main.js':'','ui/style.css':''}}})
-    expect(result.files['ui/index.html']).toBe('old')
-    expect(result.explanation).toContain('生成')
-  })

@@ -34,6 +34,16 @@ impl Default for NavigationConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct PluginCmd {
+    pub code: String,
+    pub label: String,
+    #[serde(default)]
+    pub matches: Vec<String>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Manifest {
     pub id: String,
     pub name: String,
@@ -52,6 +62,8 @@ pub struct Manifest {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
+    #[serde(default)]
+    pub cmds: Vec<PluginCmd>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -72,6 +84,8 @@ pub enum ManifestError {
     DuplicateCapability,
     #[error("permission is not allowed")]
     UndeclaredPermission,
+    #[error("invalid command configuration")]
+    InvalidCommand,
 }
 
 impl Manifest {
@@ -124,7 +138,29 @@ impl Manifest {
         }) {
             return Err(ManifestError::UndeclaredPermission);
         }
+        let mut command_codes = BTreeSet::new();
+        for cmd in &self.cmds {
+            if cmd.code.trim().is_empty()
+                || cmd.label.trim().is_empty()
+                || cmd.matches.iter().any(|value| value.trim().is_empty())
+                || !command_codes.insert(cmd.code.as_str())
+            {
+                return Err(ManifestError::InvalidCommand);
+            }
+        }
         Ok(())
+    }
+
+    pub fn commands(&self) -> Vec<PluginCmd> {
+        if self.cmds.is_empty() {
+            vec![PluginCmd {
+                code: "open".into(),
+                label: self.name.clone(),
+                matches: vec![self.name.clone()],
+            }]
+        } else {
+            self.cmds.clone()
+        }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

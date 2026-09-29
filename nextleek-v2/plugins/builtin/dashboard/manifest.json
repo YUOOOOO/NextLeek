@@ -13,5 +13,12 @@
     "enabled": true,
     "label": "仪表盘",
     "order": 10
-  }
+  },
+  "cmds": [
+    {
+      "code": "open",
+      "label": "仪表盘",
+      "matches": ["仪表盘", "dashboard", "home"]
+    }
+  ]
 }

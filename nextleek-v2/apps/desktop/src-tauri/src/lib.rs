@@ -7,26 +7,15 @@ use nextleek_kernel::{
     inspect_package_bytes, CreatorWorkspace, Manifest, PackageArtifact, PluginStore, ValidationReport,
 };
 use runtime::{load_text_plugin, RuntimeLaunch, RuntimeManager};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
-use settings::{AiSettings, Settings, SettingsStore};
+use settings::{Settings, SettingsStore};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::State;
 pub const CREATOR_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginDraftInput { pub manifest: Manifest, pub files: BTreeMap<String, String> }
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeneratePluginRequest { pub instruction: String, pub current_draft: PluginDraftInput, #[serde(default)] pub validation_errors: Vec<String> }
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeneratePluginResponse { pub manifest: Manifest, pub files: BTreeMap<String, String>, pub explanation: String }
-
 
 #[derive(Clone)]
 struct BuiltinPlugin {
@@ -323,34 +312,6 @@ pub fn set_plugin_trust(state: &AppState, plugin_id: String, trusted: bool) -> R
     read_settings(state)
 }
 
-pub fn set_ai_settings(state: &AppState, ai: AiSettings) -> Result<SettingsView, String> {
-    state.settings.lock().map_err(|_| "settings lock poisoned".to_string())?.set_ai(ai)?;
-    read_settings(state)
-}
-
-pub fn generate_plugin(state: &AppState, request: GeneratePluginRequest) -> Result<GeneratePluginResponse, String> {
-    if request.instruction.trim().is_empty() { return Err("AI_REQUEST_FAILED: instruction required".into()); }
-    let ai = state.settings.lock().map_err(|_| "settings lock poisoned".to_string())?.value().ai;
-    if !ai.enabled { return Err("AI_DISABLED".into()); }
-    settings::validate_ai(&ai)?;
-    let endpoint = format!("{}/chat/completions", ai.base_url.trim_end_matches('/'));
-    let prompt = format!("You are the NextLeek plugin generator. Return only JSON with manifest, files, explanation. Required files: ui/index.html, ui/main.js, ui/style.css. Never use native code, shell, external scripts, or path traversal. User request: {}", request.instruction);
-    let body = serde_json::json!({"model":ai.model,"temperature":ai.temperature,"messages":[{"role":"system","content":prompt},{"role":"user","content":serde_json::to_string(&request.current_draft).unwrap_or_default()}]});
-    let response = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(60)).build().map_err(|_| "AI_REQUEST_FAILED".to_string())?.post(endpoint).bearer_auth(ai.api_key).json(&body).send().map_err(|error| if error.is_timeout() { "AI_TIMEOUT".to_string() } else { "AI_REQUEST_FAILED".to_string() })?;
-    if !response.status().is_success() { return Err("AI_REQUEST_FAILED".into()); }
-    const MAX_AI_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-    let response_bytes = response.bytes().map_err(|_| "AI_RESPONSE_INVALID".to_string())?;
-    if response_bytes.len() > MAX_AI_RESPONSE_BYTES { return Err("AI_RESPONSE_TOO_LARGE".into()); }
-    let envelope: Value = serde_json::from_slice(&response_bytes).map_err(|_| "AI_RESPONSE_INVALID".to_string())?;
-    let content = envelope["choices"][0]["message"]["content"].as_str().ok_or_else(|| "AI_RESPONSE_INVALID".to_string())?;
-    let generated: GeneratePluginResponse = serde_json::from_str(content.trim().trim_start_matches("```json").trim_end_matches("```").trim()).map_err(|_| "AI_RESPONSE_INVALID".to_string())?;
-    generated.manifest.validate().map_err(|_| "AI_PLUGIN_INVALID".to_string())?;
-    let generated_size: usize = generated.files.values().map(|file| file.len()).sum();
-    if generated_size > MAX_AI_RESPONSE_BYTES { return Err("AI_RESPONSE_TOO_LARGE".into()); }
-    for path in generated.files.keys() { if !path.starts_with("ui/") || path.contains("..") || path.contains('\\') { return Err("AI_PLUGIN_INVALID".into()); } }
-    for required in ["ui/index.html", "ui/main.js", "ui/style.css"] { if !generated.files.contains_key(required) { return Err("AI_PLUGIN_INVALID".into()); } }
-    Ok(generated)
-}
 
 pub fn launch_plugin(state: &AppState, plugin_id: String) -> Result<RuntimeLaunch, String> {
     let (manifest, files, builtin_active) = if let Ok(installed) = state.store.active_plugin(&plugin_id)
@@ -487,11 +448,7 @@ fn set_plugin_trust_command(
 ) -> Result<SettingsView, String> {
     set_plugin_trust(&state, plugin_id, trusted)
 }
-#[tauri::command]
-fn set_ai_settings_command(state: State<'_, AppState>, settings: AiSettings) -> Result<SettingsView, String> { set_ai_settings(&state, settings) }
 
-#[tauri::command]
-fn generate_plugin_command(state: State<'_, AppState>, request: GeneratePluginRequest) -> Result<GeneratePluginResponse, String> { generate_plugin(&state, request) }
 
 #[tauri::command]
 fn launch_plugin_command(
@@ -541,16 +498,84 @@ fn builtin_plugin<const N: usize>(
     }
 }
 
+fn toggle_main(app: &tauri::AppHandle, force_show: bool) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    if visible && !force_show {
+        let _ = window.hide();
+        return;
+    }
+    let _ = window.unminimize();
+    let _ = window.center();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 pub fn run() {
     let executable = std::env::current_exe().expect("resolve executable path");
-    let portable_root = executable.parent().expect("executable parent").join("Data");
-    let dashboard = builtin_plugins().remove("com.nextleek.dashboard").expect("bundled dashboard must exist");
-    let state = AppState::with_editable_dashboard(&portable_root, dashboard).expect("initialize NextLeek");
+    let portable_root = executable
+        .parent()
+        .expect("executable parent")
+        .join("Data");
+    let dashboard = builtin_plugins()
+        .remove("com.nextleek.dashboard")
+        .expect("bundled dashboard must exist");
+    let state = AppState::with_editable_dashboard(&portable_root, dashboard)
+        .expect("initialize NextLeek");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        toggle_main(app, false);
+                    }
+                })
+                .build(),
+        )
         .manage(state)
+        .setup(|app| {
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            app.global_shortcut().register("alt+space")?;
+
+            let show = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().expect("window icon"))
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => toggle_main(app, true),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_main(tray.app_handle(), false);
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             runtime_summary_command,
             list_plugins_command,
@@ -565,8 +590,6 @@ pub fn run() {
             read_settings_command,
             set_market_url_command,
             set_plugin_trust_command,
-            set_ai_settings_command,
-            generate_plugin_command,
             launch_plugin_command,
             plugin_sdk_call_command,
             close_plugin_command

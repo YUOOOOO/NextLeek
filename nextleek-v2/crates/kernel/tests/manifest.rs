@@ -49,3 +49,21 @@ fn rejects_invalid_ids_versions_paths_duplicates_and_permissions() {
         assert_eq!(Manifest::parse(&json).unwrap_err(), expected);
     }
 }
+
+#[test]
+fn defaults_missing_cmds_to_the_plugin_name() {
+    let manifest = Manifest::parse(valid_json()).unwrap();
+    let commands = manifest.commands();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].code, "open");
+    assert_eq!(commands[0].label, "Notes");
+}
+
+#[test]
+fn rejects_empty_or_duplicate_cmds() {
+    let json = valid_json().replace(
+        "\"permissions\":[\"storage:local\"]",
+        "\"permissions\":[\"storage:local\"],\"cmds\":[{\"code\":\"open\",\"label\":\"A\"},{\"code\":\"open\",\"label\":\"B\"}]",
+    );
+    assert_eq!(Manifest::parse(&json).unwrap_err(), ManifestError::InvalidCommand);
+}

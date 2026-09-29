@@ -17,6 +17,7 @@ thiserror.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-global-shortcut = "2"
 reqwest.workspace = true
 semver.workspace = true
 sha2.workspace = true

@@ -3,13 +3,36 @@
   "productName": "NextLeek",
   "version": "0.1.0",
   "identifier": "com.nextleek.creator",
-  "build": {"beforeDevCommand":"pnpm --dir ../shell-ui dev","beforeBuildCommand":"pnpm --dir ../shell-ui build","frontendDist":"../../shell-ui/dist","devUrl":"http://localhost:5173"},
-  "app": {"windows":[{"title":"NextLeek","width":1180,"height":760,"minWidth":980,"minHeight":640,"decorations":false,"transparent":false}]},
+  "build": {
+    "beforeDevCommand": "pnpm --dir ../shell-ui dev",
+    "beforeBuildCommand": "pnpm --dir ../shell-ui build",
+    "frontendDist": "../../shell-ui/dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "NextLeek",
+        "width": 680,
+        "height": 72,
+        "minWidth": 520,
+        "minHeight": 72,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": true
+      }
+    ]
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "createUpdaterArtifacts": "v1Compatible",
-    "windows": {"nsis": {"installMode":"currentUser"}}
+    "windows": { "nsis": { "installMode": "currentUser" } }
   },
   "plugins": {
     "updater": {
