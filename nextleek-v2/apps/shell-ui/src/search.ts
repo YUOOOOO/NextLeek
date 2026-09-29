@@ -10,11 +10,22 @@ export type SearchHit = {
   label: string
   subtitle: string
   score: number
+  glyph: string
+  tone: string
 }
 
+const TILE_TONES = ['#4c8dff', '#6d7cff', '#38bdf8', '#a78bfa', '#f59e0b', '#fb7185', '#818cf8']
+
+export function tileTone(id: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < id.length; i += 1) hash = Math.imul(hash ^ id.charCodeAt(i), 16777619)
+  return TILE_TONES[(hash >>> 0) % TILE_TONES.length]
+}
+
+
 export const HOST_COMMANDS: SearchHit[] = [
-  { id: 'host:market', kind: 'host', code: 'market', label: '插件市场', subtitle: '安装与管理插件', score: 0 },
-  { id: 'host:settings', kind: 'host', code: 'settings', label: '设置', subtitle: '市场地址、信任与更新', score: 0 },
+  { id: 'host:market', kind: 'host', code: 'market', label: '插件市场', subtitle: '安装与管理插件', score: 0, glyph: '市', tone: tileTone('host:market') },
+  { id: 'host:settings', kind: 'host', code: 'settings', label: '设置', subtitle: '市场地址、信任与更新', score: 0, glyph: '设', tone: tileTone('host:settings') },
 ]
 
 export function commandsOf(manifest: PluginManifest): PluginCmd[] {
@@ -37,15 +48,21 @@ function scoreText(query: string, values: string[]): number {
 
 export function searchHits(query: string, plugins: PluginState[]): SearchHit[] {
   const pluginHits = plugins.flatMap(plugin =>
-    commandsOf(plugin.manifest).map(cmd => ({
-      id: `${plugin.manifest.id}:${cmd.code}`,
-      kind: 'plugin' as const,
-      pluginId: plugin.manifest.id,
-      code: cmd.code,
-      label: cmd.label,
-      subtitle: plugin.manifest.name,
-      score: scoreText(query, [cmd.label, plugin.manifest.name, ...(cmd.matches ?? [])]),
-    })),
+    commandsOf(plugin.manifest).map(cmd => {
+      const id = `${plugin.manifest.id}:${cmd.code}`
+      const label = cmd.label
+      return {
+        id,
+        kind: 'plugin' as const,
+        pluginId: plugin.manifest.id,
+        code: cmd.code,
+        label,
+        subtitle: plugin.manifest.name,
+        score: scoreText(query, [label, plugin.manifest.name, ...(cmd.matches ?? [])]),
+        glyph: Array.from((label || plugin.manifest.name).trim())[0] ?? '?',
+        tone: tileTone(id),
+      }
+    }),
   )
   const hostHits = HOST_COMMANDS.map(hit => ({
     ...hit,

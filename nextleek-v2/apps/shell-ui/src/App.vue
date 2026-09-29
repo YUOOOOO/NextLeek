@@ -24,7 +24,7 @@ const hits = computed(() => panel.value || runtime.value ? [] : searchHits(query
 const installedById = computed(() => Object.fromEntries(plugins.value.map(plugin => [plugin.manifest.id, plugin])))
 
 const SEARCH_HEIGHT = 72
-const LIST_HEIGHT = 420
+const GRID_HEIGHT = 300
 const PANEL_HEIGHT = 640
 const WINDOW_WIDTH = 680
 
@@ -40,10 +40,22 @@ async function withTauriWindow<T>(run: (api: typeof import('@tauri-apps/api/wind
 }
 
 async function fitWindow() {
-  const height = runtime.value || panel.value ? PANEL_HEIGHT : query.value || hits.value.length ? LIST_HEIGHT : SEARCH_HEIGHT
+  const height = runtime.value || panel.value ? PANEL_HEIGHT : query.value || hits.value.length ? GRID_HEIGHT : SEARCH_HEIGHT
   await withTauriWindow(async ({ getCurrentWindow, LogicalSize }) => {
     await getCurrentWindow().setSize(new LogicalSize(WINDOW_WIDTH, height))
   })
+}
+
+async function hideNativeWindow() {
+  if (!('__TAURI_INTERNALS__' in window)) return
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('hide_main_window_command')
+  } catch {
+    await withTauriWindow(async ({ getCurrentWindow }) => {
+      await getCurrentWindow().hide()
+    })
+  }
 }
 
 async function hideLauncher() {
@@ -51,9 +63,7 @@ async function hideLauncher() {
   panel.value = null
   query.value = ''
   selected.value = 0
-  await withTauriWindow(async ({ getCurrentWindow }) => {
-    await getCurrentWindow().hide()
-  })
+  await hideNativeWindow()
 }
 
 async function closeRuntime() {
@@ -95,24 +105,23 @@ async function activate(hit: SearchHit) {
 }
 
 async function onSearchKey(event: KeyboardEvent) {
-  if (event.key === 'ArrowDown') {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
     event.preventDefault()
     selected.value = Math.min(hits.value.length - 1, selected.value + 1)
-  } else if (event.key === 'ArrowUp') {
+  } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
     event.preventDefault()
     selected.value = Math.max(0, selected.value - 1)
   } else if (event.key === 'Enter' && hits.value[selected.value]) {
     event.preventDefault()
     await activate(hits.value[selected.value])
-  } else if (event.key === 'Escape') {
-    event.preventDefault()
-    if (runtime.value || panel.value) {
-      await closeRuntime()
-      panel.value = null
-    } else {
-      await hideLauncher()
-    }
   }
+}
+
+function onGlobalKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  event.stopPropagation()
+  void hideLauncher()
 }
 
 async function install(plugin: NonNullable<MarketCatalog['plugins']>[number]) {
@@ -205,10 +214,18 @@ function runtimeSrcdoc(launch: RuntimeLaunch) {
   const css = runtimeAsset('ui/style.css', launch)
   const js = runtimeAsset('ui/main.js', launch)
   const summary = JSON.stringify({ pluginCount: plugins.value.length, mode: 'dual-trust', version: settings.value?.version ?? '0.1.0' })
-  const bridge = `<script>window.nextleek={runtimeSummary:()=>Promise.resolve(${summary}),call:(method,params)=>new Promise((resolve,reject)=>{const id=Math.random().toString(36).slice(2);const onMessage=event=>{const data=event.data;if(!data||data.type!=='nl-sdk-result'||data.id!==id)return;window.removeEventListener('message',onMessage);if(data.error)reject(new Error(data.error));else resolve(data.result)};window.addEventListener('message',onMessage);parent.postMessage({type:'nl-sdk',id,method,params:params||{}},'*')})}}<\/script>`
+  const bridge = `<script>window.nextleek={runtimeSummary:()=>Promise.resolve(${summary}),call:(method,params)=>new Promise((resolve,reject)=>{const id=Math.random().toString(36).slice(2);const onMessage=event=>{const data=event.data;if(!data||data.type!=='nl-sdk-result'||data.id!==id)return;window.removeEventListener('message',onMessage);if(data.error)reject(new Error(data.error));else resolve(data.result)};window.addEventListener('message',onMessage);parent.postMessage({type:'nl-sdk',id,method,params:params||{}},'*')})}};document.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();parent.postMessage({type:'nl-esc'},'*')}});<\/script>`
   html = html.replace(/<link[^>]+href=["']style\.css["'][^>]*>/i, `<style>${css}</style>`)
   html = html.replace(/<script[^>]+src=["']main\.js["'][^>]*><\/script>/i, `${bridge}<script>${js}<\/script>`)
   return html
+}
+
+function onWindowMessage(event: MessageEvent) {
+  if (event.data?.type === 'nl-esc') {
+    void hideLauncher()
+    return
+  }
+  onSdkMessage(event)
 }
 
 function onSdkMessage(event: MessageEvent) {
@@ -232,13 +249,17 @@ watch(query, async () => {
 })
 
 onMounted(() => {
-  window.addEventListener('message', onSdkMessage)
+  window.addEventListener('keydown', onGlobalKey, true)
+  window.addEventListener('message', onWindowMessage)
   void loadPlugins().catch(cause => { error.value = String(cause) })
   void props.api.readSettings().then(value => { settings.value = value }).catch(cause => { error.value = String(cause) })
   void checkForUpdates()
   void nextTick(() => searchInput.value?.focus())
 })
-onUnmounted(() => window.removeEventListener('message', onSdkMessage))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKey, true)
+  window.removeEventListener('message', onWindowMessage)
+})
 </script>
 
 <template>
@@ -248,7 +269,7 @@ onUnmounted(() => window.removeEventListener('message', onSdkMessage))
         ref="searchInput"
         data-test="search"
         v-model="query"
-        type="search"
+        type="text"
         placeholder="搜索插件与命令"
         autofocus
         @keydown="onSearchKey"
@@ -257,19 +278,21 @@ onUnmounted(() => window.removeEventListener('message', onSdkMessage))
     </header>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="status" class="success">{{ status }}</p>
-    <ul v-if="!panel && !runtime" class="hits" data-test="hits">
-      <li
+    <div v-if="!panel && !runtime" class="plugin-grid" data-test="hits">
+      <button
         v-for="(hit, index) in hits"
         :key="hit.id"
+        type="button"
         :data-test="`hit-${hit.id}`"
+        class="plugin-tile"
         :class="{ active: index === selected }"
         @mousedown.prevent="activate(hit)"
       >
-        <strong>{{ hit.label }}</strong>
-        <span>{{ hit.subtitle }}</span>
-      </li>
-      <li v-if="!hits.length" class="empty">没有匹配的命令</li>
-    </ul>
+        <span class="plugin-icon" :style="{ background: hit.tone }">{{ hit.glyph }}</span>
+        <span class="plugin-label">{{ hit.label }}</span>
+      </button>
+      <p v-if="!hits.length" class="empty">没有匹配的命令</p>
+    </div>
     <section v-if="runtime" class="runtime-view">
       <div class="runtime-frame" :data-trusted="runtime.trusted">
         <iframe :title="runtime.manifest.name" sandbox="allow-scripts" :srcdoc="runtimeSrcdoc(runtime)" />

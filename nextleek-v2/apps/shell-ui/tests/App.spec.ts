@@ -67,14 +67,28 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe('launcher shell', () => {
-  it('shows plugin and host commands in the search list', async () => {
+  it('shows plugin and host commands as square tiles', async () => {
     const wrapper = mount(App, { props: { api: createApi() } })
     await flush()
     expect(wrapper.find('[data-test="search"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="hit-com.nextleek.dashboard:open"]').text()).toContain('仪表盘')
+    expect(wrapper.get('[data-test="hit-com.nextleek.dashboard:open"]').find('.plugin-icon').exists()).toBe(true)
     expect(wrapper.get('[data-test="hit-host:market"]').text()).toContain('插件市场')
     expect(wrapper.get('[data-test="hit-host:settings"]').text()).toContain('设置')
+    expect(wrapper.find('.plugin-grid').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('创造模式')
+  })
+
+  it('hides panels on Escape', async () => {
+    const wrapper = mount(App, { props: { api: createApi() } })
+    await flush()
+    await wrapper.get('[data-test="hit-host:market"]').trigger('mousedown')
+    await flush()
+    expect(wrapper.find('[data-test="market-panel"]').exists()).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flush()
+    expect(wrapper.find('[data-test="market-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="hits"]').exists()).toBe(true)
   })
 
   it('opens the marketplace from search and installs a plugin', async () => {

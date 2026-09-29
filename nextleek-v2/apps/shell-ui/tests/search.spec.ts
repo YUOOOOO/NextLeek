@@ -18,8 +18,10 @@ const dashboard: PluginState = {
 
 describe('searchHits', () => {
   it('lists plugin and host commands when the query is empty', () => {
-    const labels = searchHits('', [dashboard]).map(hit => hit.label)
+    const hits = searchHits('', [dashboard])
+    const labels = hits.map(hit => hit.label)
     expect(labels).toEqual(expect.arrayContaining(['仪表盘', '插件市场', '设置']))
+    expect(hits.find(hit => hit.id === 'com.nextleek.dashboard:open')?.glyph).toBe('仪')
   })
 
   it('ranks market above settings for 市场', () => {

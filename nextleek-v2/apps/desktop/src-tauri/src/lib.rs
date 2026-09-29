@@ -498,6 +498,19 @@ fn builtin_plugin<const N: usize>(
     }
 }
 
+fn hide_main_window(window: &tauri::WebviewWindow) {
+    let _ = window.set_always_on_top(false);
+    let _ = window.hide();
+}
+
+fn show_main_window(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.center();
+    let _ = window.set_always_on_top(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 fn toggle_main(app: &tauri::AppHandle, force_show: bool) {
     use tauri::Manager;
     let Some(window) = app.get_webview_window("main") else {
@@ -505,13 +518,18 @@ fn toggle_main(app: &tauri::AppHandle, force_show: bool) {
     };
     let visible = window.is_visible().unwrap_or(false);
     if visible && !force_show {
-        let _ = window.hide();
+        hide_main_window(&window);
         return;
     }
-    let _ = window.unminimize();
-    let _ = window.center();
-    let _ = window.show();
-    let _ = window.set_focus();
+    show_main_window(&window);
+}
+
+#[tauri::command]
+fn hide_main_window_command(app: tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        hide_main_window(&window);
+    }
 }
 
 pub fn run() {
@@ -573,6 +591,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let _ = window.set_always_on_top(false);
                 let _ = window.hide();
             }
         })
@@ -592,7 +611,8 @@ pub fn run() {
             set_plugin_trust_command,
             launch_plugin_command,
             plugin_sdk_call_command,
-            close_plugin_command
+            close_plugin_command,
+            hide_main_window_command
         ])
         .run(tauri::generate_context!())
         .expect("run NextLeek desktop");

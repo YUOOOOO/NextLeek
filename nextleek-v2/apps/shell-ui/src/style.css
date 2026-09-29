@@ -1,7 +1,7 @@
 :root {
   font-family: system-ui, sans-serif;
-  color: #e9f3ee;
-  background: #07100d;
+  color: #f2f2f4;
+  background: #121214;
 }
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; overflow: hidden; }
@@ -9,8 +9,8 @@ html, body, #app { height: 100%; margin: 0; overflow: hidden; }
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #091611;
-  border: 1px solid #204135;
+  background: #161618;
+  border: 1px solid #2c2c32;
 }
 .search-bar {
   display: flex;
@@ -22,67 +22,92 @@ html, body, #app { height: 100%; margin: 0; overflow: hidden; }
 .search-bar input {
   flex: 1;
   height: 40px;
-  border: 1px solid #315448;
+  border: 1px solid #3a3a42;
   border-radius: 8px;
-  background: #07110d;
-  color: #e9f3ee;
+  background: #1c1c20;
+  color: #f2f2f4;
   padding: 0 12px;
   font: 15px/1.4 inherit;
 }
-.search-bar input:focus { outline: 1px solid #64f29d; }
-.hits {
+.search-bar input:focus { outline: 1px solid #5b8cff; }
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  align-content: start;
+  gap: 8px;
   margin: 0;
-  padding: 0 8px 8px;
-  list-style: none;
+  padding: 8px 12px 12px;
   overflow: auto;
   flex: 1;
 }
-.hits li {
+.plugin-tile {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
-.hits li.active, .hits li:hover { background: #153126; }
-.hits strong { font-size: 14px; }
-.hits span, .muted, .hint { color: #8aa99a; font-size: 12px; }
-.hits .empty, .panel .empty { padding: 24px; color: #8aa99a; }
+.plugin-tile.active, .plugin-tile:hover { background: #25252c; }
+.plugin-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.plugin-label {
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c8c8d0;
+  font-size: 12px;
+}
+.plugin-grid .empty, .panel .empty { grid-column: 1 / -1; padding: 24px; color: #8e8e98; }
 .panel, .runtime-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { padding: 0 12px 12px; overflow: auto; }
 .panel-head, .button-row, .trust-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .card {
-  border: 1px solid #244538;
-  background: #0d1f18;
+  border: 1px solid #2c2c32;
+  background: #1c1c20;
   border-radius: 10px;
   padding: 12px;
   margin-top: 10px;
 }
 .card h2 { margin: 0 0 8px; font-size: 15px; }
-.card p { margin: 0 0 8px; color: #a8c2b4; font-size: 13px; }
-.card label { display: grid; gap: 6px; color: #a8c2b4; font-size: 13px; }
+.card p { margin: 0 0 8px; color: #b4b4be; font-size: 13px; }
+.card label { display: grid; gap: 6px; color: #b4b4be; font-size: 13px; }
 .card input {
-  border: 1px solid #315448;
+  border: 1px solid #3a3a42;
   border-radius: 8px;
-  background: #091711;
-  color: #e9f3ee;
+  background: #161618;
+  color: #f2f2f4;
   padding: 8px 10px;
 }
 .btn, .ghost {
-  border: 1px solid #315448;
+  border: 1px solid #3a3a42;
   background: transparent;
-  color: #e9f3ee;
+  color: #f2f2f4;
   border-radius: 8px;
   padding: 6px 10px;
   cursor: pointer;
 }
-.btn.primary { background: #1b6b45; border-color: #1b6b45; }
-.ghost { border: 0; color: #8aa99a; }
+.btn.primary { background: #3b6fd9; border-color: #3b6fd9; }
+.ghost { border: 0; color: #8e8e98; }
 .installed-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.pill { background: #153126; border-radius: 999px; padding: 4px 8px; font-size: 12px; }
-.runtime-frame, .runtime-frame iframe { width: 100%; height: 100%; border: 0; background: #07100d; }
+.pill { background: #25252c; border-radius: 999px; padding: 4px 8px; font-size: 12px; }
+.runtime-frame, .runtime-frame iframe { width: 100%; height: 100%; border: 0; background: #121214; }
 .error { color: #ff8a8a; margin: 0 12px; font-size: 13px; }
-.success { color: #64f29d; margin: 0 12px; font-size: 13px; }
-.hint { margin: 0; padding: 6px 12px 8px; border-top: 1px solid #204135; }
+.success { color: #8ab4ff; margin: 0 12px; font-size: 13px; }
+.muted, .hint { color: #8e8e98; font-size: 12px; }
+.hint { margin: 0; padding: 6px 12px 8px; border-top: 1px solid #2c2c32; }
 iframe { color-scheme: dark; }
