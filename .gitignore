@@ -8,8 +8,7 @@ data/
 *.db
 .env
 node_modules/
-frontend/dist/
-frontend/.vite/
-mobile/dist/
-mobile/.vite/
+dist/
+.vite/
+.expo/
 .DS_Store

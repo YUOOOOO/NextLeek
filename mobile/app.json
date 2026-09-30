@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "NextLeek",
+    "slug": "nextleek-v3",
+    "scheme": "nextleek",
+    "version": "3.0.0",
+    "orientation": "portrait",
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}
