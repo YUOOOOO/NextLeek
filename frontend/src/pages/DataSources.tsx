@@ -143,23 +143,23 @@ export function DataSources() {
       <section className="card p-4 space-y-3">
         <div>
           <h2 className="text-sm font-medium text-[var(--ds-color-text-primary)]">能力路由</h2>
-          <p className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">当前生效源与可切换源；未就绪或档位不足的能力不提供切换选项。</p>
+          <p className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">选择各项能力使用的数据源</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {capabilities.map((cap) => (
-            <div key={cap.id} className="rounded-lg border border-[var(--ds-color-border-default)] p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="font-medium text-[var(--ds-color-text-primary)]">{cap.label}</span>
-                <span className={cap.usable ? "text-[var(--ds-color-text-secondary)]" : "text-amber-400"}>当前：{cap.current_display}{cap.usable ? "" : "（不可用）"}</span>
+            <div key={cap.id} className={`rounded-xl border p-4 space-y-3 transition-colors ${cap.usable ? "border-emerald-500/40 bg-emerald-500/[0.06] shadow-sm shadow-emerald-500/5" : "border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-secondary)] opacity-60"}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={`text-sm font-semibold ${cap.usable ? "text-[var(--ds-color-text-primary)]" : "text-[var(--ds-color-text-placeholder)]"}`}>{cap.label}</span>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${cap.usable ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--ds-color-bg-tertiary)] text-[var(--ds-color-text-placeholder)]"}`}>{cap.current_display}</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {cap.candidates.map((candidate) => (
-                  <button key={candidate.name} type="button" className={`btn ${cap.current === candidate.name ? "btn-primary" : "btn-ghost"}`} disabled={!cap.field || switchProviders.isPending} onClick={() => cap.field && cap.current !== candidate.name && switchProviders.mutate({ [cap.field]: candidate.name })}>
-                    {cap.current === candidate.name ? `当前：${candidate.display}` : `切换到 ${candidate.display}`}
+                  <button key={candidate.name} type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${cap.current === candidate.name ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-300 shadow-sm" : "border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-primary)] text-[var(--ds-color-text-secondary)] hover:border-emerald-500/40 hover:text-[var(--ds-color-text-primary)]"}`} disabled={!cap.field || switchProviders.isPending} onClick={() => cap.field && cap.current !== candidate.name && switchProviders.mutate({ [cap.field]: candidate.name })}>
+                    {candidate.display}
                   </button>
                 ))}
-                {cap.pending.map((candidate) => <span key={candidate.name} className="badge badge-off" title={candidate.note}>{candidate.display} 未就绪</span>)}
-                {!cap.candidates.length && !cap.pending.length && <span className="text-xs text-[var(--ds-color-text-placeholder)]">暂无可用源</span>}
+                {cap.pending.map((candidate) => <span key={candidate.name} className="cursor-not-allowed rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-tertiary)] px-3 py-1.5 text-xs text-[var(--ds-color-text-placeholder)] opacity-60" title={candidate.note}>{candidate.display}</span>)}
+                {!cap.candidates.length && !cap.pending.length && <span className="text-xs text-[var(--ds-color-text-placeholder)]">暂无数据源</span>}
               </div>
             </div>
           ))}
