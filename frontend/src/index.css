@@ -3552,6 +3552,28 @@ button.news-tag:hover {
   font-size: 13px;
 }
 
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert-item {
+  padding: 9px 10px;
+  border-left: 3px solid #f59e0b;
+  border-radius: 5px;
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--ds-color-text-secondary);
+  font-size: 12px;
+}
+
+.alert-item span, .alert-list-empty {
+  display: block;
+  margin-top: 4px;
+  color: var(--ds-color-text-description);
+  font-size: 11px;
+}
+
 .analysis-loading, .analysis-error {
   display: flex;
   align-items: center;

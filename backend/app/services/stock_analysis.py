@@ -88,6 +88,11 @@ class StockAnalysis:
     current_price: float | None = None
     pnl_pct: float | None = None
     distance_to_stop: float | None = None
+    tracking: bool = False
+    alerts: list[dict[str, Any]] = field(default_factory=list)
+    entry_price: float | None = None
+    track_status: str | None = None
+
 
 
 class StockAnalysisService:
@@ -136,26 +141,30 @@ class StockAnalysisService:
 
         close = float(latest.get_column("close").item())
 
-        # 计算关键价位
+        # 关键价位使用 indicators.levels 的统一结构，避免维护第二套算法。
         from app.indicators.levels import compute_levels
         levels_raw = compute_levels(df)
-        key_levels = self._extract_key_levels(levels_raw, close)
+        key_levels = self._extract_key_levels(levels_raw, close, df)
 
         # 买卖点判断
-        buy_points = self._detect_buy_points(df, close, strategy_hits or [])
+        buy_points = self._detect_buy_points(df, close, strategy_hits or [], key_levels)
         sell_points = self._detect_sell_points(df, close, key_levels)
 
         # 风险评估
         risk = self._assess_risk(df, close, key_levels)
 
-        # 实时状态
-        current_price = None
+        # 实时状态。浮盈只在存在真实跟踪成本时计算，不能用推测成本伪造。
+        current_price = close
         pnl_pct = None
         distance_to_stop = None
+        alerts: list[dict[str, Any]] = []
         if track_record is not None:
             current_price = track_record.current_price or close
-            pnl_pct = track_record.unrealized_pnl_pct
-            distance_to_stop = track_record.distance_to_stop_pct
+            if track_record.entry_price > 0:
+                pnl_pct = (current_price - track_record.entry_price) / track_record.entry_price * 100
+            if track_record.stop_loss > 0 and current_price > 0:
+                distance_to_stop = (current_price - track_record.stop_loss) / current_price * 100
+            alerts = list(reversed(track_record.alert_history))
             if track_record.stop_loss > 0:
                 key_levels.stop_loss = track_record.stop_loss
             if track_record.take_profit:
@@ -173,9 +182,13 @@ class StockAnalysisService:
             sell_points=sell_points,
             key_levels=key_levels,
             risk=risk,
-            current_price=current_price or close,
+            current_price=current_price,
             pnl_pct=pnl_pct,
             distance_to_stop=distance_to_stop,
+            tracking=track_record is not None,
+            alerts=alerts,
+            entry_price=track_record.entry_price if track_record is not None else None,
+            track_status=str(track_record.status) if track_record is not None else None,
         )
 
     # ──────────────────────────────────────────────
@@ -193,84 +206,90 @@ class StockAnalysisService:
         self,
         levels_raw: dict[str, list[dict]],
         close: float,
+        df: pl.DataFrame,
     ) -> KeyLevels:
-        """从 compute_levels 结果中提取关键价位"""
+        """把统一价位引擎的 ``value`` 输出压缩成分析页所需档位。"""
         support: list[float] = []
         resistance: list[float] = []
-        ma: dict[str, float] = {}
 
-        # 支撑/阻力: 从 sr 和 pivot 中提取
-        for src_key in ("sr", "pivot"):
-            for pt in levels_raw.get(src_key, []):
-                price = pt.get("price", 0)
-                side = pt.get("side", "")
+        for points in levels_raw.values():
+            for point in points:
+                value = point.get("value")
+                try:
+                    price = float(value)
+                except (TypeError, ValueError):
+                    continue
                 if price <= 0:
                     continue
-                if price < close and side in ("support", ""):
-                    support.append(price)
-                elif price > close and side in ("resistance", ""):
-                    resistance.append(price)
+                side = point.get("side")
+                if price < close and side == "support":
+                    support.append(round(price, 2))
+                elif price > close and side == "resistance":
+                    resistance.append(round(price, 2))
 
-        # 去重排序
-        support = sorted(set(support))[-3:]  # 最近3个支撑
-        resistance = sorted(set(resistance))[:3]  # 最近3个压力
+        support = sorted(set(support), reverse=True)[:3]
+        resistance = sorted(set(resistance))[:3]
 
-        # ATR 止损
-        for pt in levels_raw.get("atr_stop", []):
-            if pt.get("side") == "stop_loss":
-                support.append(pt.get("price", 0))
+        ma: dict[str, float] = {}
+        latest = df.sort("date").tail(1)
+        for label, column in (("MA5", "ma_5"), ("MA10", "ma_10"), ("MA20", "ma_20"), ("MA60", "ma_60")):
+            if column not in latest.columns:
+                continue
+            value = latest.get_column(column).item()
+            if value is not None:
+                ma[label] = round(float(value), 2)
 
-        return KeyLevels(
-            support=support,
-            resistance=resistance,
-            ma=ma,
-        )
+        return KeyLevels(support=support, resistance=resistance, ma=ma)
 
     def _detect_buy_points(
         self,
         df: pl.DataFrame,
         close: float,
         strategy_hits: list[str],
+        key_levels: KeyLevels,
     ) -> list[BuyPoint]:
-        """检测买入点"""
+        """生成策略命中或技术结构对应的可执行买入触发价。"""
         points: list[BuyPoint] = []
         latest_date = str(df.get_column("date").max())
 
-        # 根据策略类型判断买入点类型
         for strategy_id in strategy_hits:
             if any(k in strategy_id for k in ("limit_up", "lianban", "broken")):
-                points.append(BuyPoint(
-                    type="打板买入",
-                    price=round(close, 2),
-                    date=latest_date,
-                    reason=f"策略[{strategy_id}]命中，次日竞价或板上确认",
-                    confidence=0.7,
-                ))
+                kind, price, reason, confidence = (
+                    "打板买入", close, f"策略[{strategy_id}]命中，次日竞价或板上确认", 0.7,
+                )
             elif any(k in strategy_id for k in ("pullback", "bounce", "oversold")):
-                points.append(BuyPoint(
-                    type="低吸买入",
-                    price=round(close * 0.98, 2),
-                    date=latest_date,
-                    reason=f"策略[{strategy_id}]命中，回踩支撑位低吸",
-                    confidence=0.6,
-                ))
+                price = key_levels.support[0] if key_levels.support else close * 0.98
+                kind, reason, confidence = "低吸买入", f"策略[{strategy_id}]命中，等待支撑位确认", 0.6
             elif any(k in strategy_id for k in ("breakout", "new_high", "trend")):
-                points.append(BuyPoint(
-                    type="突破买入",
-                    price=round(close * 1.01, 2),
-                    date=latest_date,
-                    reason=f"策略[{strategy_id}]命中，突破确认后买入",
-                    confidence=0.65,
-                ))
+                price = key_levels.resistance[0] if key_levels.resistance else close * 1.01
+                kind, reason, confidence = "突破买入", f"策略[{strategy_id}]命中，放量突破后确认", 0.65
             else:
-                points.append(BuyPoint(
-                    type="信号买入",
-                    price=round(close, 2),
-                    date=latest_date,
-                    reason=f"策略[{strategy_id}]命中",
-                    confidence=0.5,
-                ))
+                kind, price, reason, confidence = "信号买入", close, f"策略[{strategy_id}]命中", 0.5
+            points.append(BuyPoint(kind, round(price, 2), latest_date, reason, confidence))
 
+        if points:
+            return points
+
+        latest = df.sort("date").tail(1)
+        signal_specs = (
+            ("signal_limit_up", "涨停确认", "涨停信号已触发", 0.7),
+            ("signal_broken_limit_up", "回封确认", "炸板后仅在重新封板时确认", 0.55),
+            ("signal_macd_golden", "金叉买入", "MACD 金叉信号已触发", 0.6),
+            ("signal_ma_golden_5_20", "均线金叉", "MA5 上穿 MA20", 0.6),
+            ("signal_boll_breakout_upper", "突破买入", "价格突破布林上轨", 0.55),
+        )
+        for column, kind, reason, confidence in signal_specs:
+            if column in latest.columns and latest.get_column(column).item() is True:
+                points.append(BuyPoint(kind, round(close, 2), latest_date, reason, confidence))
+
+        if not points:
+            if key_levels.support:
+                price = key_levels.support[0]
+                reason = "等待最近支撑位企稳后确认，不代表当前已触发"
+            else:
+                price = close
+                reason = "暂无明确技术信号，等待现价附近放量确认"
+            points.append(BuyPoint("观察买点", round(price, 2), latest_date, reason, 0.4))
         return points
 
     def _detect_sell_points(
@@ -279,33 +298,31 @@ class StockAnalysisService:
         close: float,
         key_levels: KeyLevels,
     ) -> list[SellPoint]:
-        """检测卖出点"""
-        points: list[SellPoint] = []
+        """根据统一关键价位生成止损和止盈触发价。"""
+        nearest_support = key_levels.support[0] if key_levels.support else None
+        stop = max(close * 0.95, nearest_support * 0.99) if nearest_support else close * 0.95
+        key_levels.stop_loss = round(stop, 2)
 
-        # 固定止损
-        stop = close * 0.95
-        if key_levels.support:
-            # 取最近支撑位下方1%
-            nearest_support = max(s for s in key_levels.support if s < close) if any(s < close for s in key_levels.support) else close * 0.95
-            stop = min(stop, nearest_support * 0.99)
-        points.append(SellPoint(
-            type="止损",
-            price=round(stop, 2),
-            reason="固定止损（买入价下方5%或最近支撑位）",
-            severity="critical",
-        ))
+        nearest_resistance = key_levels.resistance[0] if key_levels.resistance else None
+        take_profit = nearest_resistance * 0.99 if nearest_resistance else close * 1.08
+        if take_profit <= close:
+            take_profit = close * 1.08
+        key_levels.take_profit = round(take_profit, 2)
 
-        # 压力位止盈
-        if key_levels.resistance:
-            for r in key_levels.resistance[:2]:
-                points.append(SellPoint(
-                    type="止盈",
-                    price=round(r * 0.98, 2),
-                    reason=f"压力位 {r:.2f} 附近减仓",
-                    severity="normal",
-                ))
-
-        return points
+        return [
+            SellPoint(
+                type="止损",
+                price=key_levels.stop_loss,
+                reason="最近支撑位下方 1% 与现价下方 5% 中较近者",
+                severity="critical",
+            ),
+            SellPoint(
+                type="止盈",
+                price=key_levels.take_profit,
+                reason="最近压力位下方 1%；无有效压力位时按 8% 目标",
+                severity="normal",
+            ),
+        ]
 
     def _assess_risk(
         self,

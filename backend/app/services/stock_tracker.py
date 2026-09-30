@@ -78,7 +78,7 @@ class TrackRecord:
     def distance_to_stop_pct(self) -> float | None:
         if self.current_price is None or self.stop_loss <= 0:
             return None
-        return (self.stop_loss - self.current_price) / self.current_price * 100
+        return (self.current_price - self.stop_loss) / self.current_price * 100
 
     @property
     def hold_days(self) -> int:
@@ -107,7 +107,7 @@ class StockTracker:
         self._store_path = self.data_dir / "user_data" / "stock_tracks.jsonl"
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, TrackRecord] = {}  # symbol -> record
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._load()
 
     def _load(self) -> None:

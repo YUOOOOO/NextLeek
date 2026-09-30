@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.deps import require_csrf, require_user
 from app.models import User
 from app.schemas import SelectionRunIn
+from app.services import alert_store
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,29 @@ def _tracker(request: Request):
     """构造 StockTracker"""
     from app.services.stock_tracker import StockTracker
     return StockTracker(_data_dir(request))
+
+def _live_price(request: Request, symbol: str) -> float | None:
+    """读取行情缓存，同时兼容带/不带交易所后缀的代码。"""
+    quote_service = getattr(request.app.state, "quote_service", None)
+    if quote_service is None:
+        return None
+    try:
+        frame = quote_service.get_quotes_compat()
+    except Exception:
+        return None
+    if frame is None or frame.is_empty() or "symbol" not in frame.columns:
+        return None
+    target = symbol.strip().upper()
+    bare = target.split(".", 1)[0]
+    for row in reversed(frame.to_dicts()):
+        candidate = str(row.get("symbol") or "").strip().upper()
+        if candidate != target and candidate.split(".", 1)[0] != bare:
+            continue
+        for column in ("close", "last_price"):
+            value = row.get(column)
+            if value is not None:
+                return float(value)
+    return None
 
 
 # ──────────────────────────────────────────────
@@ -221,16 +246,15 @@ async def analyze_stock(
     request: Request,
     _: User = Depends(require_user),
 ) -> dict[str, Any]:
-    """个股深度分析"""
-    from app.services.stock_analysis import StockAnalysisService
-
     tracker = _tracker(request)
+    from app.services.stock_analysis import StockAnalysisService
     track_record = tracker.get(symbol)
+    live_price = _live_price(request, symbol)
+    if track_record is not None and live_price is not None:
+        tracker.update_price(symbol, live_price)
+        track_record = tracker.get(symbol)
 
-    svc = StockAnalysisService(
-        request.app.state.repo,
-        getattr(request.app.state, "data_dir", None),
-    )
+    svc = StockAnalysisService(request.app.state.repo, _data_dir(request))
     analysis = svc.analyze(
         symbol=symbol,
         strategy_hits=[track_record.strategy_id] if track_record else [],
@@ -241,7 +265,16 @@ async def analyze_stock(
     if analysis is None:
         raise HTTPException(status_code=404, detail="No data for symbol")
 
-    return _serialize_analysis(analysis)
+    data_dir = Path(_data_dir(request))
+    history = alert_store.list_recent(data_dir, days=7, limit=100)
+    symbol_events = [
+        event for event in history
+        if event.get("user_id") == str(_.id)
+        and str(event.get("symbol") or "").upper().split(".", 1)[0] == symbol.upper().split(".", 1)[0]
+    ]
+    serialized = _serialize_analysis(analysis)
+    serialized["alerts"] = (analysis.alerts + symbol_events)[:100]
+    return serialized
 
 
 # ──────────────────────────────────────────────
@@ -347,4 +380,8 @@ def _serialize_analysis(analysis) -> dict[str, Any]:
         "current_price": analysis.current_price,
         "pnl_pct": round(analysis.pnl_pct, 2) if analysis.pnl_pct is not None else None,
         "distance_to_stop": round(analysis.distance_to_stop, 2) if analysis.distance_to_stop is not None else None,
+        "tracking": analysis.tracking,
+        "entry_price": analysis.entry_price,
+        "track_status": analysis.track_status,
+        "alerts": analysis.alerts,
     }

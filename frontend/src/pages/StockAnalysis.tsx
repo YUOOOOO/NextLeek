@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   TrendingUp,
@@ -45,6 +45,14 @@ interface RiskAssessment {
   near_support: boolean;
   warnings: string[];
 }
+interface AnalysisAlert {
+  type: string;
+  message: string;
+  time?: string;
+  ts?: number;
+  price?: number | null;
+}
+
 
 interface StockAnalysisData {
   symbol: string;
@@ -61,6 +69,10 @@ interface StockAnalysisData {
   current_price: number;
   pnl_pct: number | null;
   distance_to_stop: number | null;
+  tracking: boolean;
+  entry_price: number | null;
+  track_status: string | null;
+  alerts: AnalysisAlert[];
 }
 
 // ── 辅助 ──
@@ -90,6 +102,18 @@ export function StockAnalysis() {
     queryFn: async () => (await api.stockAnalysis(symbol!)) as unknown as StockAnalysisData,
     enabled: !!symbol,
     refetchInterval: 30000,
+  });
+  const startTracking = useMutation({
+    mutationFn: async () => api.startTrack({
+      symbol: analysis!.symbol,
+      name: analysis!.name,
+      entry_price: analysis!.current_price,
+      stop_loss: analysis!.key_levels.stop_loss,
+      take_profit: analysis!.key_levels.take_profit,
+      reason: "从个股分析页开始跟踪",
+      strategy_id: analysis!.strategy_hits[0] ?? "technical_analysis",
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["analysis", symbol] }),
   });
 
   useEffect(() => {
@@ -149,7 +173,7 @@ export function StockAnalysis() {
       <div className="analysis-body">
         {/* 左侧：实时状态 + 关键价位 */}
         <div className="analysis-left">
-          <RealTimeCard analysis={analysis} />
+          <RealTimeCard analysis={analysis} onStartTracking={() => startTracking.mutate()} trackingBusy={startTracking.isPending} />
           <KeyLevelsCard analysis={analysis} />
           <RiskCard analysis={analysis} />
         </div>
@@ -158,7 +182,7 @@ export function StockAnalysis() {
         <div className="analysis-right">
           <ReasonCard analysis={analysis} />
           <BuySellCard analysis={analysis} />
-          <AlertHistoryCard />
+          <AlertHistoryCard alerts={analysis.alerts} />
         </div>
       </div>
 
@@ -192,36 +216,43 @@ export function StockAnalysis() {
 
 // ── 子组件 ──
 
-function RealTimeCard({ analysis }: { analysis: StockAnalysisData }) {
+function RealTimeCard({ analysis, onStartTracking, trackingBusy }: {
+  analysis: StockAnalysisData;
+  onStartTracking: () => void;
+  trackingBusy: boolean;
+}) {
   const pnl = analysis.pnl_pct;
   const distStop = analysis.distance_to_stop;
+  const statusLabels: Record<string, string> = {
+    watching: "观察中", holding: "持仓中", stopped: "已止损", sold: "已卖出", expired: "已到期",
+  };
 
   return (
     <div className="card realtime-card">
-      <h3>
-        <Crosshair size={16} />
-        实时状态
-      </h3>
+      <h3><Crosshair size={16} />实时状态</h3>
       <div className="realtime-grid">
+        <div className="rt-item"><span className="rt-label">现价</span><span className="rt-value price">{fmtPrice(analysis.current_price)}</span></div>
         <div className="rt-item">
-          <span className="rt-label">现价</span>
-          <span className="rt-value price">{fmtPrice(analysis.current_price)}</span>
-        </div>
-        <div className="rt-item">
-          <span className="rt-label">浮盈</span>
-          <span className={`rt-value ${pnl && pnl >= 0 ? "up" : "down"}`}>
-            {fmtPct(pnl)}
+          <span className="rt-label">{analysis.tracking ? "浮盈" : "参考成本"}</span>
+          <span className={`rt-value ${pnl != null && pnl >= 0 ? "up" : "down"}`}>
+            {analysis.tracking ? fmtPct(pnl) : fmtPrice(analysis.current_price)}
           </span>
         </div>
         <div className="rt-item">
           <span className="rt-label">距止损</span>
           <span className={`rt-value ${distStop != null && distStop < 3 ? "danger" : ""}`}>
-            {distStop != null ? `${distStop.toFixed(1)}%` : "—"}
+            {distStop != null ? `${distStop.toFixed(1)}%` : `${((analysis.current_price - (analysis.key_levels.stop_loss ?? analysis.current_price)) / analysis.current_price * 100).toFixed(1)}%`}
           </span>
         </div>
         <div className="rt-item">
           <span className="rt-label">状态</span>
-          <span className="rt-value status-active">跟踪中</span>
+          {analysis.tracking ? (
+            <span className="rt-value status-active">{statusLabels[analysis.track_status ?? ""] ?? analysis.track_status}</span>
+          ) : (
+            <button type="button" className="track-btn" onClick={onStartTracking} disabled={trackingBusy || analysis.key_levels.stop_loss == null}>
+              {trackingBusy ? "启动中…" : "开始跟踪"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -263,6 +294,17 @@ function KeyLevelsCard({ analysis }: { analysis: StockAnalysisData }) {
           </div>
         </div>
       )}
+      {Object.keys(levels.ma).length > 0 && (
+        <div className="level-group">
+          <span className="level-label">均线</span>
+          <div className="level-values">
+            {Object.entries(levels.ma).map(([label, value]) => (
+              <span key={label} className="level-tag">{label} {fmtPrice(value)}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
 
       {levels.stop_loss && (
         <div className="level-group">
@@ -411,16 +453,20 @@ function BuySellCard({ analysis }: { analysis: StockAnalysisData }) {
   );
 }
 
-function AlertHistoryCard() {
+function AlertHistoryCard({ alerts }: { alerts: AnalysisAlert[] }) {
   return (
     <div className="card alert-card">
-      <h3>
-        <AlertTriangle size={16} />
-        告警流
-      </h3>
-      <div className="alert-list-empty">
-        暂无告警
-      </div>
+      <h3><AlertTriangle size={16} />告警流</h3>
+      {alerts.length > 0 ? (
+        <div className="alert-list">
+          {alerts.map((alert, index) => (
+            <div className="alert-item" key={`${alert.ts ?? alert.time ?? "alert"}-${index}`}>
+              <div>{alert.message}</div>
+              <span>{alert.time ?? (alert.ts ? new Date(alert.ts).toLocaleString() : "")}</span>
+            </div>
+          ))}
+        </div>
+      ) : <div className="alert-list-empty">近 7 日暂无该股票告警</div>}
     </div>
   );
 }
