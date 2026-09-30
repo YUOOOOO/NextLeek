@@ -49,6 +49,8 @@ export function DataSources() {
   const [datasetsJson, setDatasetsJson] = useState(JSON.stringify(EMPTY_SOURCE.datasets, null, 2));
   const [testDataset, setTestDataset] = useState("daily");
   const [testResult, setTestResult] = useState("");
+  const [pluginKey, setPluginKey] = useState("");
+  const [pluginName, setPluginName] = useState("");
 
   const settings = useQuery({ queryKey: queryKeys.settings, queryFn: api.tickflowSettings });
   const prefs = useQuery({ queryKey: queryKeys.preferences, queryFn: api.preferences });
@@ -119,6 +121,26 @@ export function DataSources() {
     mutationFn: api.reloadDataSources,
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const savePluginKey = useMutation({
+    mutationFn: () => api.savePluginKey(pluginName, pluginKey),
+    onSuccess: async () => {
+      setPluginKey("");
+      setError("");
+      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
+      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
+      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const clearPluginKey = useMutation({
+    mutationFn: (name: string) => api.clearPluginKey(name),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
+      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
+      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
     },
     onError: (err: Error) => setError(err.message),
   });
@@ -219,6 +241,54 @@ export function DataSources() {
         </div>
 
       </section>
+      <section className="card p-4 space-y-3">
+        <div className="text-sm text-[var(--ds-color-text-primary)]">内置插件</div>
+        {(sources.data?.plugins ?? []).map((plugin) => (
+          <div key={plugin.name} className="rounded border border-[var(--ds-color-border)] p-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm text-[var(--ds-color-text-primary)]">{plugin.display_name || plugin.name}</div>
+                <div className="text-xs text-[var(--ds-color-text-placeholder)]">
+                  {plugin.datasets?.join(" · ") || "无数据集"} · {plugin.status || (plugin.available ? "可用" : "不可用")}
+                </div>
+              </div>
+              <span className={`badge ${plugin.available ? "badge-on" : "badge-off"}`}>
+                {plugin.available ? plugin.api_key_masked || "已配置" : "未配置"}
+              </span>
+            </div>
+            {plugin.description && <div className="text-xs text-[var(--ds-color-text-placeholder)]">{plugin.description}</div>}
+            {plugin.api_key_env && (
+              <div className="flex flex-wrap gap-2">
+                <input
+                  className="field flex-1 min-w-[220px]"
+                  type="password"
+                  placeholder={`${plugin.api_key_env} / API Key`}
+                  value={pluginName === plugin.name ? pluginKey : ""}
+                  onFocus={() => setPluginName(plugin.name)}
+                  onChange={(event) => {
+                    setPluginName(plugin.name);
+                    setPluginKey(event.target.value);
+                  }}
+                />
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  disabled={pluginName !== plugin.name || !pluginKey || savePluginKey.isPending}
+                  onClick={() => savePluginKey.mutate()}
+                >
+                  保存并探测
+                </button>
+                {plugin.api_key_masked && (
+                  <button className="btn btn-ghost" type="button" onClick={() => clearPluginKey.mutate(plugin.name)}>
+                    清除
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </section>
+
 
       <section className="card overflow-hidden">
         <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">已加载源</div>

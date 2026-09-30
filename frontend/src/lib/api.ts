@@ -743,11 +743,29 @@ export const api = {
   dataSources: () =>
     request<{
       builtin: Array<{ name: string; display_name: string; datasets: string[] }>;
-      plugins: unknown[];
+      plugins: Array<{
+        name: string;
+        display_name?: string;
+        datasets?: string[];
+        available?: boolean;
+        status?: string;
+        api_key_env?: string;
+        api_key_masked?: string;
+        description?: string;
+        install_hint?: string;
+        homepage?: string;
+      }>;
       custom: Array<{ name: string; display_name?: string; datasets?: string[] }>;
       errors: unknown;
       config_dir: string;
-    }>("/api/settings/data-sources"),
+    }>('/api/settings/data-sources'),
+  savePluginKey: (plugin: string, api_key: string) =>
+    request<unknown>('/api/settings/plugin-key', {
+      method: 'POST',
+      body: JSON.stringify({ plugin, api_key }),
+    }),
+  clearPluginKey: (name: string) =>
+    request<unknown>(`/api/settings/plugin-key/${name}`, { method: 'DELETE' }),
   getDataSource: (name: string) => request<CustomSourceConfig>(`/api/settings/data-sources/${name}`),
   saveDataSource: (body: CustomSourceConfig) =>
     request<unknown>("/api/settings/data-sources", { method: "POST", body: JSON.stringify(body) }),
