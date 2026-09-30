@@ -147,18 +147,18 @@ export function DataSources() {
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {capabilities.map((cap) => (
-            <div key={cap.id} className={`rounded-xl border p-4 space-y-3 transition-colors ${cap.usable ? "border-emerald-500/40 bg-emerald-500/[0.06] shadow-sm shadow-emerald-500/5" : "border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-secondary)] opacity-60"}`}>
+            <div key={cap.id} className={`rounded-xl border p-4 space-y-3 transition-colors ${cap.usable ? "border-[var(--ds-color-border-hover)] bg-[var(--ds-color-bg-muted)]" : "border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-secondary)] opacity-60"}`}>
               <div className="flex items-center justify-between gap-3">
-                <span className={`text-sm font-semibold ${cap.usable ? "text-[var(--ds-color-text-primary)]" : "text-[var(--ds-color-text-placeholder)]"}`}>{cap.label}</span>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${cap.usable ? "bg-emerald-500/15 text-emerald-400" : "bg-[var(--ds-color-bg-tertiary)] text-[var(--ds-color-text-placeholder)]"}`}>{cap.current_display}</span>
+                <span className={`text-sm font-semibold ${cap.usable ? "text-emerald-400" : "text-[var(--ds-color-text-placeholder)]"}`}>{cap.label}</span>
+                <span className="rounded-full bg-[var(--ds-color-bg-active)] px-2.5 py-1 text-xs font-medium text-[var(--ds-color-text-secondary)]">{cap.current_display}</span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {cap.candidates.map((candidate) => (
-                  <button key={candidate.name} type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${cap.current === candidate.name ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-300 shadow-sm" : "border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-primary)] text-[var(--ds-color-text-secondary)] hover:border-emerald-500/40 hover:text-[var(--ds-color-text-primary)]"}`} disabled={!cap.field || switchProviders.isPending} onClick={() => cap.field && cap.current !== candidate.name && switchProviders.mutate({ [cap.field]: candidate.name })}>
+                  <button key={candidate.name} type="button" className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${cap.current === candidate.name ? "border-[var(--ds-color-border-hover)] bg-[var(--ds-color-bg-active)] text-[var(--ds-color-text-primary)]" : "border-[var(--ds-color-border-default)] bg-transparent text-[var(--ds-color-text-placeholder)] hover:border-[var(--ds-color-border-hover)] hover:text-[var(--ds-color-text-secondary)]"}`} disabled={!cap.field || switchProviders.isPending} onClick={() => cap.field && cap.current !== candidate.name && switchProviders.mutate({ [cap.field]: candidate.name })}>
                     {candidate.display}
                   </button>
                 ))}
-                {cap.pending.map((candidate) => <span key={candidate.name} className="cursor-not-allowed rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-tertiary)] px-3 py-1.5 text-xs text-[var(--ds-color-text-placeholder)] opacity-60" title={candidate.note}>{candidate.display}</span>)}
+                {cap.pending.map((candidate) => <span key={candidate.name} className="cursor-not-allowed rounded-lg border border-[var(--ds-color-border-default)] px-3 py-1.5 text-xs text-[var(--ds-color-text-placeholder)] opacity-40" title={candidate.note}>{candidate.display}</span>)}
                 {!cap.candidates.length && !cap.pending.length && <span className="text-xs text-[var(--ds-color-text-placeholder)]">暂无数据源</span>}
               </div>
             </div>

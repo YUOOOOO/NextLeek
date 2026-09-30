@@ -99,7 +99,7 @@ export async function streamStockAnalysis(
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    const lines = buffer.split("\\n");
+    const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.trim()) continue;
