@@ -88,7 +88,7 @@ export function DataSources() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    <div className="w-full max-w-none space-y-5">
       {error && <div role="alert" className="card px-4 py-3 text-sm text-[#f87171]">{error}</div>}
 
       <section className="card p-4 space-y-3">
@@ -113,7 +113,7 @@ export function DataSources() {
               <button className="btn btn-primary shrink-0" disabled={!apiKey.trim() || saveKey.isPending}>保存并探测</button>
               {settings.data?.has_tickflow_key && <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearKey.mutate()} disabled={clearKey.isPending}>清除</button>}
             </form>
-            <button className="btn btn-ghost" type="button" disabled={switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === "tickflow"))} onClick={() => applySource("tickflow")}>接管可用能力</button>
+            <button className="btn btn-primary" type="button" disabled={switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === "tickflow"))} onClick={() => applySource("tickflow")}>切换到 TickFlow</button>
           </div>
           {plugins.map((plugin) => (
             <div key={plugin.name} className="rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-muted)] p-3.5 space-y-3">
@@ -134,7 +134,7 @@ export function DataSources() {
                   {plugin.api_key_masked && <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearPluginKey.mutate(plugin.name)} disabled={clearPluginKey.isPending}>清除</button>}
                 </form>
               )}
-              <button className="btn btn-ghost" type="button" disabled={!plugin.available || switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === plugin.name))} onClick={() => applySource(plugin.name)}>接管可用能力</button>
+              <button className="btn btn-primary" type="button" disabled={!plugin.available || switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === plugin.name))} onClick={() => applySource(plugin.name)}>{plugin.available ? `切换到 ${plugin.display_name || plugin.name}` : "先配置 API Key"}</button>
             </div>
           ))}
         </div>
@@ -145,7 +145,7 @@ export function DataSources() {
           <h2 className="text-sm font-medium text-[var(--ds-color-text-primary)]">能力路由</h2>
           <p className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">当前生效源与可切换源；未就绪或档位不足的能力不提供切换选项。</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {capabilities.map((cap) => (
             <div key={cap.id} className="rounded-lg border border-[var(--ds-color-border-default)] p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 text-sm">
@@ -154,8 +154,8 @@ export function DataSources() {
               </div>
               <div className="flex flex-wrap gap-2">
                 {cap.candidates.map((candidate) => (
-                  <button key={candidate.name} type="button" className={`btn ${cap.current === candidate.name ? "btn-primary" : "btn-ghost"}`} disabled={!cap.field || switchProviders.isPending || cap.current === candidate.name} onClick={() => cap.field && switchProviders.mutate({ [cap.field]: candidate.name })}>
-                    {candidate.display}
+                  <button key={candidate.name} type="button" className={`btn ${cap.current === candidate.name ? "btn-primary" : "btn-ghost"}`} disabled={!cap.field || switchProviders.isPending} onClick={() => cap.field && cap.current !== candidate.name && switchProviders.mutate({ [cap.field]: candidate.name })}>
+                    {cap.current === candidate.name ? `当前：${candidate.display}` : `切换到 ${candidate.display}`}
                   </button>
                 ))}
                 {cap.pending.map((candidate) => <span key={candidate.name} className="badge badge-off" title={candidate.note}>{candidate.display} 未就绪</span>)}
