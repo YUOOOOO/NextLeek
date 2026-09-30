@@ -1,396 +1,169 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, CustomSourceConfig, DataProviders } from "../lib/api";
+import { api, DataProviders } from "../lib/api";
 import { queryKeys } from "../lib/queryKeys";
 import { useCurrentUser } from "../lib/useAuth";
 
-const PROVIDER_FIELDS: Array<{ key: keyof DataProviders; label: string }> = [
-  { key: "daily_data_provider", label: "日K" },
-  { key: "adj_factor_provider", label: "除权因子" },
-  { key: "realtime_data_provider", label: "实时行情" },
-  { key: "minute_data_provider", label: "分钟K" },
-  { key: "full_minute_data_provider", label: "全量分钟" },
-  { key: "financial_data_provider", label: "财务" },
-  { key: "depth5_data_provider", label: "五档盘口" },
-];
-
-const EMPTY_SOURCE: CustomSourceConfig = {
-  name: "",
-  display_name: "",
-  auth: { type: "none", token_env: "", header: "Authorization", param: "token" },
-  datasets: {
-    daily: {
-      url: "http://127.0.0.1:3021/daily",
-      method: "POST",
-      batch: 100,
-      rpm: 200,
-      response_path: "data",
-      field_map: {
-        ts_code: "symbol",
-        trade_date: "date",
-        open: "open",
-        high: "high",
-        low: "low",
-        close: "close",
-        vol: "volume",
-        amt: "amount",
-      },
-    },
-  },
+type Capability = {
+  id: string;
+  label: string;
+  field: keyof DataProviders | null;
+  current: string;
+  current_display: string;
+  usable: boolean;
+  candidates: Array<{ name: string; display: string }>;
+  pending: Array<{ name: string; display: string; note?: string }>;
 };
+
+type Matrix = { capabilities: Capability[] };
 
 export function DataSources() {
   const me = useCurrentUser();
   const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
+  const [pluginKeys, setPluginKeys] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [source, setSource] = useState<CustomSourceConfig>(EMPTY_SOURCE);
-  const [datasetsJson, setDatasetsJson] = useState(JSON.stringify(EMPTY_SOURCE.datasets, null, 2));
-  const [testDataset, setTestDataset] = useState("daily");
-  const [testResult, setTestResult] = useState("");
-  const [pluginKey, setPluginKey] = useState("");
-  const [pluginName, setPluginName] = useState("");
 
   const settings = useQuery({ queryKey: queryKeys.settings, queryFn: api.tickflowSettings });
-  const prefs = useQuery({ queryKey: queryKeys.preferences, queryFn: api.preferences });
   const sources = useQuery({ queryKey: queryKeys.dataSources, queryFn: api.dataSources });
+  const matrix = useQuery({ queryKey: queryKeys.capabilityMatrix, queryFn: api.capabilityMatrix });
+  const capabilities = (matrix.data as Matrix | undefined)?.capabilities ?? [];
+  const plugins = sources.data?.plugins ?? [];
 
-  const providerOptions = useMemo(() => {
-    const names: Record<string, true> = { tickflow: true };
-    for (const item of sources.data?.custom ?? []) names[item.name] = true;
-    for (const item of (sources.data?.plugins as Array<{ name?: string }> | undefined) ?? []) {
-      if (item?.name) names[item.name] = true;
-    }
-    return Object.keys(names);
-  }, [sources.data]);
-
-  const datasetNames = useMemo(() => {
-    try {
-      return Object.keys(JSON.parse(datasetsJson || "{}") as Record<string, unknown>);
-    } catch {
-      return [];
-    }
-  }, [datasetsJson]);
+  const refresh = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.settings }),
+      qc.invalidateQueries({ queryKey: queryKeys.dataSources }),
+      qc.invalidateQueries({ queryKey: queryKeys.preferences }),
+      qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix }),
+    ]);
+  };
   const saveKey = useMutation({
-    mutationFn: () => api.saveTickflowKey(apiKey),
-    onSuccess: async () => {
-      setApiKey("");
-      setError("");
-      await qc.invalidateQueries({ queryKey: queryKeys.settings });
-      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
-    },
+    mutationFn: () => api.saveTickflowKey(apiKey.trim()),
+    onSuccess: async () => { setApiKey(""); setError(""); await refresh(); },
     onError: (err: Error) => setError(err.message),
   });
   const clearKey = useMutation({
     mutationFn: api.clearTickflowKey,
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.settings });
-      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-  const updateProviders = useMutation({
-    mutationFn: api.updateDataProviders,
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
-      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-  const saveSource = useMutation({
-    mutationFn: async () => {
-      const datasets = JSON.parse(datasetsJson) as CustomSourceConfig["datasets"];
-      return api.saveDataSource({ ...source, datasets });
-    },
-    onSuccess: async () => {
-      setError("");
-      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-  const deleteSource = useMutation({
-    mutationFn: (name: string) => api.deleteDataSource(name),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
-      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-  const reloadSources = useMutation({
-    mutationFn: api.reloadDataSources,
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
-    },
+    onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
   const savePluginKey = useMutation({
-    mutationFn: () => api.savePluginKey(pluginName, pluginKey),
-    onSuccess: async () => {
-      setPluginKey("");
+    mutationFn: async (name: string) => {
+      const result = await api.savePluginKey(name, pluginKeys[name]?.trim() ?? "") as { ok: boolean; error?: string };
+      if (!result.ok) throw new Error(result.error || "Key 验证失败，未保存");
+      return name;
+    },
+    onSuccess: async (name) => {
+      setPluginKeys((keys) => ({ ...keys, [name]: "" }));
       setError("");
-      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
-      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
-      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
+      await refresh();
     },
     onError: (err: Error) => setError(err.message),
   });
   const clearPluginKey = useMutation({
-    mutationFn: (name: string) => api.clearPluginKey(name),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: queryKeys.dataSources });
-      await qc.invalidateQueries({ queryKey: queryKeys.preferences });
-      await qc.invalidateQueries({ queryKey: queryKeys.capabilityMatrix });
-    },
+    mutationFn: api.clearPluginKey,
+    onSuccess: refresh,
     onError: (err: Error) => setError(err.message),
   });
-  const testSource = useMutation({
-    mutationFn: async () => {
-      const datasets = JSON.parse(datasetsJson) as CustomSourceConfig["datasets"];
-      return api.testDataSource({
-        provider: source.name || "draft",
-        dataset: testDataset,
-        config: { ...source, datasets },
-      });
-    },
-    onSuccess: (payload) => setTestResult(JSON.stringify(payload, null, 2)),
+  const switchProviders = useMutation({
+    mutationFn: (updates: Partial<DataProviders>) => api.updateDataProviders(updates),
+    onSuccess: async () => { setError(""); await refresh(); },
     onError: (err: Error) => setError(err.message),
   });
 
-  async function loadSource(name: string) {
-    const cfg = await api.getDataSource(name);
-    setSource({
-      name: cfg.name,
-      display_name: cfg.display_name ?? "",
-      auth: cfg.auth ?? { type: "none" },
-      datasets: cfg.datasets ?? {},
-    });
-    setDatasetsJson(JSON.stringify(cfg.datasets ?? {}, null, 2));
-  }
+  const applySource = (name: string) => {
+    const updates: Partial<DataProviders> = {};
+    for (const cap of capabilities) {
+      if (cap.field && cap.candidates.some((candidate) => candidate.name === name)) {
+        updates[cap.field] = name;
+      }
+    }
+    if (Object.keys(updates).length) switchProviders.mutate(updates);
+  };
 
-  function onSaveKey(event: FormEvent) {
-    event.preventDefault();
-    saveKey.mutate();
-  }
   if (!me.data || me.data.role !== "admin") {
     return me.isLoading ? null : <Navigate to="/settings" replace />;
   }
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
-      {error && <div className="card px-4 py-3 text-sm text-[#f87171]">{error}</div>}
+      {error && <div role="alert" className="card px-4 py-3 text-sm text-[#f87171]">{error}</div>}
 
       <section className="card p-4 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm text-[var(--ds-color-text-primary)]">TickFlow</div>
-            <div className="text-xs text-[var(--ds-color-text-placeholder)]">
-              {settings.data?.tier_label ?? "—"} · {settings.data?.mode ?? "none"} · {settings.data?.current_endpoint}
-            </div>
-          </div>
-          <span className={`badge ${settings.data?.has_tickflow_key ? "badge-on" : "badge-off"}`}>
-            {settings.data?.has_tickflow_key ? settings.data.tickflow_api_key_masked : "无 Key"}
-          </span>
-        </div>
-        <form className="flex flex-wrap gap-2" onSubmit={onSaveKey}>
-          <input
-            className="field flex-1 min-w-[220px]"
-            type="password"
-            placeholder="TickFlow API Key"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-          />
-          <button className="btn btn-primary" disabled={!apiKey || saveKey.isPending}>
-            保存并探测
-          </button>
-          <button className="btn btn-ghost" type="button" onClick={() => clearKey.mutate()} disabled={clearKey.isPending}>
-            清除
-          </button>
-        </form>
-        {!!settings.data?.probe_log?.length && (
-          <pre className="text-[11px] text-[var(--ds-color-text-placeholder)] whitespace-pre-wrap">
-            {settings.data.probe_log.join("\n")}
-          </pre>
-        )}
-      </section>
-
-      <section className="card p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-medium text-[var(--ds-color-text-primary)]">数据源插件</div>
-            <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">先配置 API Key，再在能力路由中选择实际使用的数据源。</div>
-          </div>
-          <span className="text-xs text-[var(--ds-color-text-placeholder)]">{sources.data?.plugins?.length ?? 0} 个插件</span>
+        <div>
+          <h2 className="text-sm font-medium text-[var(--ds-color-text-primary)]">数据源</h2>
+          <p className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">TickFlow 和扶摇按能力独立路由；配置 Key 不会自动切换，点击「接管可用能力」或在下方逐项切换。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {(sources.data?.plugins ?? []).map((plugin) => (
+          <div className="rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-muted)] p-3.5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-[var(--ds-color-text-primary)]">TickFlow</div>
+                <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">{settings.data?.tier_label ?? "—"} · {settings.data?.mode ?? "none"}</div>
+              </div>
+              <span className={`badge shrink-0 ${settings.data?.has_tickflow_key ? "badge-on" : "badge-off"}`}>
+                {settings.data?.has_tickflow_key ? settings.data.tickflow_api_key_masked : "免费模式"}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--ds-color-text-placeholder)]">{capabilities.filter((cap) => cap.usable && cap.current === "tickflow").length} 项能力服务中</div>
+            <form className="flex flex-wrap gap-2" onSubmit={(event: FormEvent) => { event.preventDefault(); saveKey.mutate(); }}>
+              <input className="field min-w-0 flex-1" type="password" autoComplete="off" placeholder="TickFlow API Key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+              <button className="btn btn-primary shrink-0" disabled={!apiKey.trim() || saveKey.isPending}>保存并探测</button>
+              {settings.data?.has_tickflow_key && <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearKey.mutate()} disabled={clearKey.isPending}>清除</button>}
+            </form>
+            <button className="btn btn-ghost" type="button" disabled={switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === "tickflow"))} onClick={() => applySource("tickflow")}>接管可用能力</button>
+          </div>
+          {plugins.map((plugin) => (
             <div key={plugin.name} className="rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-muted)] p-3.5 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div className="truncate text-sm font-medium text-[var(--ds-color-text-primary)]">{plugin.display_name || plugin.name}</div>
-                    <span className="rounded bg-[var(--ds-color-bg-active)] px-1.5 py-0.5 text-[10px] text-[var(--ds-color-text-placeholder)]">插件</span>
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">{plugin.datasets?.join(" · ") || "未声明数据集"}</div>
+                  <div className="text-sm font-medium text-[var(--ds-color-text-primary)]">{plugin.display_name || plugin.name}</div>
+                  <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">{plugin.datasets?.join(" · ") || "未声明能力"}</div>
                 </div>
                 <span className={`badge shrink-0 ${plugin.available ? "badge-on" : "badge-off"}`}>
-                  {plugin.available ? plugin.api_key_masked || "已配置" : "待配置"}
+                  {plugin.available ? plugin.api_key_masked || "已就绪" : "未就绪"}
                 </span>
               </div>
-              {plugin.description && <div className="line-clamp-2 text-xs leading-relaxed text-[var(--ds-color-text-placeholder)]">{plugin.description}</div>}
+              <div className="text-xs text-[var(--ds-color-text-placeholder)]">{plugin.available ? `${capabilities.filter((cap) => cap.usable && cap.current === plugin.name).length} 项能力服务中` : plugin.status || "请配置 API Key"}</div>
               {plugin.api_key_env && (
-                <div className="space-y-2">
-                  <div className="text-[11px] text-[var(--ds-color-text-placeholder)]">环境变量：<code>{plugin.api_key_env}</code></div>
-                  <div className="flex flex-wrap gap-2">
-                    <input
-                      className="field min-w-0 flex-1"
-                      type="password"
-                      placeholder="粘贴 API Key"
-                      value={pluginName === plugin.name ? pluginKey : ""}
-                      onFocus={() => setPluginName(plugin.name)}
-                      onChange={(event) => {
-                        setPluginName(plugin.name);
-                        setPluginKey(event.target.value);
-                      }}
-                    />
-                    <button
-                      className="btn btn-primary shrink-0"
-                      type="button"
-                      disabled={pluginName !== plugin.name || !pluginKey || savePluginKey.isPending}
-                      onClick={() => savePluginKey.mutate()}
-                    >
-                      {savePluginKey.isPending && pluginName === plugin.name ? "探测中…" : "保存并探测"}
-                    </button>
-                    {plugin.api_key_masked && (
-                      <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearPluginKey.mutate(plugin.name)}>
-                        清除
-                      </button>
-                    )}
-                  </div>
-                </div>
+                <form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); savePluginKey.mutate(plugin.name); }}>
+                  <input className="field min-w-0 flex-1" type="password" autoComplete="off" placeholder={`${plugin.api_key_env} API Key`} value={pluginKeys[plugin.name] ?? ""} onChange={(event) => setPluginKeys((keys) => ({ ...keys, [plugin.name]: event.target.value }))} />
+                  <button className="btn btn-primary shrink-0" disabled={!pluginKeys[plugin.name]?.trim() || savePluginKey.isPending}>保存并探测</button>
+                  {plugin.api_key_masked && <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearPluginKey.mutate(plugin.name)} disabled={clearPluginKey.isPending}>清除</button>}
+                </form>
               )}
+              <button className="btn btn-ghost" type="button" disabled={!plugin.available || switchProviders.isPending || !capabilities.some((cap) => cap.field && cap.candidates.some((c) => c.name === plugin.name))} onClick={() => applySource(plugin.name)}>接管可用能力</button>
             </div>
           ))}
         </div>
       </section>
+
       <section className="card p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-[var(--ds-color-text-primary)]">能力路由</div>
-          <button className="btn btn-ghost" onClick={() => reloadSources.mutate()}>
-            重新加载 YAML
-          </button>
+        <div>
+          <h2 className="text-sm font-medium text-[var(--ds-color-text-primary)]">能力路由</h2>
+          <p className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">当前生效源与可切换源；未就绪或档位不足的能力不提供切换选项。</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          {PROVIDER_FIELDS.map((field) => (
-            <label key={field.key} className="text-xs text-[var(--ds-color-text-placeholder)]">
-              {field.label}
-              <select
-                className="field mt-1"
-                value={String(prefs.data?.[field.key] ?? "tickflow")}
-                onChange={(event) => updateProviders.mutate({ [field.key]: event.target.value })}
-              >
-                {providerOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+          {capabilities.map((cap) => (
+            <div key={cap.id} className="rounded-lg border border-[var(--ds-color-border-default)] p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-medium text-[var(--ds-color-text-primary)]">{cap.label}</span>
+                <span className={cap.usable ? "text-[var(--ds-color-text-secondary)]" : "text-amber-400"}>当前：{cap.current_display}{cap.usable ? "" : "（不可用）"}</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {cap.candidates.map((candidate) => (
+                  <button key={candidate.name} type="button" className={`btn ${cap.current === candidate.name ? "btn-primary" : "btn-ghost"}`} disabled={!cap.field || switchProviders.isPending || cap.current === candidate.name} onClick={() => cap.field && switchProviders.mutate({ [cap.field]: candidate.name })}>
+                    {candidate.display}
+                  </button>
                 ))}
-              </select>
-            </label>
+                {cap.pending.map((candidate) => <span key={candidate.name} className="badge badge-off" title={candidate.note}>{candidate.display} 未就绪</span>)}
+                {!cap.candidates.length && !cap.pending.length && <span className="text-xs text-[var(--ds-color-text-placeholder)]">暂无可用源</span>}
+              </div>
+            </div>
           ))}
         </div>
-
-      </section>
-
-
-      <section className="card overflow-hidden">
-        <div className="px-4 py-3 text-xs font-medium text-[var(--ds-color-text-placeholder)]">已加载源</div>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>类型</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {(sources.data?.builtin ?? []).map((item) => (
-              <tr key={`b-${item.name}`}>
-                <td>{item.display_name}</td>
-                <td>内置</td>
-                <td />
-              </tr>
-            ))}
-            {(sources.data?.custom ?? []).map((item) => (
-              <tr key={`c-${item.name}`}>
-                <td>{item.display_name || item.name}</td>
-                <td>自定义</td>
-                <td className="space-x-3">
-                  <button className="btn-quiet" onClick={() => void loadSource(item.name)}>
-                    编辑
-                  </button>
-                  <button className="btn-quiet" onClick={() => deleteSource.mutate(item.name)}>
-                    删除
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="card p-4 space-y-3">
-        <div className="text-sm text-[var(--ds-color-text-primary)]">自定义数据源</div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <input
-            className="field"
-            placeholder="name"
-            value={source.name}
-            onChange={(event) => setSource({ ...source, name: event.target.value })}
-          />
-          <input
-            className="field"
-            placeholder="display_name"
-            value={source.display_name}
-            onChange={(event) => setSource({ ...source, display_name: event.target.value })}
-          />
-          <select
-            className="field"
-            value={source.auth?.type ?? "none"}
-            onChange={(event) => setSource({ ...source, auth: { ...source.auth, type: event.target.value } })}
-          >
-            <option value="none">none</option>
-            <option value="bearer">bearer</option>
-            <option value="header">header</option>
-            <option value="query">query</option>
-          </select>
-          <input
-            className="field"
-            placeholder="token_env"
-            value={source.auth?.token_env ?? ""}
-            onChange={(event) => setSource({ ...source, auth: { ...source.auth, token_env: event.target.value } })}
-          />
-        </div>
-        <textarea
-          className="field h-56 py-2 font-mono text-xs"
-          value={datasetsJson}
-          onChange={(event) => setDatasetsJson(event.target.value)}
-        />
-        <div className="flex flex-wrap gap-2">
-          <select className="field w-36" value={testDataset} onChange={(event) => setTestDataset(event.target.value)}>
-            {datasetNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <button className="btn btn-ghost" type="button" onClick={() => testSource.mutate()} disabled={testSource.isPending}>
-            试拉
-          </button>
-          <button className="btn btn-primary" type="button" onClick={() => saveSource.mutate()} disabled={!source.name || saveSource.isPending}>
-            保存 YAML
-          </button>
-        </div>
-        {testResult && <pre className="text-[11px] text-[var(--ds-color-text-placeholder)] whitespace-pre-wrap">{testResult}</pre>}
       </section>
     </div>
   );
