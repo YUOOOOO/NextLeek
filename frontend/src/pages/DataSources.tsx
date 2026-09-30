@@ -177,7 +177,7 @@ export function DataSources() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       {error && <div className="card px-4 py-3 text-sm text-[#f87171]">{error}</div>}
 
       <section className="card p-4 space-y-3">
@@ -215,6 +215,65 @@ export function DataSources() {
       </section>
 
       <section className="card p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium text-[var(--ds-color-text-primary)]">数据源插件</div>
+            <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">先配置 API Key，再在能力路由中选择实际使用的数据源。</div>
+          </div>
+          <span className="text-xs text-[var(--ds-color-text-placeholder)]">{sources.data?.plugins?.length ?? 0} 个插件</span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {(sources.data?.plugins ?? []).map((plugin) => (
+            <div key={plugin.name} className="rounded-lg border border-[var(--ds-color-border-default)] bg-[var(--ds-color-bg-muted)] p-3.5 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="truncate text-sm font-medium text-[var(--ds-color-text-primary)]">{plugin.display_name || plugin.name}</div>
+                    <span className="rounded bg-[var(--ds-color-bg-active)] px-1.5 py-0.5 text-[10px] text-[var(--ds-color-text-placeholder)]">插件</span>
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--ds-color-text-placeholder)]">{plugin.datasets?.join(" · ") || "未声明数据集"}</div>
+                </div>
+                <span className={`badge shrink-0 ${plugin.available ? "badge-on" : "badge-off"}`}>
+                  {plugin.available ? plugin.api_key_masked || "已配置" : "待配置"}
+                </span>
+              </div>
+              {plugin.description && <div className="line-clamp-2 text-xs leading-relaxed text-[var(--ds-color-text-placeholder)]">{plugin.description}</div>}
+              {plugin.api_key_env && (
+                <div className="space-y-2">
+                  <div className="text-[11px] text-[var(--ds-color-text-placeholder)]">环境变量：<code>{plugin.api_key_env}</code></div>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      className="field min-w-0 flex-1"
+                      type="password"
+                      placeholder="粘贴 API Key"
+                      value={pluginName === plugin.name ? pluginKey : ""}
+                      onFocus={() => setPluginName(plugin.name)}
+                      onChange={(event) => {
+                        setPluginName(plugin.name);
+                        setPluginKey(event.target.value);
+                      }}
+                    />
+                    <button
+                      className="btn btn-primary shrink-0"
+                      type="button"
+                      disabled={pluginName !== plugin.name || !pluginKey || savePluginKey.isPending}
+                      onClick={() => savePluginKey.mutate()}
+                    >
+                      {savePluginKey.isPending && pluginName === plugin.name ? "探测中…" : "保存并探测"}
+                    </button>
+                    {plugin.api_key_masked && (
+                      <button className="btn btn-ghost shrink-0" type="button" onClick={() => clearPluginKey.mutate(plugin.name)}>
+                        清除
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="card p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-sm text-[var(--ds-color-text-primary)]">能力路由</div>
           <button className="btn btn-ghost" onClick={() => reloadSources.mutate()}>
@@ -240,53 +299,6 @@ export function DataSources() {
           ))}
         </div>
 
-      </section>
-      <section className="card p-4 space-y-3">
-        <div className="text-sm text-[var(--ds-color-text-primary)]">内置插件</div>
-        {(sources.data?.plugins ?? []).map((plugin) => (
-          <div key={plugin.name} className="rounded border border-[var(--ds-color-border)] p-3 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm text-[var(--ds-color-text-primary)]">{plugin.display_name || plugin.name}</div>
-                <div className="text-xs text-[var(--ds-color-text-placeholder)]">
-                  {plugin.datasets?.join(" · ") || "无数据集"} · {plugin.status || (plugin.available ? "可用" : "不可用")}
-                </div>
-              </div>
-              <span className={`badge ${plugin.available ? "badge-on" : "badge-off"}`}>
-                {plugin.available ? plugin.api_key_masked || "已配置" : "未配置"}
-              </span>
-            </div>
-            {plugin.description && <div className="text-xs text-[var(--ds-color-text-placeholder)]">{plugin.description}</div>}
-            {plugin.api_key_env && (
-              <div className="flex flex-wrap gap-2">
-                <input
-                  className="field flex-1 min-w-[220px]"
-                  type="password"
-                  placeholder={`${plugin.api_key_env} / API Key`}
-                  value={pluginName === plugin.name ? pluginKey : ""}
-                  onFocus={() => setPluginName(plugin.name)}
-                  onChange={(event) => {
-                    setPluginName(plugin.name);
-                    setPluginKey(event.target.value);
-                  }}
-                />
-                <button
-                  className="btn btn-primary"
-                  type="button"
-                  disabled={pluginName !== plugin.name || !pluginKey || savePluginKey.isPending}
-                  onClick={() => savePluginKey.mutate()}
-                >
-                  保存并探测
-                </button>
-                {plugin.api_key_masked && (
-                  <button className="btn btn-ghost" type="button" onClick={() => clearPluginKey.mutate(plugin.name)}>
-                    清除
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
       </section>
 
 
