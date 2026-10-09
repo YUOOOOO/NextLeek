@@ -1,0 +1,61 @@
+name: Desktop portable
+
+on:
+  push:
+    branches: [v4]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm gates
+      - run: pnpm test
+      - run: pnpm build:win
+      - name: Extract and exercise portable application
+        shell: pwsh
+        run: |
+          $zip = @(Get-ChildItem release -Filter '*.zip' -File)
+          if ($zip.Count -ne 1) { throw 'Expected exactly one portable ZIP' }
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath artifacts/portable
+          $exe = @(Get-ChildItem artifacts/portable -Filter '*.exe' -Recurse -File | Where-Object { $_.Name -notmatch 'crashpad|uninstall' })
+          if ($exe.Count -ne 1) { throw 'Expected exactly one application executable' }
+          node scripts/smoke-desktop.mjs $exe[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($zip[0].Name)" | Set-Content -LiteralPath "$($zip[0].FullName).sha256" -Encoding ascii
+      - name: Upload portable ZIP and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextleek-windows-x64-portable
+          path: |
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload desktop behavior evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-evidence
+          path: artifacts/smoke/
+          if-no-files-found: ignore
+          retention-days: 14
