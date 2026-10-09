@@ -25,7 +25,18 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $output = @(pnpm install --frozen-lockfile 2>&1)
+          $installExit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($installExit -ne 0) {
+            $failure = ($output | Select-Object -Last 50) -join "`n"
+            $failure = $failure.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Dependency installation failed::$failure"
+            exit $installExit
+          }
       - run: pnpm typecheck
       - run: pnpm gates
       - run: pnpm test
