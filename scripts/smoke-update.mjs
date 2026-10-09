@@ -88,6 +88,7 @@ try {
   await writeFile(join(evidence, 'result.json'), JSON.stringify({ passed: true, checks }, null, 2))
   console.log(checks.join('\n'))
 } catch (error) {
+  if (process.env.GITHUB_ACTIONS) console.error(`::error title=Real update smoke failed::${String(error.stack + '\n' + checks.join('\n') + '\n' + logs.join('').slice(-5000)).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
   await writeFile(join(evidence, 'result.json'), JSON.stringify({ passed: false, checks, error: error.stack }, null, 2))
   throw error
 } finally {

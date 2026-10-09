@@ -158,6 +158,10 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
+          # Isolate the lower-version install from the preceding current install.
+          $uninstaller = Join-Path (Split-Path '${{ steps.installed.outputs.executable }}' -Parent) 'Uninstall NextLeek.exe'
+          $removed = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($removed.ExitCode -ne 0) { throw 'Failed to remove smoke install before baseline update' }
           $baseline = @(Get-ChildItem artifacts/update-baseline -Filter '*-Setup.exe' -File)
           if ($baseline.Count -ne 1) { throw 'Expected one lower-version test installer' }
           node scripts/smoke-update.mjs $baseline[0].FullName $env:RELEASE_VERSION
