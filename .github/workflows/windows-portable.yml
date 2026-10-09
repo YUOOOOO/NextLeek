@@ -16,6 +16,10 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # LMDB's upstream Windows builds use Node-API, not private V8 symbols.
+      ENABLE_V8_FUNCTIONS: 'false'
+      ENABLE_FAST_API_CALLS: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
