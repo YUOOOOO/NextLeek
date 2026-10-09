@@ -1,5 +1,6 @@
 import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
@@ -193,6 +194,10 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
     const actual = new URL(frame.url)
     const expected = new URL(rendererURL)
     actual.hash = ''; expected.hash = ''
+    if (actual.protocol === 'file:' && expected.protocol === 'file:') {
+      if (realpathSync(fileURLToPath(actual)) !== realpathSync(fileURLToPath(expected))) throw new Error('Unauthorized renderer URL')
+      return
+    }
     if (actual.href !== expected.href) throw new Error('Unauthorized renderer URL')
   }
   const bind = (channel: string, count: number, handler: (...args: unknown[]) => unknown) => {
