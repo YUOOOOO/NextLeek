@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 
 type NodeParameter = { label: string; value: string; unit?: string };
@@ -66,6 +66,19 @@ const strategies = ref<Strategy[]>([
   },
 ]);
 
+type GraphRange = { start: number; end: number };
+const graphRanges: GraphRange[] = [];
+function graphSource(strategy: Strategy) {
+  return `strategy_graph = ${JSON.stringify({ blocks: strategy.blocks, edges: strategy.edges }, null, 4)}`;
+}
+function initializeGraphSource(strategy: Strategy) {
+  const start = strategy.code.length + 2;
+  const source = graphSource(strategy);
+  strategy.code += `\n\n${source}`;
+  graphRanges.push({ start, end: start + source.length });
+}
+strategies.value.forEach(initializeGraphSource);
+
 const selected = ref(0);
 const activeTab = ref<"画布" | "代码" | "回测">("画布");
 const saved = ref(true);
@@ -81,11 +94,88 @@ const menuBlockId = ref<number | null>(null);
 const connectingFrom = ref<number | null>(null);
 const connectionPointer = ref({ x: 0, y: 0 });
 const editingBlock = ref<Block | null>(null);
+const codeError = ref("");
+const codePending = ref(false);
+const validationMessage = ref("");
+const codeScroll = ref(0);
+const codeReady = computed(() => !codePending.value && !codeError.value);
+let applyingCode = false;
+let parseTimer: ReturnType<typeof setTimeout> | undefined;
+let parseController: AbortController | undefined;
 
 const current = computed(() => strategies.value[selected.value]);
 const blocks = computed({ get: () => current.value.blocks, set: (value: Block[]) => { current.value.blocks = value; } });
 const edges = computed({ get: () => current.value.edges, set: (value: Edge[]) => { current.value.edges = value; } });
-const surfaceStyle = computed(() => ({ width: `${SURFACE_WIDTH}px`, height: `${SURFACE_HEIGHT}px`, transform: `translate(${pan.value.x}px, ${pan.value.y}px) scale(${zoom.value})` }));
+const surfaceStyle = computed(() => ({ width: `${SURFACE_WIDTH}px`, height: `${SURFACE_HEIGHT}px`, '--canvas-zoom': zoom.value, transform: `translate(${pan.value.x}px, ${pan.value.y}px) scale(${zoom.value})` }));
+const codeLineNumbers = computed(() => current.value.code.split("\n").map((_, index) => String(index + 1).padStart(2, "0")).join("\n"));
+
+watch(() => [current.value.blocks, current.value.edges], () => {
+  if (applyingCode || !codeReady.value) return;
+  const range = graphRanges[selected.value];
+  const source = graphSource(current.value);
+  current.value.code = current.value.code.slice(0, range.start) + source + current.value.code.slice(range.end);
+  range.end = range.start + source.length;
+}, { deep: true, flush: "sync" });
+
+function updateCode(event: Event) {
+  current.value.code = (event.target as HTMLTextAreaElement).value;
+  markDirty();
+  validationMessage.value = "";
+  codePending.value = true;
+  codeError.value = "";
+  clearTimeout(parseTimer);
+  parseController?.abort();
+  parseTimer = setTimeout(() => validateCode(), 350);
+}
+
+async function validateCode(manual = false) {
+    clearTimeout(parseTimer);
+    parseController?.abort();
+    codePending.value = true;
+    codeError.value = "";
+    validationMessage.value = "";
+    const index = selected.value;
+    const code = current.value.code;
+    const controller = new AbortController();
+    parseController = controller;
+    try {
+      const response = await fetch("/api/strategies/graph/parse", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }), signal: controller.signal,
+      });
+      const result = await response.json();
+      if (controller.signal.aborted || selected.value !== index || current.value.code !== code) return;
+      if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "无法解析策略节点定义");
+      applyingCode = true;
+      try {
+        current.value.blocks = result.blocks;
+        current.value.edges = result.edges;
+        graphRanges[index] = { start: result.start, end: result.end };
+      } finally { applyingCode = false; }
+      selectedBlockId.value = null;
+      selectedEdgeId.value = null;
+      menuBlockId.value = null;
+      editingBlock.value = null;
+      if (manual) validationMessage.value = "校验通过";
+    } catch (error) {
+      if (controller.signal.aborted || selected.value !== index || current.value.code !== code) return;
+      codeError.value = error instanceof Error ? error.message : "解析服务不可用，请稍后重试";
+    } finally {
+      if (!controller.signal.aborted && selected.value === index && current.value.code === code) codePending.value = false;
+    }
+}
+
+function indentCode(event: KeyboardEvent) {
+  event.preventDefault();
+  const editor = event.target as HTMLTextAreaElement;
+  const start = editor.selectionStart;
+  editor.setRangeText("    ", start, editor.selectionEnd, "end");
+  updateCode(event);
+}
+
+function nextGraphId() {
+  return Math.max(Date.now(), ...strategies.value.flatMap((strategy) => [...strategy.blocks, ...strategy.edges].map((item) => item.id + 1)));
+}
 
 function connectorPath(x1: number, y1: number, x2: number, y2: number) {
   const bend = Math.max(90, Math.abs(x2 - x1) * 0.45);
@@ -107,6 +197,7 @@ const previewPath = computed(() => {
 
 function markDirty() { saved.value = false; }
 function saveStrategy(showMessage = true) {
+  if (!codeReady.value) { message.value = "请先修正代码并等待画布同步完成"; return; }
   saved.value = true;
   current.value.updated = "刚刚";
   if (!showMessage) return;
@@ -115,6 +206,7 @@ function saveStrategy(showMessage = true) {
 }
 function confirmSaveBeforeLeaving() {
   if (saved.value) return true;
+  if (!codeReady.value) { message.value = "请先修正代码并等待画布同步完成"; return false; }
   if (!window.confirm("当前策略有未保存修改。保存后继续吗？")) return false;
   saveStrategy(false);
   return true;
@@ -139,7 +231,7 @@ function createStrategy() {
   const fallback = `未命名策略 ${strategies.value.length + 1}`;
   const name = window.prompt("请输入新策略名称", fallback)?.trim();
   if (!name) return;
-  const seed = Date.now();
+  const seed = nextGraphId();
   strategies.value.push({
     name, type: "自定义", status: "草稿", returnRate: "--", updated: "未保存", annualReturn: "--", drawdown: "--", sharpe: "--", config: defaultConfig(),
     blocks: [
@@ -148,6 +240,7 @@ function createStrategy() {
     ],
     edges: [], code: "class CustomStrategy(Strategy):\n    def on_bar(self, bar):\n        pass",
   });
+  initializeGraphSource(strategies.value[strategies.value.length - 1]);
   selected.value = strategies.value.length - 1;
   activeTab.value = "画布";
   resetCanvasSelection();
@@ -157,7 +250,7 @@ function createStrategy() {
 }
 
 function addBlock() {
-  const id = Date.now();
+  const id = nextGraphId();
   const center = toWorld((viewport.value?.getBoundingClientRect().left ?? 0) + (viewport.value?.clientWidth ?? 600) / 2, (viewport.value?.getBoundingClientRect().top ?? 0) + (viewport.value?.clientHeight ?? 600) / 2);
   blocks.value.push({ id, category: "条件判断", title: "新建条件", description: "从端口拖线连接节点", color: "cyan", x: center.x - NODE_WIDTH / 2, y: center.y - NODE_HEIGHT / 2, parameters: [parameter("参数", "待配置")] });
   selectedBlockId.value = id;
@@ -165,7 +258,6 @@ function addBlock() {
   markDirty();
 }
 function removeBlock(id: number) {
-  if (blocks.value.length <= 1) return;
   blocks.value = blocks.value.filter((block) => block.id !== id);
   edges.value = edges.value.filter((edge) => edge.from !== id && edge.to !== id);
   menuBlockId.value = null;
@@ -176,7 +268,7 @@ function duplicateBlock(id: number) {
   const sourceIndex = blocks.value.findIndex((block) => block.id === id);
   if (sourceIndex < 0) return;
   const source = blocks.value[sourceIndex];
-  const clone = { ...source, parameters: source.parameters.map((item) => ({ ...item })), id: Date.now(), title: `${source.title} 副本`, x: source.x + 48, y: source.y + 110 };
+  const clone = { ...source, parameters: source.parameters.map((item) => ({ ...item })), id: nextGraphId(), title: `${source.title} 副本`, x: source.x + 48, y: source.y + 110 };
   blocks.value.splice(sourceIndex + 1, 0, clone);
   selectedBlockId.value = clone.id;
   menuBlockId.value = null;
@@ -244,7 +336,7 @@ function startConnection(fromId: number, event: PointerEvent) {
     const target = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest<HTMLElement>("[data-input-id]");
     const toId = Number(target?.dataset.inputId);
     if (toId && toId !== fromId && !edges.value.some((edge) => edge.from === fromId && edge.to === toId)) {
-      edges.value.push({ id: Date.now(), from: fromId, to: toId }); markDirty();
+      edges.value.push({ id: nextGraphId(), from: fromId, to: toId }); markDirty();
     }
     connectingFrom.value = null;
   });
@@ -269,12 +361,12 @@ function fitCanvas() {
   zoom.value = Number(next.toFixed(2));
   pan.value = { x: (rect.width - (maxX - minX) * zoom.value) / 2 - minX * zoom.value, y: (rect.height - (maxY - minY) * zoom.value) / 2 - minY * zoom.value };
 }
-function runBacktest() { running.value = true; message.value = "回测任务已提交，正在计算"; window.setTimeout(() => { running.value = false; activeTab.value = "回测"; message.value = "回测完成"; }, 900); }
+function runBacktest() { if (!codeReady.value) return; running.value = true; message.value = "回测任务已提交，正在计算"; window.setTimeout(() => { running.value = false; activeTab.value = "回测"; message.value = "回测完成"; }, 900); }
 function handleBeforeUnload(event: BeforeUnloadEvent) { if (!saved.value) event.preventDefault(); }
 
 onBeforeRouteLeave(() => confirmSaveBeforeLeaving());
 onMounted(() => window.addEventListener("beforeunload", handleBeforeUnload));
-onBeforeUnmount(() => { interactionCleanup?.(); window.removeEventListener("beforeunload", handleBeforeUnload); });
+onBeforeUnmount(() => { clearTimeout(parseTimer); parseController?.abort(); interactionCleanup?.(); window.removeEventListener("beforeunload", handleBeforeUnload); });
 </script>
 
 <template>
@@ -288,8 +380,8 @@ onBeforeUnmount(() => { interactionCleanup?.(); window.removeEventListener("befo
         </div>
       </div>
       <div class="page-actions">
-        <button class="button ghost" type="button" :disabled="saved" @click="saveStrategy()">{{ saved ? "已保存" : "保存" }}</button>
-        <button class="button primary" type="button" :disabled="running" @click="runBacktest">{{ running ? "运行中…" : "开始回测" }}</button>
+        <button class="button ghost" type="button" :disabled="saved || !codeReady" @click="saveStrategy()">{{ saved ? "已保存" : "保存" }}</button>
+        <button class="button primary" type="button" :disabled="running || !codeReady" @click="runBacktest">{{ running ? "运行中…" : "开始回测" }}</button>
       </div>
     </header>
 
@@ -314,7 +406,7 @@ onBeforeUnmount(() => { interactionCleanup?.(); window.removeEventListener("befo
       <main class="strategy-canvas panel">
         <div class="canvas-topbar">
           <div class="canvas-tabs">
-            <button v-for="tab in ['画布', '代码', '回测']" :key="tab" type="button" :class="{ active: activeTab === tab }" @click="activeTab = tab as typeof activeTab">{{ tab }}</button>
+            <button v-for="tab in ['画布', '代码', '回测']" :key="tab" type="button" :class="{ active: activeTab === tab }" :disabled="tab !== '代码' && !codeReady" @click="activeTab = tab as typeof activeTab">{{ tab }}</button>
           </div>
           <div v-if="activeTab === '画布'" class="canvas-tools"><button type="button" aria-label="缩小画布" @click="changeZoom(-0.1)">－</button><span>{{ Math.round(zoom * 100) }}%</span><button type="button" aria-label="放大画布" @click="changeZoom(0.1)">＋</button><button type="button" @click="fitCanvas">适配</button></div>
         </div>
@@ -346,41 +438,53 @@ onBeforeUnmount(() => { interactionCleanup?.(); window.removeEventListener("befo
           </div>
         </div>
 
-        <div v-else-if="activeTab === '代码'" class="code-preview">
-          <div class="code-lines">01<br>02<br>03<br>04<br>05<br>06<br>07<br>08<br>09</div>
-          <pre>{{ current.code }}</pre>
+        <div v-else-if="activeTab === '代码'" class="strategy-code-panel">
+          <div class="code-editor-help">
+            <button class="button ghost" type="button" :disabled="codePending" @click="validateCode(true)">{{ codePending ? '校验中…' : '校验' }}</button>
+            <span v-if="codeError || validationMessage" role="status" :class="{ 'code-error': codeError }">{{ codeError || validationMessage }}</span>
+            <details><summary>节点格式与连线示例</summary><pre>{"id": 100, "category": "条件判断", "title": "新条件", "description": "自定义信号", "color": "cyan", "x": 440, "y": 200, "parameters": [{"label": "周期", "value": "10", "unit": "日"}]}
+连线：{"id": 200, "from": 1, "to": 100}
+id 必须唯一，连线端点必须存在。其他 Python 策略代码不会因画布编辑被覆盖。</pre></details>
+          </div>
+          <div class="code-preview">
+            <div style="overflow: hidden"><pre class="code-lines" aria-hidden="true" :style="{ transform: `translateY(-${codeScroll}px)` }">{{ codeLineNumbers }}</pre></div>
+            <textarea aria-label="策略 Python 代码" :value="current.code" rows="25" spellcheck="false" autocapitalize="off" @scroll="codeScroll = ($event.target as HTMLTextAreaElement).scrollTop" @input="updateCode" @keydown.tab="indentCode"></textarea>
+          </div>
         </div>
 
-        <div v-else class="backtest-preview">
+        <div v-else-if="activeTab === '回测'" class="backtest-preview">
           <div><span>累计收益</span><strong class="positive">{{ current.returnRate }}</strong></div>
           <div><span>年化收益</span><strong>{{ current.annualReturn }}</strong></div>
           <div><span>最大回撤</span><strong class="negative">{{ current.drawdown }}</strong></div>
           <div><span>夏普比率</span><strong>{{ current.sharpe }}</strong></div>
           <p>最近回测区间：{{ current.config.start }} 至 {{ current.config.end }}</p>
+          <section class="backtest-config">
+            <div class="workspace-panel-head"><div><span>CONFIGURATION</span><h2>回测配置</h2></div><small>{{ saved ? "已保存" : "自动保存关闭 · 未保存" }}</small></div>
+            <div class="config-section">
+              <h3>基础设置</h3>
+              <label><span>初始资金</span><div><input v-model="current.config.capital" @input="markDirty" /><em>CNY</em></div></label>
+              <label><span>回测区间</span><div class="date-pair"><input v-model="current.config.start" @input="markDirty" /><b>—</b><input v-model="current.config.end" @input="markDirty" /></div></label>
+              <label><span>基准指数</span><select v-model="current.config.benchmark" @change="markDirty"><option>沪深 300</option><option>中证 500</option><option>中证 1000</option></select></label>
+            </div>
+            <div class="config-section">
+              <h3>交易参数</h3>
+              <label><span>手续费率</span><div><input v-model="current.config.fee" @input="markDirty" /><em>%</em></div></label>
+              <label><span>滑点</span><div><input v-model="current.config.slippage" @input="markDirty" /><em>bp</em></div></label>
+              <label><span>最大仓位</span><div><input v-model="current.config.maxPosition" @input="markDirty" /><em>%</em></div></label>
+            </div>
+            <div class="config-section config-checks">
+              <h3>运行选项</h3>
+              <label><input v-model="current.config.adjusted" type="checkbox" @change="markDirty" /><span>使用前复权价格</span></label>
+              <label><input v-model="current.config.riskControl" type="checkbox" @change="markDirty" /><span>启用风险控制节点</span></label>
+              <label><input v-model="current.config.snapshots" type="checkbox" @change="markDirty" /><span>保存每日持仓快照</span></label>
+            </div>
+            <div class="config-foot"><span>预计耗时</span><strong>约 18 秒</strong><button class="button primary" type="button" :disabled="running || !codeReady" @click="runBacktest">{{ running ? "正在回测" : "运行回测" }}</button></div>
+          </section>
         </div>
       </main>
 
-      <aside class="strategy-config panel">
-        <div class="workspace-panel-head"><div><span>CONFIGURATION</span><h2>回测配置</h2></div><small>{{ saved ? "已保存" : "自动保存关闭 · 未保存" }}</small></div>
-        <div class="config-section">
-          <h3>基础设置</h3>
-          <label><span>初始资金</span><div><input v-model="current.config.capital" @input="markDirty" /><em>CNY</em></div></label>
-          <label><span>回测区间</span><div class="date-pair"><input v-model="current.config.start" @input="markDirty" /><b>—</b><input v-model="current.config.end" @input="markDirty" /></div></label>
-          <label><span>基准指数</span><select v-model="current.config.benchmark" @change="markDirty"><option>沪深 300</option><option>中证 500</option><option>中证 1000</option></select></label>
-        </div>
-        <div class="config-section">
-          <h3>交易参数</h3>
-          <label><span>手续费率</span><div><input v-model="current.config.fee" @input="markDirty" /><em>%</em></div></label>
-          <label><span>滑点</span><div><input v-model="current.config.slippage" @input="markDirty" /><em>bp</em></div></label>
-          <label><span>最大仓位</span><div><input v-model="current.config.maxPosition" @input="markDirty" /><em>%</em></div></label>
-        </div>
-        <div class="config-section config-checks">
-          <h3>运行选项</h3>
-          <label><input v-model="current.config.adjusted" type="checkbox" @change="markDirty" /><span>使用前复权价格</span></label>
-          <label><input v-model="current.config.riskControl" type="checkbox" @change="markDirty" /><span>启用风险控制节点</span></label>
-          <label><input v-model="current.config.snapshots" type="checkbox" @change="markDirty" /><span>保存每日持仓快照</span></label>
-        </div>
-        <div class="config-foot"><span>预计耗时</span><strong>约 18 秒</strong><button class="button primary" type="button" :disabled="running" @click="runBacktest">{{ running ? "正在回测" : "运行回测" }}</button></div>
+      <aside class="strategy-ai panel">
+        <div class="workspace-panel-head"><div><span>AI STRATEGY</span><h2>AI 对话生成策略</h2></div></div>
       </aside>
     </div>
 
