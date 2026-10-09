@@ -56,13 +56,35 @@ async function stopChild(child) {
   await exec('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 15000 }).catch(error => logs.push(String(error)))
   await eventually('Owned subprocess did not terminate', () => child.exitCode !== null || child.signalCode !== null)
 }
+async function diagnoseStartupFailure() {
+  const diagnosticFile = join(evidence, 'startup-failure-es.csv')
+  let stdout = ''
+  try {
+    ({ stdout } = await exec(cli, ['-csv', '-no-header', '-full-path', '-count', '200'], { timeout: 15000 }))
+  } catch (error) {
+    stdout = error.stdout ?? ''
+    logs.push(`ES startup diagnostic failed: ${error.stack ?? error}`)
+  }
+  await writeFile(diagnosticFile, stdout, 'utf8')
+  const slice = stdout.split(/\r?\n/).filter(Boolean).slice(0, 20)
+  for (const [index, line] of slice.entries()) {
+    const annotation = line.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')
+    console.error(`::error file=${diagnosticFile},line=${index + 1}::Raw ES blank-query diagnostic: ${annotation}`)
+  }
+  logs.push(`Raw ES blank-query diagnostic (${diagnosticFile}):\n${slice.join('\n')}`)
+}
 async function startEngine() {
   engine = spawn(engineExecutable, ['-config', configuration, '-no-db', '-startup'], { stdio: ['ignore', 'pipe', 'pipe'] })
   recordChild(engine, 'Everything')
-  await eventually('Real Everything index did not become ready', async () => {
-    const result = await search({ limit: 100, query: '' })
-    return result.items.length === 100 && result.hasMore
-  })
+  try {
+    await eventually('Real Everything index did not become ready', async () => {
+      const result = await search({ limit: 100, query: '' })
+      return result.items.length === 100 && result.hasMore
+    })
+  } catch (error) {
+    await diagnoseStartupFailure()
+    throw error
+  }
 }
 async function stopEngine() {
   if (!engine || engine.exitCode !== null || engine.signalCode !== null) return
@@ -125,10 +147,16 @@ try {
   const filetime = date => (BigInt(date.getTime()) * 10000n + 116444736000000000n).toString()
   await writeFile(filelist, ['Filename,Size,Date Modified,Date Created,Attributes', ...fixtures.map(item =>
     [csv(item.path), item.size ?? '', filetime(item.modifiedAt), filetime(item.modifiedAt), item.isDirectory ? 16 : 32].join(','))].join('\r\n'), 'utf8')
-  // Official 1.4 INI filelists indexes EFU through IPC; -filelist only opens a GUI list.
-  // Disabling auto inclusion and all volume/folder sources prevents scanning the runner disk.
+  // Official 1.4 defaults to every fixed NTFS volume; auto_include_* only affects newly seen volumes.
+  // Enumerate the runner's fixed volumes and explicitly mark each configured volume excluded.
+  // https://www.voidtools.com/support/everything/indexes/
+  // https://www.voidtools.com/support/everything/ini/
   const iniList = value => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-  await writeFile(configuration, `[Everything]\r\napp_data=0\r\nrun_as_admin=0\r\nrun_in_background=1\r\nshow_tray_icon=0\r\ncheck_for_updates_on_startup=0\r\nauto_include_fixed_volumes=0\r\nauto_include_removable_volumes=0\r\nauto_include_fixed_refs_volumes=0\r\nauto_include_removable_refs_volumes=0\r\nntfs_volume_guids=\r\nntfs_volume_paths=\r\nntfs_volume_includes=\r\nrefs_volume_guids=\r\nrefs_volume_paths=\r\nrefs_volume_includes=\r\nfolders=\r\nfilelists=${iniList(filelist)}\r\nindex_size=1\r\nindex_date_modified=1\r\nindex_attributes=1\r\n`, 'utf8')
+  const fixedVolumePaths = (await powershell("(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3').DeviceID | ForEach-Object { $_ + '\\' }")).split(/\r?\n/).filter(Boolean)
+  assert.ok(fixedVolumePaths.length > 0, 'Windows runner has no fixed volume to exclude')
+  const excludedVolumePaths = fixedVolumePaths.map(iniList).join(',')
+  const excludedVolumeFlags = fixedVolumePaths.map(() => '0').join(',')
+  await writeFile(configuration, `[Everything]\r\napp_data=0\r\nrun_as_admin=0\r\nrun_in_background=1\r\nshow_tray_icon=0\r\ncheck_for_updates_on_startup=0\r\nauto_include_fixed_volumes=0\r\nauto_include_removable_volumes=0\r\nauto_include_fixed_refs_volumes=0\r\nauto_include_removable_refs_volumes=0\r\nntfs_volume_guids=\r\nntfs_volume_paths=${excludedVolumePaths}\r\nntfs_volume_includes=${excludedVolumeFlags}\r\nrefs_volume_guids=\r\nrefs_volume_paths=${excludedVolumePaths}\r\nrefs_volume_includes=${excludedVolumeFlags}\r\nfolders=\r\nfilelists=${iniList(filelist)}\r\nindex_size=1\r\nindex_date_modified=1\r\nindex_attributes=1\r\n`, 'utf8')
   await writeFile(join(evidence, 'fixture-manifest.json'), JSON.stringify({ engineAsset, fixtures, configuration: await readFile(configuration, 'utf8') }, null, 2))
   app = spawn(executable, ['--remote-debugging-port=9335', `--profile-dir=${join(temporary, 'profile')}`], { stdio: ['ignore', 'pipe', 'pipe'] })
   recordChild(app, 'NextLeek')

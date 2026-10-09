@@ -52,7 +52,7 @@ test('ES protocol preserves a whole Everything query without exposing command op
     const query = '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"'
     const result = await h.service.search({ ...request, query, filter: 'files', sort: 'modified', descending: true, offset: 25 })
     assert.deepEqual(result, { items: [], hasMore: false, offset: 25 })
-    assert.deepEqual(h.calls[0].args, ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-no-folder-append-path-separator', '-timeout', '5000', '-n', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', query])
+    assert.deepEqual(h.calls[0].args, ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', query])
     await h.service.search({ ...request, filter: 'folders', sort: 'path' })
     assert(h.calls[1].args.includes('/ad') && h.calls[1].args.includes('-sort-ascending'))
     await h.service.search({ ...request, sort: 'size' })
@@ -62,18 +62,26 @@ test('ES protocol preserves a whole Everything query without exposing command op
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('Unicode JSON results preserve metadata and lookahead pagination', async () => {
+test('Unicode JSON results preserve metadata, normalize folders, and keep lookahead pagination', async () => {
   const h = harness()
   try {
-    h.output([row(), row('子目录', 16), row('lookahead.txt')])
+    h.output([
+      row(),
+      { ...row('子目录', 16), filename: 'C:\\资料\\子目录\\' },
+      row('lookahead.txt'),
+    ])
     const result = await h.service.search(request)
     assert.equal(result.hasMore, true); assert.equal(result.items.length, 2)
     assert.equal(result.items[0].path, 'C:\\资料\\报告.txt'); assert.equal(result.items[0].name, '报告.txt')
+    assert.equal(result.items[1].path, 'C:\\资料\\子目录'); assert.equal(result.items[1].name, '子目录')
     assert.equal(result.items[1].isDirectory, true); assert.equal(result.items[1].size, null)
     assert.match(result.items[0].id, /^[a-f0-9-]{36}$/); assert.notEqual(result.items[0].id, result.items[1].id)
     h.output([{ ...row('未知大小.txt'), size: null, date_modified: null }])
     const nullable = await h.service.search(request)
     assert.equal(nullable.items[0].size, null); assert.equal(nullable.items[0].modifiedAt, null)
+    h.output([{ ...row('C:', 16), path: '', filename: 'C:\\' }])
+    const root = await h.service.search(request)
+    assert.equal(root.items[0].name, 'C:'); assert.equal(root.items[0].path, 'C:\\')
     await assert.rejects(h.service.performAction('unknown', 'open'), /失效/)
   } finally { await h.ctx.fiber.dispose() }
 })
@@ -96,7 +104,7 @@ test('missing engine, missing bundled ES and unsupported hosts report genuine st
 test('malformed output and stale filesystem entries never become fabricated results', async () => {
   const h = harness()
   try {
-    for (const output of ['not-json', '{}', JSON.stringify([{ ...row(), filename: 'relative.txt' }]), JSON.stringify([{ ...row(), date_modified: 123 }])]) { h.output(output); await assert.rejects(h.service.search(request)) }
+    for (const output of ['not-json', '{}', JSON.stringify([{ ...row(), filename: 'relative.txt' }]), JSON.stringify([{ ...row(), filename: '' }]), JSON.stringify([{ ...row(), date_modified: 123 }])]) { h.output(output); await assert.rejects(h.service.search(request)) }
     h.output([row(), row(), row(), row()]); await assert.rejects(h.service.search(request), /超出请求范围/)
     h.output([row('类型未知', null)]); h.directory(true); assert.equal((await h.service.search(request)).items[0].isDirectory, true)
     h.missing(true); assert.deepEqual((await h.service.search(request)).items, [])

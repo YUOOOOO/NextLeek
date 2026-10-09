@@ -38,7 +38,7 @@ function failure(error: Error): Error {
 export function everythingArguments(request: EverythingSearchRequest): string[] {
   // ES 1.1.0.38: -argv decodes Windows argv quoting; -search consumes ONE
   // argument as query text, even if it begins with an ES option. Never use a shell.
-  const args = ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-no-folder-append-path-separator', '-timeout', '5000', '-n', String(request.limit + 1), '-offset', String(request.offset)]
+  const args = ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', String(request.limit + 1), '-offset', String(request.offset)]
   if (request.filter !== 'all') args.push(request.filter === 'folders' ? '/ad' : '/a-d')
   args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', request.query)
   return args
@@ -55,7 +55,9 @@ function parseResults(stdout: string): Array<Omit<EverythingItem, 'id'> & { attr
     const rawPath = typeof row.path === 'string' ? row.path.replaceAll('/', '\\') : ''
     const rawFilename = typeof row.filename === 'string' ? row.filename.replaceAll('/', '\\') : ''
     const rawName = typeof row.name === 'string' ? row.name : ''
-    const path = rawFilename ? (win32.isAbsolute(rawFilename) ? win32.normalize(rawFilename) : '') : win32.isAbsolute(rawPath) && rawName ? win32.join(rawPath, rawName) : ''
+    const normalizedFilename = win32.isAbsolute(rawFilename) ? win32.normalize(rawFilename) : ''
+    const root = normalizedFilename ? win32.parse(normalizedFilename).root : ''
+    const path = normalizedFilename === root ? root : normalizedFilename.replace(/[\\]+$/, '')
     const name = rawName || (path ? path.slice(path.lastIndexOf('\\') + 1) : '')
     if (!win32.isAbsolute(path) || /[\u0000-\u001f]/.test(path) || !name) throw new Error(`Everything 返回了无效的文件路径：${JSON.stringify({ path: rawPath, filename: rawFilename, name: rawName })}`)
     const attributes = row.attributes
