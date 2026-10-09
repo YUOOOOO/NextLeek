@@ -89,9 +89,15 @@ try {
     await eventually('Alt+Space not saved', async () => (await page.evaluate(() => window.desktop.getSnapshot())).settings.hotkey === 'Alt+Space')
     const sendAltSpace = () => promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ') "])
     await sendAltSpace()
-    await eventually('Alt+Space opened system menu instead of hiding app', async () => (await page.evaluate(() => document.visibilityState)) === 'hidden')
+    await eventually('Alt+Space did not hide native host window', async () => {
+      const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${child.pid}).MainWindowHandle`])
+      return stdout.trim() === '0'
+    })
     await sendAltSpace()
-    await eventually('Alt+Space did not restore launcher', async () => (await page.evaluate(() => document.visibilityState)) === 'visible')
+    await eventually('Alt+Space did not restore native host window', async () => {
+      const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${child.pid}).MainWindowHandle`])
+      return stdout.trim() !== '0'
+    })
     await page.locator('button.brand-button').click()
     await page.evaluate(hotkey => window.desktop.updateSettings({ hotkey }), initial.settings.hotkey)
     checks.push('Native Windows Alt+Space hides and restores app without system menu')
