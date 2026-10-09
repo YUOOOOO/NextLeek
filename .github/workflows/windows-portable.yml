@@ -75,8 +75,14 @@ jobs:
         run: |
           # Test-only installer: same source, lower version; never uploaded or published.
           # All stable v4 releases compare greater than 4.0.0.
-          pnpm exec electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=4.0.0 -c.directories.output=artifacts/update-baseline
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output = @(pnpm exec electron-builder --win nsis --x64 --publish never '-c.extraMetadata.version=4.0.0' '-c.directories.output=artifacts/update-baseline' 2>&1)
+          $buildExit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($buildExit -ne 0) {
+            $failure = (($output | Select-Object -Last 20) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Baseline packaging failed::$failure"
+            exit $buildExit
+          }
       - name: Extract and exercise portable application
         shell: pwsh
         run: |
