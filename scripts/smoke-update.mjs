@@ -74,6 +74,14 @@ try {
     return JSON.parse(extractFile(archive, 'package.json').toString()).version === targetVersion
   }, 180000)
   checks.push(`NSIS installed application version ${targetVersion}`)
+  await eventually('Installer did not automatically relaunch updated app', async () => {
+    const { stdout } = await execute('powershell.exe', ['-NoProfile', '-Command', '@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTLEEK_EXE }).Count'], { env: { ...process.env, NEXTLEEK_EXE: executable } })
+    return Number(stdout.trim()) > 0
+  })
+  checks.push('Installer automatically relaunches updated app')
+  // Forced relaunch uses the normal profile, whereas this scenario uses an
+  // isolated profile. Close only this test installation before probing it again.
+  await execute('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTLEEK_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'], { env: { ...process.env, NEXTLEEK_EXE: executable } })
   page = await launch()
   const updated = await page.evaluate(() => window.desktop.getUpdateState())
   assert.equal(updated.currentVersion, targetVersion)
