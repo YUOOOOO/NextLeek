@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDesktopStore } from './store'
 import AppIcon from './components/AppIcon.vue'
 import CommandTile from './components/CommandTile.vue'
-import type { Settings } from '../shared/contracts'
+import type { DesktopEvent, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
 const search = ref<HTMLInputElement | null>(null)
@@ -15,8 +15,19 @@ const capturingHotkey = ref(false)
 const hotkey = ref('')
 const systemDark = ref(false)
 const searchMode = computed(() => desktop.query.trim().length > 0)
-const visibleCommands = computed(() => searchMode.value ? desktop.results : [])
-const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
+const hasHomeHistory = computed(() => Boolean(desktop.snapshot?.recent.length || desktop.snapshot?.pinned.length))
+const commandSections = computed(() => {
+  if (searchMode.value) return [{ id: 'results', title: '搜索结果', commands: desktop.results, offset: 0 }]
+  const pinned = desktop.homeCommands.filter(command => desktop.snapshot?.pinned.includes(command.id))
+  const recent = desktop.homeCommands.filter(command => !desktop.snapshot?.pinned.includes(command.id))
+  if (hasHomeHistory.value) return [
+    { id: 'pinned', title: '固定指令', commands: pinned, offset: 0 },
+    { id: 'recent', title: '最近使用', commands: recent, offset: pinned.length },
+  ].filter(section => section.commands.length)
+  return desktop.launcherRevealed ? [{ id: 'commands', title: '全部指令', commands: desktop.results, offset: 0 }] : []
+})
+const visibleCommands = computed(() => commandSections.value.flatMap(section => section.commands))
+const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || desktop.launcherRevealed || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
 const settings = computed(() => desktop.snapshot?.settings)
 const dark = computed(() => settings.value?.theme === 'dark' || (settings.value?.theme === 'system' && systemDark.value))
 const updateLabels = {
@@ -95,7 +106,7 @@ function keydown(event: KeyboardEvent) {
     return
   }
   if (desktop.page !== 'launcher' || !visibleCommands.value.length || desktop.busy) return
-  if (target.closest('.pin-action') || target.closest('.brand-button') || target.closest('.window-action')) return
+  if (target.closest('.pin-action') || target.closest('.brand-button') || target.closest('.clear-button')) return
   if (event.key === 'Enter' && (target === search.value || target.closest('.command-launch'))) {
     event.preventDefault()
     const command = visibleCommands.value[selected.value]
@@ -114,6 +125,10 @@ function keydown(event: KeyboardEvent) {
   else document.querySelector<HTMLElement>(`[data-command-index="${selected.value}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 let media: MediaQueryList | undefined
+let unsubscribeHotkey: (() => void) | undefined
+function receiveHotkey(event: DesktopEvent) {
+  if (event.type === 'hotkey' && capturingHotkey.value && document.activeElement === hotkeyInput.value) hotkey.value = event.value
+}
 function syncSystemTheme(event: MediaQueryListEvent) { systemDark.value = event.matches }
 onMounted(() => {
   media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -122,9 +137,11 @@ onMounted(() => {
   window.addEventListener('keydown', keydown)
   window.addEventListener('blur', releaseHotkeyCapture)
   window.addEventListener('focus', restoreHotkeyCapture)
+  unsubscribeHotkey = window.desktop?.subscribe(receiveHotkey)
   void desktop.initialize().then(() => nextTick(() => search.value?.focus()))
 })
 onUnmounted(() => {
+  unsubscribeHotkey?.()
   media?.removeEventListener('change', syncSystemTheme)
   window.removeEventListener('keydown', keydown)
   window.removeEventListener('blur', releaseHotkeyCapture)
@@ -139,21 +156,22 @@ onUnmounted(() => {
     <header class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" type="search" aria-label="搜索应用和指令" placeholder="搜索应用和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="composing = true" @compositionend="composing = false" />
-      <button class="window-action" aria-label="隐藏窗口" title="隐藏窗口" @click="desktop.hide()"><AppIcon name="close" /></button>
+      <button v-if="desktop.query" class="clear-button" aria-label="清除搜索" title="清除搜索" @click="desktop.query = ''; search?.focus()"><AppIcon name="close" /></button>
       <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 24V8l16 16V8M8 8h9M15 24h9" /></svg></button>
     </header>
 
     <div v-if="desktop.error" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
     <main v-if="desktop.loading" class="state-message" role="status">正在连接桌面运行时…</main>
     <main v-else-if="!desktop.snapshot" class="state-message"><AppIcon name="command" /><h1>无法连接桌面运行时</h1><p>未读取到设置和指令。请重试连接，或重新打开应用。</p><button class="text-button" @click="desktop.initialize()">重新连接</button></main>
-    <main v-else-if="desktop.page === 'launcher' && searchMode" class="launcher" aria-label="启动器" :aria-busy="desktop.busy">
-        <section aria-labelledby="results-heading"><div class="section-heading"><h1 id="results-heading">搜索结果</h1><span>{{ desktop.results.length }} 项指令</span></div>
-          <div v-if="desktop.results.length" class="command-grid"><CommandTile v-for="(command, index) in desktop.results" :key="command.id" :command="command" :index="index" :selected="selected === index" :pinned="desktop.snapshot.pinned.includes(command.id)" :disabled="desktop.busy" @select="selected = index" @run="desktop.run(command)" @pin="desktop.pin(command)" /></div>
-          <div v-else class="empty-state"><h2>没有匹配的指令</h2><p>试试指令名称、用途或关键词。</p><button class="text-button" @click="desktop.query = ''">清除搜索</button></div>
-        </section>
+    <main v-else-if="desktop.page === 'launcher' && launcherExpanded" class="launcher" aria-label="启动器" :aria-busy="desktop.busy">
+      <section v-for="section in commandSections" :key="section.id" :aria-labelledby="`${section.id}-heading`" :data-command-section="section.id">
+        <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><span>{{ section.commands.length }} 项指令</span></div>
+        <div v-if="section.commands.length" class="command-grid"><CommandTile v-for="(command, index) in section.commands" :key="command.id" :command="command" :index="section.offset + index" :selected="selected === section.offset + index" :pinned="desktop.snapshot.pinned.includes(command.id)" :disabled="desktop.busy" @select="selected = section.offset + index" @run="desktop.run(command)" @pin="desktop.pin(command)" /></div>
+      </section>
+      <div v-if="!visibleCommands.length" class="empty-state"><h2>{{ searchMode ? '没有匹配的指令' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试指令名称、用途或关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="searchMode" class="text-button" @click="desktop.query = ''">清除搜索</button><button v-else class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
     </main>
     <div v-else-if="desktop.page !== 'launcher'" class="settings-layout">
-      <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button><button class="quit-button" :disabled="desktop.busy" @click="desktop.quit()"><AppIcon name="power" />退出 NextLeek</button></nav>
+      <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
       <main class="settings-content" :aria-busy="desktop.busy">
         <template v-if="desktop.page === 'settings' && settings">
           <h1 class="sr-only">通用设置</h1>
@@ -196,6 +214,6 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
-    <footer v-if="desktop.snapshot && desktop.page === 'launcher' && searchMode" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> 清除搜索</span></footer>
+    <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

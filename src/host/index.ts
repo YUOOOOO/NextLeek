@@ -48,6 +48,7 @@ async function start() {
   let cleanup: Promise<void> | undefined
   let currentHotkey: string | undefined
   let hotkeyCapture = false
+  let captureAltSpace = false
   const setLauncherExpanded = (expanded: boolean) => {
     if (window.isDestroyed()) return
     const [width] = window.getSize()
@@ -67,10 +68,22 @@ async function start() {
   const setHotkeyCapture = (active: boolean) => {
     if (active === hotkeyCapture) return
     hotkeyCapture = active
-    if (!currentHotkey) return
-    if (active) globalShortcut.unregister(currentHotkey)
-    else if (!globalShortcut.isRegistered(currentHotkey) && !globalShortcut.register(currentHotkey, toggle)) {
-      console.error(`Unable to restore global shortcut: ${currentHotkey}`)
+    if (active) {
+      if (currentHotkey) globalShortcut.unregister(currentHotkey)
+      if (process.platform === 'win32') {
+        captureAltSpace = globalShortcut.register('Alt+Space', () => {
+          if (hotkeyCapture && window.isFocused()) emit({ type: 'hotkey', value: 'Alt+Space' })
+        })
+        if (!captureAltSpace) {
+          setHotkeyCapture(false)
+          throw new Error('无法录制 Alt+Space：该快捷键已被其他程序占用')
+        }
+      }
+    } else {
+      if (captureAltSpace) { globalShortcut.unregister('Alt+Space'); captureAltSpace = false }
+      if (currentHotkey && !globalShortcut.isRegistered(currentHotkey) && !globalShortcut.register(currentHotkey, toggle)) {
+        console.error(`Unable to restore global shortcut: ${currentHotkey}`)
+      }
     }
   }
   const desktop: DesktopService = {

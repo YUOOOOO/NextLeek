@@ -15,6 +15,7 @@ export const useDesktopStore = defineStore('desktop', () => {
   const error = ref('')
   const query = ref('')
   const focusRequest = ref(0)
+  const launcherRevealed = ref(false)
   const updateState = ref<UpdateState | null>(null)
   const updateBusy = ref(false)
   const updateError = ref('')
@@ -32,13 +33,18 @@ export const useDesktopStore = defineStore('desktop', () => {
       return terms.every(term => text.includes(term))
     }).sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)))
   })
+  const homeCommands = computed(() => {
+    const ids = new Set([...(snapshot.value?.pinned ?? []), ...(snapshot.value?.recent ?? [])])
+    const byId = new Map(commands.value.map(command => [command.id, command]))
+    return [...ids].map(id => byId.get(id)).filter((command): command is Command => Boolean(command))
+  })
 
   function message(cause: unknown) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
   function navigate(target: typeof page.value) {
+    if (target === 'launcher' && page.value !== 'launcher') launcherRevealed.value = true
     page.value = target
-    query.value = ''
   }
   function receive(event: DesktopEvent) {
     if (disposed) return
@@ -52,7 +58,12 @@ export const useDesktopStore = defineStore('desktop', () => {
       if (pluginsChanged) void refreshCommands()
     }
     if (event.type === 'navigate') navigate(event.page)
-    if (event.type === 'shown') { navigate('launcher'); focusRequest.value++ }
+    if (event.type === 'shown') {
+      page.value = 'launcher'
+      launcherRevealed.value = false
+      if (snapshot.value?.recent.length || snapshot.value?.pinned.length) query.value = ''
+      focusRequest.value++
+    }
     if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
   }
   async function refreshCommands() {
@@ -133,7 +144,6 @@ export const useDesktopStore = defineStore('desktop', () => {
   async function downloadUpdate() { await performUpdate(() => window.desktop.downloadUpdate()) }
   async function installUpdate() { await performUpdate(() => window.desktop.installUpdate()) }
   async function hide() { await perform(() => window.desktop.hide()) }
-  async function quit() { await perform(() => window.desktop.quit()) }
   function dispose() { disposed = true; unsubscribe?.(); unsubscribe = undefined }
-  return { snapshot, commands, page, loading, busy, error, query, focusRequest, results, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, quit, dispose }
+  return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
 })
