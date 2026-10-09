@@ -52,15 +52,19 @@ function parseResults(stdout: string): Array<Omit<EverythingItem, 'id'> & { attr
   return records.map((record: unknown) => {
     if (!record || typeof record !== 'object') throw new Error('Everything 返回了无效的结果数据。')
     const row = record as Record<string, unknown>
-    const path = typeof row.filename === 'string' ? row.filename : typeof row.path === 'string' && typeof row.name === 'string' ? win32.join(row.path, row.name) : ''
-    if (!win32.isAbsolute(path) || /[\u0000-\u001f]/.test(path) || typeof row.name !== 'string') throw new Error('Everything 返回了无效的文件路径。')
+    const rawPath = typeof row.path === 'string' ? row.path.replaceAll('/', '\\') : ''
+    const rawFilename = typeof row.filename === 'string' ? row.filename.replaceAll('/', '\\') : ''
+    const rawName = typeof row.name === 'string' ? row.name : ''
+    const path = rawFilename ? (win32.isAbsolute(rawFilename) ? win32.normalize(rawFilename) : '') : win32.isAbsolute(rawPath) && rawName ? win32.join(rawPath, rawName) : ''
+    const name = rawName || (path ? path.slice(path.lastIndexOf('\\') + 1) : '')
+    if (!win32.isAbsolute(path) || /[\u0000-\u001f]/.test(path) || !name) throw new Error(`Everything 返回了无效的文件路径：${JSON.stringify({ path: rawPath, filename: rawFilename, name: rawName })}`)
     const attributes = row.attributes
     if (attributes !== null && (!Number.isInteger(attributes) || (attributes as number) < 0)) throw new Error('Everything 返回了无效的文件属性。')
     const size = row.size
     if (size !== null && (typeof size !== 'number' || !Number.isFinite(size) || size < 0)) throw new Error('Everything 返回了无效的文件大小。')
     const modifiedAt = row.date_modified
     if (modifiedAt !== null && (typeof modifiedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(modifiedAt) || !Number.isFinite(Date.parse(modifiedAt)))) throw new Error('Everything 返回了无效的修改时间。')
-    return { name: row.name, path, isDirectory: attributes !== null && ((attributes as number) & 0x10) !== 0, size: size as number | null, modifiedAt: modifiedAt as string | null, attributes: attributes as number | null }
+    return { name, path, isDirectory: attributes !== null && ((attributes as number) & 0x10) !== 0, size: size as number | null, modifiedAt: modifiedAt as string | null, attributes: attributes as number | null }
   })
 }
 
