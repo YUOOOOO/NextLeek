@@ -33,7 +33,6 @@ const engineDirectory = join(temporary, 'engine')
 const engineExecutable = join(engineDirectory, 'Everything.exe')
 const fixtureDirectory = join(temporary, 'fixtures')
 const configuration = join(engineDirectory, 'Everything.ini')
-const filelist = join(temporary, 'fixtures.efu')
 const query = `"${fixtureDirectory}\\"`
 const pause = milliseconds => new Promise(resolvePause => setTimeout(resolvePause, milliseconds))
 async function eventually(description, operation) {
@@ -148,7 +147,6 @@ try {
   await writeFile(filelist, ['Filename,Size,Date Modified,Date Created,Attributes', ...fixtures.map(item =>
     [csv(item.path), item.size ?? '', filetime(item.modifiedAt), filetime(item.modifiedAt), item.isDirectory ? 16 : 32].join(','))].join('\r\n'), 'utf8')
   // Official 1.4 defaults to every fixed NTFS volume; auto_include_* only affects newly seen volumes.
-  // Enumerate the runner's fixed volumes and explicitly mark each configured volume excluded.
   // https://www.voidtools.com/support/everything/indexes/
   // https://www.voidtools.com/support/everything/ini/
   const iniList = value => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
@@ -177,7 +175,7 @@ try {
   checks.push('Missing real Everything returns unavailable without fabricated results')
   await startEngine()
   assert.equal((await page.evaluate(() => window.desktop.getEverythingStatus())).status, 'ready')
-  const all = await collect({ query: '' })
+  const all = await collect({ query })
   samePaths(all, fixtures)
   assert.equal(new Set(all.map(item => item.id)).size, all.length)
   assert.equal(new Set(all.map(item => normalized(item.path))).size, all.length)
