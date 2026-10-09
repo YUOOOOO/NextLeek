@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright-core'
+import { promisify } from 'node:util'
 
 const executable = resolve(process.argv[2])
-const appArgs = process.argv.slice(3)
+const expectUpdateSupported = process.argv.includes('--expect-update-supported')
+const checkUpdates = process.argv.includes('--check-updates')
+const appArgs = process.argv.slice(3).filter(arg => !['--expect-update-supported', '--check-updates'].includes(arg))
 const profile = await mkdtemp(resolve(tmpdir(), 'nextleek-smoke-'))
 const evidence = resolve('artifacts/smoke')
 await mkdir(evidence, { recursive: true })
@@ -49,8 +52,53 @@ try {
   assert.ok(initial.plugins.length >= 3)
   assert.ok(initial.plugins.every(p => p.status === 'active'))
   checks.push('Actual Cordis plugins active through secured preload')
+  const updateState = await page.evaluate(() => window.desktop.getUpdateState())
+  assert.equal(updateState.supported, expectUpdateSupported)
+  if (checkUpdates) {
+    const checked = await page.evaluate(() => window.desktop.checkForUpdates())
+    assert.equal(checked.status, 'not-available', checked.message)
+    checks.push(`Installed updater checks real GitHub release feed for ${checked.currentVersion}`)
+  }
+  checks.push(expectUpdateSupported ? 'Installed Windows application enables updater' : 'Portable/development application reports unsupported updater honestly')
+  await eventually('Empty launcher did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
+  assert.equal(await page.locator('.launcher').count(), 0)
+  await page.locator('.search-input').fill('设置')
+  await eventually('Search did not expand window', async () => (await page.evaluate(() => window.innerHeight)) > 400)
+  await page.getByRole('heading', { name: '搜索结果' }).waitFor()
+  await page.locator('.search-input').fill('')
+  await eventually('Cleared search did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
+  checks.push('Empty launcher collapses; search expands; clearing restores input-only window')
   await page.screenshot({ path: resolve(evidence, 'launcher.png') })
   await page.locator('button.brand-button').click()
+  await page.locator('#hotkey').focus()
+  await page.keyboard.press('Alt+c')
+  if (process.platform === 'win32') {
+    await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('%z')"])
+    await eventually('Active global shortcut intercepted recording', async () => (await page.locator('#hotkey').inputValue()) === 'Alt+Z')
+  } else await page.keyboard.press('Alt+z')
+  assert.equal(await page.locator('#hotkey').inputValue(), 'Alt+Z')
+  assert.equal((await page.evaluate(() => window.desktop.getSnapshot())).settings.hotkey, initial.settings.hotkey)
+  await page.keyboard.press('Escape')
+  assert.equal(await page.locator('#hotkey').inputValue(), initial.settings.hotkey)
+  await page.locator('#hotkey').blur()
+  checks.push('Unsaved shortcut capture and cancellation preserve saved shortcut and settings page')
+  if (process.platform === 'win32') {
+    await page.locator('#hotkey').focus()
+    await page.keyboard.press('Alt+Space')
+    await page.locator('.hotkey-control button[type="submit"]').click()
+    await eventually('Alt+Space not saved', async () => (await page.evaluate(() => window.desktop.getSnapshot())).settings.hotkey === 'Alt+Space')
+    const sendAltSpace = () => promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ') "])
+    await sendAltSpace()
+    await eventually('Alt+Space opened system menu instead of hiding app', async () => (await page.evaluate(() => document.visibilityState)) === 'hidden')
+    await sendAltSpace()
+    await eventually('Alt+Space did not restore launcher', async () => (await page.evaluate(() => document.visibilityState)) === 'visible')
+    await page.locator('button.brand-button').click()
+    await page.evaluate(hotkey => window.desktop.updateSettings({ hotkey }), initial.settings.hotkey)
+    checks.push('Native Windows Alt+Space hides and restores app without system menu')
+  }
+  await page.getByRole('heading', { name: '在线更新', exact: true }).scrollIntoViewIfNeeded()
+  assert.equal(await page.getByRole('button', { name: '检查更新', exact: true }).isEnabled(), expectUpdateSupported)
+  await page.screenshot({ path: resolve(evidence, 'updates.png') })
   await page.getByRole('button', { name: '外观主题', exact: true }).click()
   await page.locator('#theme').selectOption('dark')
   await eventually('Theme setting not persisted', async () => (await page.evaluate(() => window.desktop.getSnapshot())).settings.theme === 'dark')

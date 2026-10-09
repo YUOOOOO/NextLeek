@@ -10,6 +10,12 @@ const api: DesktopAPI = {
   setPluginEnabled: (id, enabled) => ipcRenderer.invoke(channels.plugin, id, enabled),
   hide: () => ipcRenderer.invoke(channels.hide),
   quit: () => ipcRenderer.invoke(channels.quit),
+  setHotkeyCapture: active => ipcRenderer.invoke(channels.hotkeyCapture, active),
+  setLauncherExpanded: expanded => ipcRenderer.invoke(channels.layout, expanded),
+  getUpdateState: () => ipcRenderer.invoke(channels.updateState),
+  checkForUpdates: () => ipcRenderer.invoke(channels.updateCheck),
+  downloadUpdate: () => ipcRenderer.invoke(channels.updateDownload),
+  installUpdate: () => ipcRenderer.invoke(channels.updateInstall),
   subscribe(callback) {
     const listener = (_event: Electron.IpcRendererEvent, event: DesktopEvent) => callback(event)
     ipcRenderer.on(channels.event, listener)

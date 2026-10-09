@@ -17,9 +17,23 @@ nativeRebuilder: sequential
 artifactName: 'NextLeek-${version}-${os}-${arch}.${ext}'
 win:
   target:
+    - target: nsis
+      arch: [x64]
     - target: zip
       arch: [x64]
-  signAndEditExecutable: false
+  signAndEditExecutable: true
+  publish:
+    provider: github
+    owner: YUOOOOO
+    repo: NextLeek
+    releaseType: release
+    publishAutoUpdate: true
+nsis:
+  artifactName: 'NextLeek-${version}-win-${arch}-Setup.${ext}'
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: true
 mac:
   category: public.app-category.productivity
   target: [zip]

@@ -6,6 +6,7 @@ import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
 import { argumentsCount, boolean, identifier, settingsPatch } from '../shared/validation'
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
+import { createUpdater, type OnlineUpdater } from './updater'
 
 function trayImage() {
   const pixels = Buffer.alloc(24 * 24 * 4)
@@ -30,7 +31,7 @@ async function start() {
   const devURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
   const rendererURL = devURL ?? pathToFileURL(rendererFile).href
   const window = new BrowserWindow({
-    width: 980, height: 690, minWidth: 680, minHeight: 460, show: false,
+    width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
     title: 'NextLeek', frame: false, backgroundColor: '#f4f6fa', autoHideMenuBar: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
   })
@@ -45,13 +46,32 @@ async function start() {
   let quitting = false
   let cleanup: Promise<void> | undefined
   let currentHotkey: string | undefined
+  let hotkeyCapture = false
+  const setLauncherExpanded = (expanded: boolean) => {
+    if (window.isDestroyed()) return
+    const [width] = window.getSize()
+    window.setSize(width, expanded ? 690 : 82)
+  }
   const emit = (event: DesktopEvent) => { if (!view.webContents.isDestroyed()) view.webContents.send(channels.event, event) }
   const show = () => {
     if (window.isDestroyed()) return
     if (window.isMinimized()) window.restore()
     window.show(); window.focus(); view.webContents.focus(); emit({ type: 'shown' })
   }
-  const toggle = () => { if (window.isVisible() && window.isFocused() && !window.isMinimized()) window.hide(); else show() }
+  const toggle = () => {
+    if (hotkeyCapture) return
+    if (window.isVisible() && window.isFocused() && !window.isMinimized()) window.hide()
+    else show()
+  }
+  const setHotkeyCapture = (active: boolean) => {
+    if (active === hotkeyCapture) return
+    hotkeyCapture = active
+    if (!currentHotkey) return
+    if (active) globalShortcut.unregister(currentHotkey)
+    else if (!globalShortcut.isRegistered(currentHotkey) && !globalShortcut.register(currentHotkey, toggle)) {
+      console.error(`Unable to restore global shortcut: ${currentHotkey}`)
+    }
+  }
   const desktop: DesktopService = {
     emit,
     hide: () => window.hide(),
@@ -102,9 +122,10 @@ async function start() {
       const denyPopup = () => ({ action: 'deny' as const })
       const denyNavigation = (event: Electron.Event) => event.preventDefault()
       const denyWebview = (event: Electron.Event) => event.preventDefault()
-      const beforeInput = (_event: Electron.Event, input: Electron.Input) => {
-        if (input.type === 'keyDown' && input.key === 'Escape' && runtime!.getSnapshot().settings.escHide) { _event.preventDefault(); window.hide() }
-      }
+      const systemMenu = (event: Electron.Event) => event.preventDefault()
+      const blur = () => setHotkeyCapture(false)
+      window.on('system-context-menu', systemMenu)
+      window.on('blur', blur)
       window.on('close', close)
       app.on('before-quit', quit)
       app.on('second-instance', activate)
@@ -112,7 +133,6 @@ async function start() {
       view.webContents.setWindowOpenHandler(denyPopup)
       view.webContents.on('will-navigate', denyNavigation)
       view.webContents.on('will-attach-webview', denyWebview)
-      view.webContents.on('before-input-event', beforeInput)
       const session = view.webContents.session
       session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
       session.setPermissionCheckHandler(() => false)
@@ -124,6 +144,8 @@ async function start() {
       })
       return () => {
         window.removeListener('resize', resize); window.removeListener('close', close)
+        window.removeListener('system-context-menu', systemMenu)
+        window.removeListener('blur', blur)
         app.removeListener('before-quit', quit); app.removeListener('second-instance', activate); app.removeListener('activate', activate)
         session.webRequest.onHeadersReceived(null)
         session.setPermissionRequestHandler(null); session.setPermissionCheckHandler(null)
@@ -143,7 +165,16 @@ async function start() {
       tray.on('click', toggle)
       return () => tray.destroy()
     }, 'system tray')
-    installIPC(runtime, view, rendererURL)
+    const updater = await createUpdater(ctx, {
+      app,
+      emit,
+      async prepareInstall() {
+        quitting = true
+        cleanup ??= runtime!.dispose()
+        await cleanup
+      },
+    })
+    installIPC(runtime, view, rendererURL, setHotkeyCapture, setLauncherExpanded, updater)
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
     show()
   } catch (error) {
@@ -155,7 +186,7 @@ async function start() {
   }
 }
 
-function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string) {
+function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, setHotkeyCapture: (active: boolean) => void, setLauncherExpanded: (expanded: boolean) => void, updater: OnlineUpdater) {
   const verify = (event: IpcMainInvokeEvent) => {
     const frame = event.senderFrame
     if (event.sender !== view.webContents || !frame || frame !== view.webContents.mainFrame) throw new Error('Unauthorized IPC sender')
@@ -178,6 +209,12 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.plugin, 2, (id, enabled) => runtime.setPluginEnabled(identifier(id), boolean(enabled)))
   bind(channels.hide, 0, () => runtime.ctx.get('desktop')!.hide())
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
+  bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
+  bind(channels.layout, 1, expanded => setLauncherExpanded(boolean(expanded)))
+  bind(channels.updateState, 0, () => updater.getState())
+  bind(channels.updateCheck, 0, () => updater.check())
+  bind(channels.updateDownload, 0, () => updater.download())
+  bind(channels.updateInstall, 0, () => updater.install())
 }
 
 start().catch(error => {

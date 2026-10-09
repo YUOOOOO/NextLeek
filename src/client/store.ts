@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { Command, DesktopAPI, DesktopEvent, Settings, Snapshot } from '../shared/contracts'
+import type { Command, DesktopAPI, DesktopEvent, Settings, Snapshot, UpdateState } from '../shared/contracts'
 
 declare global {
   interface Window { desktop: DesktopAPI }
@@ -15,6 +15,10 @@ export const useDesktopStore = defineStore('desktop', () => {
   const error = ref('')
   const query = ref('')
   const focusRequest = ref(0)
+  const updateState = ref<UpdateState | null>(null)
+  const updateBusy = ref(false)
+  const updateError = ref('')
+  let updateRevision = 0
   let unsubscribe: (() => void) | undefined
   let disposed = false
   let commandRevision = 0
@@ -28,8 +32,6 @@ export const useDesktopStore = defineStore('desktop', () => {
       return terms.every(term => text.includes(term))
     }).sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)))
   })
-  const pinned = computed(() => (snapshot.value?.pinned ?? []).flatMap(id => commands.value.filter(command => command.id === id)))
-  const recent = computed(() => (snapshot.value?.recent ?? []).flatMap(id => commands.value.filter(command => command.id === id)))
 
   function message(cause: unknown) {
     error.value = cause instanceof Error ? cause.message : String(cause)
@@ -51,6 +53,7 @@ export const useDesktopStore = defineStore('desktop', () => {
     }
     if (event.type === 'navigate') navigate(event.page)
     if (event.type === 'shown') { navigate('launcher'); focusRequest.value++ }
+    if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
   }
   async function refreshCommands() {
     const current = ++commandRevision
@@ -72,6 +75,7 @@ export const useDesktopStore = defineStore('desktop', () => {
       if (disposed) return
       if (revision === startRevision) snapshot.value = next
       if (commandRevision === startCommandRevision) commands.value = registered
+      await refreshUpdateState()
     } catch (cause) { message(cause) }
     finally { if (!disposed) loading.value = false }
   }
@@ -97,8 +101,39 @@ export const useDesktopStore = defineStore('desktop', () => {
   async function togglePlugin(id: string, enabled: boolean) {
     await perform(async () => { snapshot.value = await window.desktop.setPluginEnabled(id, enabled) })
   }
+  async function setHotkeyCapture(active: boolean) {
+    if (!window.desktop) return false
+    try { await window.desktop.setHotkeyCapture(active); return true }
+    catch (cause) { message(cause); return false }
+  }
+  async function setLauncherExpanded(expanded: boolean) {
+    if (!window.desktop) return
+    try { await window.desktop.setLauncherExpanded(expanded) }
+    catch (cause) { message(cause) }
+  }
+  async function refreshUpdateState() {
+    const current = updateRevision
+    try {
+      const state = await window.desktop.getUpdateState()
+      if (!disposed && current === updateRevision) updateState.value = state
+    } catch (cause) { if (!disposed) updateError.value = cause instanceof Error ? cause.message : String(cause) }
+  }
+  async function performUpdate(action: () => Promise<UpdateState>) {
+    if (updateBusy.value) return
+    updateBusy.value = true
+    updateError.value = ''
+    const current = updateRevision
+    try {
+      const state = await action()
+      if (!disposed && current === updateRevision) updateState.value = state
+    } catch (cause) { if (!disposed) updateError.value = cause instanceof Error ? cause.message : String(cause) }
+    finally { updateBusy.value = false }
+  }
+  async function checkForUpdates() { await performUpdate(() => window.desktop.checkForUpdates()) }
+  async function downloadUpdate() { await performUpdate(() => window.desktop.downloadUpdate()) }
+  async function installUpdate() { await performUpdate(() => window.desktop.installUpdate()) }
   async function hide() { await perform(() => window.desktop.hide()) }
   async function quit() { await perform(() => window.desktop.quit()) }
   function dispose() { disposed = true; unsubscribe?.(); unsubscribe = undefined }
-  return { snapshot, commands, page, loading, busy, error, query, focusRequest, results, pinned, recent, navigate, initialize, run, update, pin, togglePlugin, hide, quit, dispose }
+  return { snapshot, commands, page, loading, busy, error, query, focusRequest, results, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, quit, dispose }
 })

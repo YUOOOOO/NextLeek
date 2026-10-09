@@ -20,6 +20,9 @@
 - 包管理：pnpm
 - UI 渲染：WebContentsView（每插件独立渲染进程）
 - 主题：系统/亮色/暗色，6 种主题色
+- 在线更新：`electron-updater` + GitHub Releases，仅 Windows NSIS 安装版支持；便携 ZIP、开发模式和未签名 macOS 不支持自动安装。
+- 发版：先提升 `package.json` 版本，推送 `v4` 后 Actions 验证并发布安装包、blockmap、`latest.yml`；禁止覆盖已发布标签。
+- 启动器：空查询只显示输入栏，输入后展开；快捷键录制期间暂停已保存的全局快捷键，保存或结束录制后恢复。
 
 ---
 

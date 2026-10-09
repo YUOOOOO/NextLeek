@@ -53,7 +53,7 @@ button { border: 0; }
   --grid-cell: 112px;
   --tile-height: 120px;
   --icon-size: 48px;
-  --header-height: 96px;
+  --header-height: 80px;
   --sidebar-width: 208px;
   height: 100dvh;
   display: flex;
@@ -87,9 +87,11 @@ button { border: 0; }
 [data-accent='orange'] { --accent: var(--orange); }
 [data-accent='rose'] { --accent: var(--rose); }
 [data-accent='teal'] { --accent: var(--teal); }
-.app-shell.compact { --header-height: 72px; --text-search: 24px; }
+.app-shell.compact { --header-height: 64px; --text-search: 24px; }
 .icon { display: block; width: var(--space-6); height: var(--space-6); flex-shrink: 0; }
-.search-header { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-4); height: var(--header-height); padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.search-header { display: flex; align-items: center; flex-shrink: 0; gap: var(--space-4); height: var(--header-height); padding: var(--space-3) var(--space-6); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.app-shell.collapsed .search-header { border-bottom: 0; }
+.app-shell.compact .search-header { padding-top: var(--space-2); padding-bottom: var(--space-2); }
 .search-input { flex: 1; min-width: 0; padding: var(--space-2) 0; border: 0; outline: none; background: transparent; color: var(--ink); font-size: var(--text-search); font-weight: 400; }
 .search-input:focus-visible { outline: none; box-shadow: 0 2px 0 var(--accent); }
 .search-input::placeholder { color: var(--muted); opacity: .85; }
@@ -116,14 +118,13 @@ h1, h2, p { margin: 0; }
 .pin-action .icon { width: var(--space-4); height: var(--space-4); }
 .command-tile:hover .pin-action, .command-tile:focus-within .pin-action, .pin-action.is-pinned { opacity: 1; }
 .pin-action.is-pinned { color: var(--accent); }
-.subtle-button, .text-button { background: transparent; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); }
+.text-button { background: transparent; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); }
 .text-button { color: var(--accent); font-weight: 600; }
-.subtle-button:hover, .text-button:hover { background: var(--selected); }
+.text-button:hover { background: var(--selected); }
 .inline-empty { padding: var(--space-5) var(--space-2); color: var(--muted); line-height: 1.8; }
 .empty-state { padding: var(--space-10) var(--space-4); text-align: center; color: var(--muted); }
 .empty-state h2 { color: var(--ink); font-size: var(--text-lg); margin-bottom: var(--space-2); }
 .empty-state .text-button { margin-top: var(--space-3); }
-.empty-state.inline-empty { text-align: left; padding: var(--space-5) var(--space-2); }
 .launcher-footer { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-6); color: var(--muted); border-top: 1px solid var(--line); font-size: var(--text-sm); }
 kbd { font: inherit; margin-right: var(--space-1); color: var(--ink); }
 .launcher-footer kbd:not(:first-child) { margin-left: var(--space-3); }
@@ -142,6 +143,13 @@ select { min-width: 160px; }
 .hotkey-control { display: flex; gap: var(--space-2); align-items: center; flex-shrink: 0; }
 .hotkey-control input { width: 152px; text-align: center; }
 .hotkey-control button { color: var(--accent); font-size: var(--text-base); }
+.update-info { min-width: 0; flex: 1; }
+.update-status { overflow-wrap: anywhere; }
+.update-actions { flex-shrink: 0; }
+.update-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+.update-progress progress { width: 100%; height: var(--space-2); accent-color: var(--accent); }
+.update-progress progress::-webkit-progress-bar { background: var(--surface-raised); border-radius: var(--radius-pill); }
+.update-progress progress::-webkit-progress-value { background: var(--accent); border-radius: var(--radius-pill); }
 .switch { width: var(--space-12); height: 28px; border-radius: var(--radius-pill); background: var(--muted); padding: var(--space-1); flex-shrink: 0; transition: background 160ms var(--ease); }
 .switch[aria-checked='true'] { background: var(--accent); }
 .switch span { display: block; width: var(--space-5); height: var(--space-5); background: var(--surface); border-radius: var(--radius-pill); transition: transform 160ms var(--ease); }

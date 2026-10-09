@@ -31,10 +31,19 @@ export interface Snapshot {
   recent: string[]
   pinned: string[]
 }
+export interface UpdateState {
+  status: 'unsupported' | 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'installing' | 'error'
+  currentVersion: string
+  supported: boolean
+  message: string
+  version?: string
+  progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }
+}
 export type DesktopEvent =
   | { type: 'snapshot'; snapshot: Snapshot }
   | { type: 'navigate'; page: Page }
   | { type: 'shown' }
+  | { type: 'update'; update: UpdateState }
 export interface DesktopAPI {
   getSnapshot(): Promise<Snapshot>
   updateSettings(patch: Partial<Settings>): Promise<Snapshot>
@@ -44,10 +53,19 @@ export interface DesktopAPI {
   setPluginEnabled(id: string, enabled: boolean): Promise<Snapshot>
   hide(): Promise<void>
   quit(): Promise<void>
+  setHotkeyCapture(active: boolean): Promise<void>
+  setLauncherExpanded(expanded: boolean): Promise<void>
+  getUpdateState(): Promise<UpdateState>
+  checkForUpdates(): Promise<UpdateState>
+  downloadUpdate(): Promise<UpdateState>
+  installUpdate(): Promise<UpdateState>
   subscribe(callback: (event: DesktopEvent) => void): () => void
 }
 export const channels = {
   snapshot: 'desktop:snapshot', settings: 'desktop:settings', commands: 'desktop:commands',
   run: 'desktop:run', pin: 'desktop:pin', plugin: 'desktop:plugin', hide: 'desktop:hide',
   quit: 'desktop:quit', event: 'desktop:event',
+  hotkeyCapture: 'desktop:hotkey-capture', layout: 'desktop:layout',
+  updateState: 'desktop:update-state', updateCheck: 'desktop:update-check',
+  updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
 } as const
