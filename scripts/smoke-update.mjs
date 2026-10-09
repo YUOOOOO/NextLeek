@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
@@ -17,7 +18,7 @@ const installer = resolve(process.argv[2])
 const targetVersion = process.argv[3]
 assert.ok(targetVersion, 'Expected target version')
 assert.equal(process.platform, 'win32', 'Real NSIS update smoke runs on Windows')
-const root = await mkdtemp(join(tmpdir(), 'nextleek-upgrade-'))
+const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'nextleek-upgrade-')))
 const installDirectory = join(root, 'app')
 const profile = join(root, 'profile')
 const executable = join(installDirectory, 'NextLeek.exe')
