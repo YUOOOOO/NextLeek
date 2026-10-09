@@ -32,7 +32,8 @@ jobs:
           $installExit = $LASTEXITCODE
           $output | ForEach-Object { Write-Host $_ }
           if ($installExit -ne 0) {
-            $failure = ($output | Select-Object -Last 50) -join "`n"
+            $errors = @($output | Where-Object { "$_" -match '(?i)error|fatal|failed|gyp ERR|MSB[0-9]+' })
+            $failure = ($errors | Select-Object -First 20) -join "`n"
             $failure = $failure.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
             Write-Host "::error title=Dependency installation failed::$failure"
             exit $installExit
