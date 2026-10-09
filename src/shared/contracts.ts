@@ -15,7 +15,7 @@ export interface Command {
   icon: string
   keywords: string[]
 }
-export type Page = 'launcher' | 'settings' | 'plugins' | 'theme'
+export type Page = 'launcher' | 'settings' | 'plugins' | 'theme' | 'everything'
 export interface CommandResult { navigate?: Page }
 export interface PluginInfo {
   id: string
@@ -31,6 +31,33 @@ export interface Snapshot {
   recent: string[]
   pinned: string[]
 }
+export interface EverythingStatus {
+  status: 'ready' | 'unavailable' | 'unsupported'
+  message: string
+  version?: string
+}
+export interface EverythingSearchRequest {
+  query: string
+  filter: 'all' | 'files' | 'folders'
+  sort: 'name' | 'path' | 'size' | 'modified'
+  descending: boolean
+  offset: number
+  limit: number
+}
+export interface EverythingItem {
+  id: string
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number | null
+  modifiedAt: string | null
+}
+export interface EverythingSearchResult {
+  items: EverythingItem[]
+  hasMore: boolean
+  offset: number
+}
+export type EverythingAction = 'open' | 'reveal' | 'copy-path'
 export interface UpdateState {
   status: 'unsupported' | 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   currentVersion: string
@@ -60,6 +87,10 @@ export interface DesktopAPI {
   checkForUpdates(): Promise<UpdateState>
   downloadUpdate(): Promise<UpdateState>
   installUpdate(): Promise<UpdateState>
+  getEverythingStatus(): Promise<EverythingStatus>
+  searchEverything(request: EverythingSearchRequest): Promise<EverythingSearchResult>
+  performEverythingAction(id: string, action: EverythingAction): Promise<void>
+  openEverythingDownload(): Promise<void>
   subscribe(callback: (event: DesktopEvent) => void): () => void
 }
 export const channels = {
@@ -69,4 +100,6 @@ export const channels = {
   hotkeyCapture: 'desktop:hotkey-capture', layout: 'desktop:layout',
   updateState: 'desktop:update-state', updateCheck: 'desktop:update-check',
   updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
+  everythingStatus: 'desktop:everything-status', everythingSearch: 'desktop:everything-search',
+  everythingAction: 'desktop:everything-action', everythingDownload: 'desktop:everything-download',
 } as const

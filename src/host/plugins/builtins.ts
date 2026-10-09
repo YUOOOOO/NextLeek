@@ -28,3 +28,9 @@ export const quickLaunchPlugin = {
     ctx.commands.register(ctx, { id: 'window.hide', title: '隐藏窗口', description: '保持 NextLeek 在托盘运行', icon: 'minus', keywords: ['hide', '隐藏'] }, () => { ctx.desktop.hide(); return {} })
   },
 }
+export const everythingSearchPlugin = {
+  name: 'everything', inject: ['commands', 'everything'],
+  apply(ctx: Context) {
+    navigation(ctx, 'everything.open', 'Everything 文件搜索', '使用 Everything 索引搜索本地文件与文件夹', 'search', 'everything', ['Everything', 'find', '本地搜索', '文件搜索'])
+  },
+}

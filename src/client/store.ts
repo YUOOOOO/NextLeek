@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { Command, DesktopAPI, DesktopEvent, Settings, Snapshot, UpdateState } from '../shared/contracts'
+import type { Command, DesktopAPI, DesktopEvent, Page, Settings, Snapshot, UpdateState } from '../shared/contracts'
 
 declare global {
   interface Window { desktop: DesktopAPI }
@@ -9,7 +9,7 @@ declare global {
 export const useDesktopStore = defineStore('desktop', () => {
   const snapshot = ref<Snapshot | null>(null)
   const commands = ref<Command[]>([])
-  const page = ref<'launcher' | 'settings' | 'plugins' | 'theme'>('launcher')
+  const page = ref<Page>('launcher')
   const loading = ref(true)
   const busy = ref(false)
   const error = ref('')
@@ -58,12 +58,7 @@ export const useDesktopStore = defineStore('desktop', () => {
       if (pluginsChanged) void refreshCommands()
     }
     if (event.type === 'navigate') navigate(event.page)
-    if (event.type === 'shown') {
-      page.value = 'launcher'
-      launcherRevealed.value = false
-      if (snapshot.value?.recent.length || snapshot.value?.pinned.length) query.value = ''
-      focusRequest.value++
-    }
+    if (event.type === 'shown' && page.value === 'launcher') focusRequest.value++
     if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
   }
   async function refreshCommands() {
@@ -143,7 +138,14 @@ export const useDesktopStore = defineStore('desktop', () => {
   async function checkForUpdates() { await performUpdate(() => window.desktop.checkForUpdates()) }
   async function downloadUpdate() { await performUpdate(() => window.desktop.downloadUpdate()) }
   async function installUpdate() { await performUpdate(() => window.desktop.installUpdate()) }
-  async function hide() { await perform(() => window.desktop.hide()) }
+  async function hide() {
+    await perform(async () => {
+      await window.desktop.hide()
+      page.value = 'launcher'
+      query.value = ''
+      launcherRevealed.value = false
+    })
+  }
   function dispose() { disposed = true; unsubscribe?.(); unsubscribe = undefined }
   return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
 })

@@ -18,6 +18,8 @@ defineProps<{ name: string }>()
     <template v-else-if="name === 'back'"><path d="m10 5-7 7 7 7M3 12h18" /></template>
     <template v-else-if="name === 'pin'"><path d="m9 3 6 0-1 6 4 4H6l4-4ZM12 13v8" /></template>
     <template v-else-if="name === 'close'"><path d="m6 6 12 12M18 6 6 18" /></template>
+    <template v-else-if="name === 'folder' || name.includes('everything')"><path d="M3 7V5h6l2 2h10v13H3ZM3 7h18" /></template>
+    <template v-else-if="name === 'file'"><path d="M6 3h8l4 4v14H6ZM14 3v5h4M9 12h6M9 16h6" /></template>
     <template v-else-if="name.includes('quit') || name === 'power'"><path d="M12 2v10M6 5a9 9 0 1 0 12 0" /></template>
     <template v-else-if="name === 'command'"><path d="M9 9H6a3 3 0 1 1 3-3v12a3 3 0 1 1-3-3h12a3 3 0 1 1-3 3V6a3 3 0 1 1 3 3ZM9 9h6v6H9Z" /></template>
     <template v-else><rect x="4" y="4" width="16" height="16" rx="4" /><path d="m9 8 4 4-4 4M14 16h3" /></template>

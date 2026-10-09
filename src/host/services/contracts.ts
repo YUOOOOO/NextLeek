@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { Command, CommandResult, DesktopEvent, Settings } from '../../shared/contracts'
+import type { Command, CommandResult, DesktopEvent, Settings, EverythingStatus, EverythingSearchRequest, EverythingSearchResult, EverythingAction } from '../../shared/contracts'
 
 export interface PersistentState {
   settings: Settings
@@ -24,10 +24,16 @@ export interface DesktopService {
   quit(): void
   openDataDirectory(): Promise<void>
 }
+export interface EverythingService {
+  getStatus(): Promise<EverythingStatus>
+  search(request: EverythingSearchRequest): Promise<EverythingSearchResult>
+  performAction(id: string, action: EverythingAction): Promise<void>
+}
 declare module '@deepseek-ai/cordis' {
   interface Context {
     storage: StorageService
     commands: CommandsService
     desktop: DesktopService
+    everything: EverythingService
   }
 }

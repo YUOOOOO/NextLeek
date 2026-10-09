@@ -89,12 +89,19 @@ jobs:
           $zip = @(Get-ChildItem release -Filter '*.zip' -File)
           if ($zip.Count -ne 1) { throw 'Expected exactly one portable ZIP' }
           Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath artifacts/portable
-          $exe = @(Get-ChildItem artifacts/portable -Filter '*.exe' -Recurse -File | Where-Object { $_.Name -notmatch 'crashpad|uninstall' })
-          if ($exe.Count -ne 1) { throw 'Expected exactly one application executable' }
-          node scripts/smoke-desktop.mjs $exe[0].FullName
+          $exe = Join-Path (Resolve-Path artifacts/portable) 'NextLeek.exe'
+          if (!(Test-Path -LiteralPath $exe)) { throw 'Missing root portable NextLeek.exe' }
+          node scripts/smoke-desktop.mjs $exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($zip[0].Name)" | Set-Content -LiteralPath "$($zip[0].FullName).sha256" -Encoding ascii
+      - name: Exercise real packaged Everything IPC search and shell actions
+        shell: pwsh
+        run: |
+          # Owns a finite EFU-only default IPC instance on this isolated runner.
+          # Verifies official binaries by pinned SHA256; always stops its engine.
+          node scripts/smoke-everything.mjs (Join-Path (Resolve-Path artifacts/portable) 'NextLeek.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install and exercise NSIS application
         id: installed
         shell: pwsh
@@ -130,7 +137,7 @@ jobs:
         run: |
           $assets = @(Get-ChildItem release -File | Where-Object { $_.Name -match '\.zip$|\.sha256$|-Setup\.exe$|-Setup\.exe\.blockmap$|^latest\.yml$' } | ForEach-Object { $_.FullName })
           if ($assets.Count -ne 5) { throw 'Expected ZIP, checksum, NSIS installer, blockmap, and latest.yml' }
-          $notes = 'Windows: install Setup.exe for check/download/restart-install online updates. Incremental download uses blockmaps and falls back to the full installer when needed. Portable ZIP cannot auto-install updates; install Setup.exe first. Windows binaries are unsigned and may show SmartScreen warnings. macOS/Linux and development builds require manual updates. Future releases must bump package.json; tags are never overwritten.'
+          $notes = 'Windows: install Setup.exe for check/download/restart-install online updates. Incremental download uses blockmaps and falls back to the full installer when needed. Portable ZIP cannot auto-install updates; install Setup.exe first. Everything Search includes the official ES CLI and requires the free Everything desktop application from voidtools.com to be installed and running; it reuses the local index over IPC with no HTTP configuration. Windows binaries are unsigned and may show SmartScreen warnings. macOS/Linux and development builds require manual updates. Future releases must bump package.json; tags are never overwritten.'
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "NextLeek $env:RELEASE_TAG" --notes $notes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
@@ -174,5 +181,6 @@ jobs:
           path: |
             artifacts/smoke/
             artifacts/update-smoke/
+            artifacts/everything-smoke/
           if-no-files-found: ignore
           retention-days: 14

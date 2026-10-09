@@ -1,10 +1,11 @@
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
-import type { CommandResult, PluginInfo, Settings, Snapshot } from '../shared/contracts'
+import type { CommandResult, PluginInfo, Settings, Snapshot, EverythingSearchRequest, EverythingAction } from '../shared/contracts'
 import { settingsPatch, identifier, boolean } from '../shared/validation'
 import type { DesktopService } from './services/contracts'
 import { storagePlugin } from './services/storage'
 import { commandsPlugin } from './services/commands'
-import { quickLaunchPlugin, settingsPlugin, themePlugin } from './plugins/builtins'
+import { quickLaunchPlugin, settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
+import { everythingPlugin, type EverythingEnvironment } from './services/everything'
 
 interface PluginEntry {
   id: string
@@ -15,15 +16,17 @@ interface PluginEntry {
 }
 const statuses = ['pending', 'loading', 'active', 'failed', 'disposed', 'unloading'] as const
 
-export async function createRuntime(path: string, desktop: DesktopService) {
+export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment) {
   const ctx = new Context()
   const entries: PluginEntry[] = [
     { id: 'storage', name: 'LMDB 存储', protected: true, plugin: storagePlugin(path) },
     { id: 'commands', name: '命令注册表', protected: true, plugin: commandsPlugin },
     { id: 'desktop', name: 'Electron 桌面宿主', protected: true, plugin: { name: 'desktop', apply(scope: Context) { scope.provide('desktop', desktop) } } },
+    { id: 'everything-provider', name: 'Everything 搜索服务', protected: true, plugin: everythingPlugin(everythingEnvironment) },
     { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
     { id: 'theme', name: '主题', protected: true, plugin: themePlugin },
     { id: 'quick-launch', name: '快速启动', protected: false, plugin: quickLaunchPlugin },
+    { id: 'everything', name: 'Everything 文件搜索', protected: false, plugin: everythingSearchPlugin },
   ]
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
@@ -66,6 +69,18 @@ export async function createRuntime(path: string, desktop: DesktopService) {
     ctx,
     getSnapshot: snapshot,
     listCommands: () => ctx.get('commands')!.list(),
+    getEverythingStatus() {
+      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
+      return ctx.get('everything')!.getStatus()
+    },
+    searchEverything(request: EverythingSearchRequest) {
+      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
+      return ctx.get('everything')!.search(request)
+    },
+    performEverythingAction(id: string, action: EverythingAction) {
+      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
+      return ctx.get('everything')!.performAction(id, action)
+    },
     updateSettings(patch: Partial<Settings>) {
       const validated = settingsPatch(patch)
       return serialize(async () => {

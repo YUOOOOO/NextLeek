@@ -1,10 +1,10 @@
-import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog } from 'electron'
+import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
-import { argumentsCount, boolean, identifier, settingsPatch } from '../shared/validation'
+import { argumentsCount, boolean, identifier, settingsPatch, everythingSearchRequest, everythingAction, everythingResultId } from '../shared/validation'
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
@@ -121,7 +121,13 @@ async function start() {
     },
   }
   try {
-    runtime = await createRuntime(join(app.getPath('userData'), 'lmdb'), desktop)
+    runtime = await createRuntime(join(app.getPath('userData'), 'lmdb'), desktop, {
+      executable: app.isPackaged ? join(process.resourcesPath, 'everything', 'es.exe') : join(app.getAppPath(), 'resources', 'everything', 'es.exe'),
+      platform: process.platform,
+      openPath: path => shell.openPath(path),
+      revealPath: path => shell.showItemInFolder(path),
+      copyPath: path => clipboard.writeText(path),
+    })
     const ctx = runtime.ctx
     ctx.effect(() => {
       window.on('resize', resize)
@@ -229,6 +235,10 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
   bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
   bind(channels.layout, 1, expanded => setLauncherExpanded(boolean(expanded)))
+  bind(channels.everythingStatus, 0, () => runtime.getEverythingStatus())
+  bind(channels.everythingSearch, 1, request => runtime.searchEverything(everythingSearchRequest(request)))
+  bind(channels.everythingAction, 2, (id, action) => runtime.performEverythingAction(everythingResultId(id), everythingAction(action)))
+  bind(channels.everythingDownload, 0, () => shell.openExternal('https://www.voidtools.com/downloads/'))
   bind(channels.updateState, 0, () => updater.getState())
   bind(channels.updateCheck, 0, () => updater.check())
   bind(channels.updateDownload, 0, () => updater.download())

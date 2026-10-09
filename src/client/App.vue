@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDesktopStore } from './store'
 import AppIcon from './components/AppIcon.vue'
 import CommandTile from './components/CommandTile.vue'
+import EverythingPage from './components/EverythingPage.vue'
 import type { DesktopEvent, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
@@ -59,7 +60,7 @@ watch(() => desktop.page, async page => {
   if (page === 'launcher') search.value?.focus()
   if (page === 'theme') themeControl.value?.focus()
 })
-watch(() => desktop.focusRequest, async () => { await nextTick(); search.value?.focus() })
+watch(() => desktop.focusRequest, async () => { await nextTick(); if (desktop.page === 'launcher') search.value?.focus() })
 
 function changeTheme(event: Event) {
   void desktop.update({ theme: (event.target as HTMLSelectElement).value as Settings['theme'] })
@@ -100,9 +101,9 @@ function keydown(event: KeyboardEvent) {
   if (target.closest('[data-hotkey]')) return
   if (event.key === 'Escape') {
     event.preventDefault()
-    if (desktop.query) desktop.query = ''
+    if (desktop.page === 'launcher' && desktop.query) desktop.query = ''
     else if (desktop.page !== 'launcher' && !settings.value?.escHide) desktop.navigate('launcher')
-    else { desktop.navigate('launcher'); void desktop.hide() }
+    else void desktop.hide()
     return
   }
   if (desktop.page !== 'launcher' || !visibleCommands.value.length || desktop.busy) return
@@ -153,7 +154,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell" :class="{ dark, compact: settings?.compact, collapsed: !launcherExpanded }" :data-accent="settings?.accent ?? 'green'">
-    <header class="search-header">
+    <header v-if="desktop.page !== 'everything'" class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" type="search" aria-label="搜索应用和指令" placeholder="搜索应用和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="composing = true" @compositionend="composing = false" />
       <button v-if="desktop.query" class="clear-button" aria-label="清除搜索" title="清除搜索" @click="desktop.query = ''; search?.focus()"><AppIcon name="close" /></button>
@@ -170,7 +171,7 @@ onUnmounted(() => {
       </section>
       <div v-if="!visibleCommands.length" class="empty-state"><h2>{{ searchMode ? '没有匹配的指令' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试指令名称、用途或关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="searchMode" class="text-button" @click="desktop.query = ''">清除搜索</button><button v-else class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
     </main>
-    <div v-else-if="desktop.page !== 'launcher'" class="settings-layout">
+    <div v-else-if="desktop.page !== 'launcher' && desktop.page !== 'everything'" class="settings-layout">
       <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
       <main class="settings-content" :aria-busy="desktop.busy">
         <template v-if="desktop.page === 'settings' && settings">
@@ -214,6 +215,7 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
+    <EverythingPage v-if="desktop.snapshot" v-show="desktop.page === 'everything'" :active="desktop.page === 'everything'" @back="desktop.navigate('launcher')" />
     <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>
