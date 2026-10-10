@@ -130,7 +130,7 @@ export async function createUpdater(ctx: Context, options: {
 }): Promise<OnlineUpdater> {
   let installed = false
   if (options.app.isPackaged && process.platform === 'win32') {
-    try { await access(join(dirname(process.execPath), 'Uninstall NextLeek.exe')); installed = true } catch { /* ZIP builds have no NSIS uninstaller. */ }
+    try { await access(join(dirname(process.execPath), `Uninstall ${options.app.getName()}.exe`)); installed = true } catch { /* ZIP builds have no NSIS uninstaller. */ }
   }
   const unsupportedReason = updateSupport({ isPackaged: options.app.isPackaged, platform: process.platform, installed })
   let updater: UpdaterPort | undefined
