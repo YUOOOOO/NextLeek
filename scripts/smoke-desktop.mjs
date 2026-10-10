@@ -10,6 +10,7 @@ const executable = resolve(process.argv[2])
 const expectUpdateSupported = process.argv.includes('--expect-update-supported')
 const checkUpdates = process.argv.includes('--check-updates')
 const appArgs = process.argv.slice(3).filter(arg => !['--expect-update-supported', '--check-updates'].includes(arg))
+const debugPort = 9300 + (process.pid % 500)
 const profile = await mkdtemp(resolve(tmpdir(), 'nextleek-smoke-'))
 const evidence = resolve('artifacts/smoke')
 await mkdir(evidence, { recursive: true })
@@ -28,12 +29,12 @@ async function eventually(description, operation) {
   throw new Error(description, { cause: error })
 }
 async function launch() {
-  child = spawn(executable, [...appArgs, '--remote-debugging-port=9333', `--profile-dir=${profile}`], { stdio: ['ignore', 'pipe', 'pipe'] })
+  child = spawn(executable, [...appArgs, `--remote-debugging-port=${debugPort}`, `--profile-dir=${profile}`], { stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', chunk => logs.push(String(chunk)))
   child.stderr.on('data', chunk => logs.push(String(chunk)))
   child.on('error', error => logs.push(error.stack))
-  await eventually('Electron debugging endpoint unavailable', async () => (await fetch('http://127.0.0.1:9333/json/version')).ok)
-  browser = await chromium.connectOverCDP('http://127.0.0.1:9333')
+  await eventually('Electron debugging endpoint unavailable', async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok)
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`)
   return eventually('Desktop preload unavailable', async () => {
     for (const context of browser.contexts()) for (const page of context.pages()) {
       if (await page.evaluate(() => typeof window.desktop?.getSnapshot === 'function')) return page
@@ -41,10 +42,17 @@ async function launch() {
   })
 }
 async function quit(page) {
-  await page.evaluate(() => window.desktop.quit()).catch(() => {})
-  await eventually('Resident app did not exit', () => child.exitCode !== null || child.signalCode !== null)
-  await browser.close().catch(() => {})
-  browser = undefined
+  try {
+    await page.evaluate(() => window.desktop.quit()).catch(() => {})
+    await eventually('Resident app did not exit', () => child.exitCode !== null || child.signalCode !== null)
+    await eventually('Desktop debugging endpoint was not released after quit', async () => {
+      try { return !(await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2000) })).ok }
+      catch { return true }
+    })
+  } finally {
+    await browser?.close().catch(() => {})
+    browser = undefined
+  }
 }
 try {
   let page = await launch()
