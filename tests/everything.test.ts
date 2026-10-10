@@ -69,7 +69,7 @@ test('ES protocol preserves a whole Everything query without exposing command op
     const query = '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"'
     const result = await h.service.search({ ...request, query, filter: 'files', sort: 'modified', descending: true, offset: 25 })
     assert.deepEqual(result, { items: [], hasMore: false, offset: 25 })
-    assert.deepEqual(h.calls[0].args, ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
+    assert.deepEqual(h.calls[0].args, ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
     await h.service.search({ ...request, filter: 'folders', sort: 'path' })
     assert(h.calls[1].args.includes('/ad') && h.calls[1].args.includes('-sort-ascending'))
     await h.service.search({ ...request, sort: 'size' })
@@ -102,6 +102,8 @@ test('native ES parameter transport preserves quoted paths, backslashes, Unicode
       assert.equal(call.args.at(-2), '-search')
       // A following switch must remain outside the consumed query argument.
       assert.deepEqual(decodeEsSearchParameter(`${call.args.at(-1)} -sentinel`), { query, remaining: ' -sentinel' })
+      assert.equal(call.args.includes('-max-results'), true)
+      assert.equal(call.args.includes('-n'), false)
     }
   } finally { await h.ctx.fiber.dispose() }
 })

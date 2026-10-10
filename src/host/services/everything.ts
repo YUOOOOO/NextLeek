@@ -41,7 +41,7 @@ export function everythingArguments(request: EverythingSearchRequest): string[] 
   // ES 1.1.0.38's -search uses its own decoder even in -argv mode:
   // triple quotes become a literal quote; backslashes are always literal.
   // Supply native ES quoting verbatim, never through a shell or Node's CRT quoting.
-  const args = ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', String(request.limit + 1), '-offset', String(request.offset)]
+  const args = ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', String(request.limit + 1), '-offset', String(request.offset)]
   if (request.filter !== 'all') args.push(request.filter === 'folders' ? '/ad' : '/a-d')
   args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', `"${request.query.replace(/"/g, '"""')}"`)
   return args

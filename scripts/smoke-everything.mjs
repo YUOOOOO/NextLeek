@@ -102,6 +102,7 @@ async function collect(overrides) {
   const items = []
   for (let offset = 0; offset <= fixtures.length; offset += 17) {
     const result = await search({ ...overrides, offset })
+    logs.push(`Page ${offset}: count=${result.items.length} hasMore=${result.hasMore}`)
     assert.ok(result.items.length <= 17)
     items.push(...result.items)
     if (!result.hasMore) return items
@@ -110,7 +111,13 @@ async function collect(overrides) {
   throw new Error('Pagination failed to terminate')
 }
 const normalized = path => path.toLowerCase().replace(/[\\/]+$/, '')
-const samePaths = (actual, expected) => assert.deepEqual(actual.map(item => normalized(item.path)).sort(), expected.map(item => normalized(item.path)).sort())
+const samePaths = (actual, expected) => {
+  const actualPaths = actual.map(item => normalized(item.path)).sort()
+  const expectedPaths = expected.map(item => normalized(item.path)).sort()
+  const missing = expectedPaths.filter(path => !actualPaths.includes(path))
+  const extra = actualPaths.filter(path => !expectedPaths.includes(path))
+  assert.ok(actualPaths.length === expectedPaths.length && missing.length === 0 && extra.length === 0, `Path set mismatch: actual=${actualPaths.length} expected=${expectedPaths.length} missing=${JSON.stringify(missing.slice(0, 3))} extra=${JSON.stringify(extra.slice(0, 3))}`)
+}
 async function powershell(source) {
   return (await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })).stdout.trim()
 }
