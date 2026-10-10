@@ -33,8 +33,22 @@ async function bounded(description, operation) {
   } finally { clearTimeout(timer) }
 }
 const powershell = source => promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })
+function releaseOwnedStreams(processChild) {
+  if (!processChild || (processChild.exitCode === null && processChild.signalCode === null)) return
+  // A grandchild can inherit these pipes after the root exits. Release only
+  // this script's read ends; do not terminate an external resident engine.
+  for (const stream of [processChild.stdout, processChild.stderr]) {
+    stream?.removeAllListeners('data')
+    stream?.destroy()
+  }
+  processChild.unref()
+}
 async function stopOwnedChild() {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  if (!child) return
+  if (child.exitCode !== null || child.signalCode !== null) {
+    releaseOwnedStreams(child)
+    return
+  }
   stage(`Stopping owned process ${child.pid}`)
   if (process.platform === 'win32') {
     await promisify(execFile)('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 15000 }).catch(error => {
@@ -42,6 +56,7 @@ async function stopOwnedChild() {
     })
   } else child.kill()
   await eventually('Owned desktop smoke process survived cleanup', () => child.exitCode !== null || child.signalCode !== null)
+  releaseOwnedStreams(child)
 }
 async function eventually(description, operation) {
   const deadline = Date.now() + 45000
@@ -81,6 +96,7 @@ async function quit(page) {
   try {
     await bounded('Desktop quit IPC', () => page.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
     await eventually('Resident app did not exit', () => child.exitCode !== null || child.signalCode !== null)
+    releaseOwnedStreams(child)
     await eventually('Desktop debugging endpoint was not released after quit', async () => {
       try { return !(await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2000) })).ok }
       catch { return true }
@@ -354,6 +370,7 @@ try {
     if (browser) await bounded('Final desktop CDP disconnect', () => browser.close()).catch(error => logs.push(String(error)))
     await stopOwnedChild()
   } finally {
+    stage(`Cleanup complete; active resources: ${process.getActiveResourcesInfo().join(', ')}`)
     await writeFile(resolve(evidence, 'host.log'), logs.join('\n'))
   }
 }

@@ -58,11 +58,25 @@ function recordChild(child, label) {
   child.stderr.on('data', chunk => logs.push(`${label}: ${chunk}`))
   child.on('error', error => logs.push(`${label}: ${error.stack}`))
 }
+function releaseOwnedStreams(child) {
+  if (!child || (child.exitCode === null && child.signalCode === null)) return
+  // Closing our pipe read ends does not kill an engine or any grandchild.
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.removeAllListeners('data')
+    stream?.destroy()
+  }
+  child.unref()
+}
 async function stopChild(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  if (!child) return
+  if (child.exitCode !== null || child.signalCode !== null) {
+    releaseOwnedStreams(child)
+    return
+  }
   // Kill only the subprocess owned by this script, never an unrelated engine.
   await exec('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 15000 }).catch(error => logs.push(String(error)))
   await eventually('Owned subprocess did not terminate', () => child.exitCode !== null || child.signalCode !== null)
+  releaseOwnedStreams(child)
 }
 async function powershell(source) {
   return (await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })).stdout.trim()
@@ -82,7 +96,11 @@ async function startEngine() {
 }
 async function stopEngine() {
   stage('Stopping owned Everything index')
-  if (!engine || engine.exitCode !== null || engine.signalCode !== null) return
+  if (!engine) return
+  if (engine.exitCode !== null || engine.signalCode !== null) {
+    releaseOwnedStreams(engine)
+    return
+  }
   await exec(engineExecutable, ['-config', configuration, '-exit', '-wait'], { timeout: 15000 }).catch(error => logs.push(String(error)))
   await stopChild(engine)
   await eventually('Owned default IPC window did not disappear', async () => !(await enginePresent()))
@@ -118,6 +136,7 @@ async function quitApp() {
   try {
     await bounded('Native smoke quit IPC', () => page?.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
     if (app) await eventually('Resident NextLeek did not quit', () => app.exitCode !== null || app.signalCode !== null)
+    releaseOwnedStreams(app)
   } finally {
     await bounded('Native smoke CDP disconnect', () => browser?.close()).catch(error => logs.push(String(error)))
     browser = undefined
@@ -368,6 +387,7 @@ try {
       await exec('taskkill.exe', ['/PID', String(editor.id), '/T', '/F'], { timeout: 15000 }).catch(error => logs.push(String(error)))
     }
   }
+  stage(`Cleanup complete; active resources: ${process.getActiveResourcesInfo().join(', ')}`)
   await writeFile(join(evidence, 'process.log'), logs.join('\n'))
   await rm(temporary, { recursive: true, force: true }).catch(error => console.error(error))
 }
