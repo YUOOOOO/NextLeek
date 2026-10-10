@@ -46,19 +46,63 @@ function harness() {
   return { ctx, calls, actions, environment, ports, service, completions, output(value: unknown) { output = typeof value === 'string' ? value : JSON.stringify(value) }, error(value: Error | null) { error = value }, missing(value: boolean) { missing = value }, directory(value: boolean) { directory = value }, openError(value: string) { openError = value }, hold(value: boolean) { hold = value }, killed: () => killed }
 }
 
+// ES-1.1.0.38.src.zip, src/es.c:10955-11043: _es_get_command_argv.
+// -search calls this decoder regardless of -argv; it does NOT use CRT escapes.
+function decodeEsSearchParameter(commandLine: string) {
+  let query = ''
+  let inQuote = false
+  let index = 0
+  for (; index < commandLine.length; index++) {
+    const character = commandLine[index]
+    if (!inQuote && /[ \t\r\n]/.test(character)) break
+    if (character === '"') {
+      if (commandLine.slice(index, index + 3) === '"""') { query += '"'; index += 2 }
+      else inQuote = !inQuote
+    } else query += character
+  }
+  return { query, remaining: commandLine.slice(index) }
+}
+
 test('ES protocol preserves a whole Everything query without exposing command options', async () => {
   const h = harness()
   try {
     const query = '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"'
     const result = await h.service.search({ ...request, query, filter: 'files', sort: 'modified', descending: true, offset: 25 })
     assert.deepEqual(result, { items: [], hasMore: false, offset: 25 })
-    assert.deepEqual(h.calls[0].args, ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', query])
+    assert.deepEqual(h.calls[0].args, ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
     await h.service.search({ ...request, filter: 'folders', sort: 'path' })
     assert(h.calls[1].args.includes('/ad') && h.calls[1].args.includes('-sort-ascending'))
     await h.service.search({ ...request, sort: 'size' })
     assert(!h.calls[2].args.includes('/ad') && !h.calls[2].args.includes('/a-d'))
     await assert.rejects(h.service.search({ ...request, query: '\u0000' }), /query/)
     assert.equal(h.calls.length, 3)
+  } finally { await h.ctx.fiber.dispose() }
+})
+
+test('native ES parameter transport preserves quoted paths, backslashes, Unicode and switch-like queries', async () => {
+  const h = harness()
+  h.environment.executable = 'C:\\Program Files\\NextLeek\\everything\\es.exe'
+  const queries = [
+    '', 'ext:txt', '  leading and trailing spaces  ',
+    '"C:\\Users\\测试 用户\\NextLeek\\fixtures\\"',
+    '"\\\\server\\共享 空间\\fixtures\\"',
+    'regex:"C:\\\\资料\\\\[^\\\\]+\\.txt$"',
+    '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"',
+    '" -exit -export-txt C:\\results.txt "', '"', '""', '"""', '""""',
+    '  ""quoted"" """ Unicode 文档😀 & | <>  ', 'C:\\trailing\\',
+  ]
+  try {
+    for (const query of queries) {
+      await h.service.search({ ...request, query })
+      const call = h.calls.at(-1)!
+      assert.equal(call.options.shell, false)
+      assert.equal(call.options.windowsVerbatimArguments, true)
+      assert.equal(call.executable, h.environment.executable)
+      assert.equal(call.options.argv0, '"C:\\Program Files\\NextLeek\\everything\\es.exe"')
+      assert.equal(call.args.at(-2), '-search')
+      // A following switch must remain outside the consumed query argument.
+      assert.deepEqual(decodeEsSearchParameter(`${call.args.at(-1)} -sentinel`), { query, remaining: ' -sentinel' })
+    }
   } finally { await h.ctx.fiber.dispose() }
 })
 
@@ -89,7 +133,7 @@ test('Unicode JSON results preserve metadata, normalize folders, and keep lookah
 test('missing engine, missing bundled ES and unsupported hosts report genuine states', async () => {
   const h = harness()
   try {
-    h.output('1.4.1.1026\r\n'); assert.equal((await h.service.getStatus()).status, 'ready'); assert.deepEqual(h.calls[0].args, ['-argv', '-get-everything-version'])
+    h.output('1.4.1.1026\r\n'); assert.equal((await h.service.getStatus()).status, 'ready'); assert.deepEqual(h.calls[0].args, ['-no-argv', '-get-everything-version'])
     h.error(Object.assign(new Error('IPC not found'), { code: 8 })); assert.match((await h.service.getStatus()).message, /安装并启动 Everything/)
     await assert.rejects(h.service.search(request), /安装并启动 Everything/)
     h.error(Object.assign(new Error('missing'), { code: 'ENOENT' })); assert.match((await h.service.getStatus()).message, /ES.exe.*重新安装/)

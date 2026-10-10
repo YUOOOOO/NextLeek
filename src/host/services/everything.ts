@@ -18,6 +18,8 @@ interface ProcessOptions {
   encoding: 'utf8'
   windowsHide: boolean
   shell: false
+  windowsVerbatimArguments: true
+  argv0: string
   timeout: number
   maxBuffer: number
 }
@@ -36,11 +38,12 @@ function failure(error: Error): Error {
 }
 
 export function everythingArguments(request: EverythingSearchRequest): string[] {
-  // ES 1.1.0.38: -argv decodes Windows argv quoting; -search consumes ONE
-  // argument as query text, even if it begins with an ES option. Never use a shell.
-  const args = ['-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', String(request.limit + 1), '-offset', String(request.offset)]
+  // ES 1.1.0.38's -search uses its own decoder even in -argv mode:
+  // triple quotes become a literal quote; backslashes are always literal.
+  // Supply native ES quoting verbatim, never through a shell or Node's CRT quoting.
+  const args = ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-n', String(request.limit + 1), '-offset', String(request.offset)]
   if (request.filter !== 'all') args.push(request.filter === 'folders' ? '/ad' : '/a-d')
-  args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', request.query)
+  args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', `"${request.query.replace(/"/g, '"""')}"`)
   return args
 }
 
@@ -92,7 +95,8 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
     try {
       return await new Promise<string>((resolve, reject) => {
         cleanup = ctx.effect(() => {
-          const child = ports.execute(env.executable, args, { encoding: 'utf8', windowsHide: true, shell: false, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+          // Verbatim mode also disables argv[0] quoting; ES skips it before switches.
+          const child = ports.execute(env.executable, args, { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true, argv0: `"${env.executable}"`, shell: false, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
             if (settled) return
             settled = true
             if (error) reject(failure(error))
@@ -115,7 +119,7 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
     async getStatus() {
       if (!environment || (environment.platform ?? process.platform) !== 'win32') return { status: 'unsupported', message: 'Everything 文件搜索仅支持 Windows。' }
       try {
-        const version = (await execute(['-argv', '-get-everything-version'])).trim()
+        const version = (await execute(['-no-argv', '-get-everything-version'])).trim()
         if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version)) throw new Error('未能读取 Everything 版本，请启动 Everything 后重试。')
         return { status: 'ready', message: '已连接正在运行的 Everything 索引。', version }
       } catch (error) { return { status: 'unavailable', message: error instanceof Error ? error.message : String(error) } }
