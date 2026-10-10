@@ -81,13 +81,21 @@ function parseResults(result: NativeEverythingResult, request: LauncherSearchReq
   return result.list.map(record => {
     if (!record || typeof record !== 'object') throw new Error('Everything 返回了无效的结果数据。')
     const { filename, path: directory, isFolder, size, dateModified } = record
-    const driveRoot = isFolder === true && directory === '' && typeof filename === 'string' && /^[a-z]:$/i.test(filename)
-    if (typeof filename !== 'string' || !filename || filename === '.' || filename === '..' || /[\\/\u0000-\u001f]/.test(filename) || typeof directory !== 'string' || (!driveRoot && !win32.isAbsolute(directory)) || /[\u0000-\u001f]/.test(directory)) throw new Error('Everything 返回了无效的文件路径。')
+    // The SDK assembles an empty path directly from its filename IPC field.
+    const rawFilename = typeof filename === 'string' ? filename.replaceAll('/', '\\') : ''
+    const rawDirectory = typeof directory === 'string' ? directory.replaceAll('/', '\\') : ''
+    const driveRoot = isFolder === true && rawDirectory === '' && /^[a-z]:$/i.test(rawFilename)
+    const basenameFilename = rawDirectory !== '' && !/[\\/]/.test(rawFilename)
+    const fullPath = driveRoot ? `${rawFilename}\\` : rawDirectory ? win32.join(rawDirectory, rawFilename) : rawFilename
+    const normalizedPath = win32.normalize(fullPath)
+    const root = win32.parse(normalizedPath).root
+    const path = normalizedPath === root ? root : normalizedPath.replace(/[\\]+$/, '')
+    if (typeof filename !== 'string' || typeof directory !== 'string' || !rawFilename || rawFilename === '.' || rawFilename === '..' || /[\u0000-\u001f]/.test(rawFilename) || /[\u0000-\u001f]/.test(rawDirectory) || (!driveRoot && !win32.isAbsolute(path)) || (rawDirectory !== '' && (!basenameFilename || !win32.isAbsolute(rawDirectory))) || path === '.') throw new Error(`Everything 返回了无效的文件路径：${JSON.stringify({ filename, path: directory, isFolder })}`)
     if (typeof isFolder !== 'boolean') throw new Error('Everything 返回了无效的文件类型。')
     if (size != null && (typeof size !== 'number' || !Number.isFinite(size) || size < -1)) throw new Error('Everything 返回了无效的文件大小。')
     if (dateModified != null && typeof dateModified !== 'string') throw new Error('Everything 返回了无效的修改时间。')
     return {
-      id: randomUUID(), name: filename, path: driveRoot ? `${filename}\\` : win32.join(directory, filename), isDirectory: isFolder,
+      id: randomUUID(), name: win32.basename(path) || root.replace(/[\\]+$/, ''), path, isDirectory: isFolder,
       size: isFolder || size == null || size < 0 ? null : size,
       // The native addon returns a formatted display string, not an ISO date.
       modifiedAt: dateModified || null,

@@ -230,6 +230,23 @@ try {
   samePaths(ordinary.items, [fixtures.at(-1)])
   const unicode = await search({ query: 'Unicode 中文,逗号' })
   samePaths(unicode.items, [fixtures.at(-1)])
+  const broadNativePages = []
+  for (let offset = 0; ; offset += 100) {
+    const snapshot = await rawNativeSearch({ query: 'vscode', offset, limit: 100 })
+    broadNativePages.push({ offset, ...snapshot })
+    await writeFile(join(evidence, 'raw-native-vscode-results.json'), JSON.stringify(broadNativePages, null, 2))
+    const rootRecords = snapshot.result?.list?.filter(item =>
+      !item.path || /^[A-Za-z]:[\\/]/.test(item.filename ?? '') ||
+      normalized(item.filename ?? '') === 'vscode' ||
+      normalized(join(item.path || '', item.filename || '')) === normalized(fixtureDirectory)) ?? []
+    for (const item of rootRecords) {
+      const diagnostic = JSON.stringify({ offset, ...item })
+      logs.push(`Raw native vscode root record: ${diagnostic}`)
+      console.log(`::notice title=Raw native vscode root record::${diagnostic.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
+    }
+    if (!snapshot.result || offset + snapshot.result.list.length >= snapshot.result.total) break
+    assert.equal(snapshot.result.list.length, 100, 'Raw native diagnostics must advance by a full page')
+  }
   const indexedPath = await collect({ query: 'vscode' })
   samePaths(indexedPath.filter(item => normalized(item.path) !== normalized(fixtureDirectory)), fixtures)
   assert.ok(indexedPath.some(item => normalized(item.path) === normalized(applicationFixture.path)))

@@ -69,6 +69,9 @@ test('native metadata maps full paths, folders, display dates and total-based pa
     assert.equal(nullable.items[0].size, null); assert.equal(nullable.items[0].modifiedAt, null); assert.equal(nullable.hasMore, false)
     h.output({ list: [{ ...row('C:', true), path: '' }], total: 1 })
     assert.equal((await h.service.search(request)).items[0].path, 'C:\\')
+    h.output({ list: [{ ...row('C:\\资料\\vscode.exe'), path: '' }], total: 1 })
+    const absolute = (await h.service.search(request)).items[0]
+    assert.equal(absolute.path, 'C:\\资料\\vscode.exe'); assert.equal(absolute.name, 'vscode.exe')
   } finally { await h.ctx.fiber.dispose() }
 })
 
