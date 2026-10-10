@@ -1,6 +1,6 @@
 import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import { spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -9,6 +9,49 @@ import { argumentsCount, boolean, identifier, settingsPatch, everythingSearchReq
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
+
+// PowerShell startup/Add-Type costs more than Explorer /select, but gives us a
+// checked native selection result without a separate native build toolchain.
+const windowsRevealSource = String.raw`
+using System;
+using System.Runtime.InteropServices;
+public static class NextLeekReveal {
+    [DllImport("ole32.dll")] static extern int CoInitializeEx(IntPtr reserved, uint flags);
+    [DllImport("ole32.dll")] static extern void CoUninitialize();
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    static extern int SHParseDisplayName(string name, IntPtr binding, out IntPtr pidl, uint attributes, IntPtr resultAttributes);
+    [DllImport("shell32.dll")] static extern IntPtr ILClone(IntPtr pidl);
+    [DllImport("shell32.dll")] static extern IntPtr ILFindLastID(IntPtr pidl);
+    [DllImport("shell32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)] static extern bool ILRemoveLastID(IntPtr pidl);
+    [DllImport("shell32.dll")]
+    static extern int SHOpenFolderAndSelectItems(IntPtr folder, uint count, [In] IntPtr[] children, uint flags);
+    static void Check(int result, string operation) {
+        if (result < 0) throw new COMException(operation + " failed (0x" + result.ToString("X8") + ")", result);
+    }
+    public static void Select(string path) {
+        Check(CoInitializeEx(IntPtr.Zero, 2), "CoInitializeEx");
+        IntPtr item = IntPtr.Zero, parent = IntPtr.Zero;
+        try {
+            Check(SHParseDisplayName(path, IntPtr.Zero, out item, 0, IntPtr.Zero), "SHParseDisplayName");
+            // apidl requires child-relative PIDLs, not the absolute item PIDL.
+            // Derive both from one namespace path, including drive/share roots.
+            IntPtr child = ILFindLastID(item);
+            if (child == IntPtr.Zero || Marshal.ReadInt16(child) == 0)
+                throw new InvalidOperationException("The item has no selectable parent.");
+            parent = ILClone(item);
+            if (parent == IntPtr.Zero) throw new OutOfMemoryException("ILClone failed.");
+            if (!ILRemoveLastID(parent)) throw new InvalidOperationException("ILRemoveLastID failed.");
+            Check(SHOpenFolderAndSelectItems(parent, 1, new IntPtr[] { child }, 0), "SHOpenFolderAndSelectItems");
+        } finally {
+            // child points inside item and must not be freed separately.
+            Marshal.FreeCoTaskMem(parent);
+            Marshal.FreeCoTaskMem(item);
+            CoUninitialize();
+        }
+    }
+}
+`
 
 function trayImage() {
   const pixels = Buffer.alloc(24 * 24 * 4)
@@ -128,28 +171,40 @@ async function start() {
       openPath: path => shell.openPath(path),
       async revealPath(path) {
         if (process.platform !== 'win32') { shell.showItemInFolder(path); return }
-        const executable = join(process.env.SystemRoot ?? process.env.WINDIR!, 'explorer.exe')
-        await new Promise<void>((resolve, reject) => {
-          let closed = false
-          let release: (() => unknown) | undefined
-          release = runtime!.ctx.effect(() => {
-            // Explorer splits comma-delimited fields itself; quote only the path,
-            // and bypass Node's CRT escaping so the quotes reach Explorer intact.
-            const child = spawn(executable, [`/select,"${path}"`], {
-              shell: false, windowsVerbatimArguments: true, argv0: `"${executable}"`,
-            })
-            // Explorer may keep this process alive: acknowledge successful launch,
-            // not its eventual exit. Launch errors still reject the IPC action.
-            child.once('spawn', resolve)
-            child.once('error', reject)
-            child.once('close', () => { closed = true; void release?.() })
-            return () => {
-              if (closed) return
-              child.kill()
-              reject(new Error('Everything 服务已关闭，文件定位已取消。'))
-            }
-          }, 'Everything Explorer subprocess')
-        })
+        const executable = join(process.env.SystemRoot ?? process.env.WINDIR!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+        // Both transports are base64: no file path is parsed as shell syntax.
+        const script = `$ErrorActionPreference = 'Stop'
+try {
+Add-Type -TypeDefinition @'
+${windowsRevealSource}
+'@
+[NextLeekReveal]::Select([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from(path, 'utf16le').toString('base64')}')))
+} catch {
+[Console]::Error.WriteLine($_.Exception.ToString())
+exit 1
+}`
+        let settled = false
+        let release: (() => unknown) | undefined
+        try {
+          await new Promise<void>((resolve, reject) => {
+            release = runtime!.ctx.effect(() => {
+              const child = execFile(executable, ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+                shell: false, windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 64 * 1024,
+              }, (error, _stdout, stderr) => {
+                if (settled) return
+                settled = true
+                if (error) reject(new Error(`无法定位文件：${stderr.trim() || error.message}`))
+                else resolve()
+              })
+              return () => {
+                if (settled) return
+                settled = true
+                child.kill()
+                reject(new Error('Everything 服务已关闭，文件定位已取消。'))
+              }
+            }, 'Everything native selection subprocess')
+          })
+        } finally { await release?.() }
       },
       copyPath: path => clipboard.writeText(path),
     })
