@@ -27,6 +27,8 @@
 - Everything：仅 Windows x64 支持原生索引搜索，随包分发经过固定 SHA256 校验的 ZTools Everything addon 与 Everything.exe，并保留 MIT 及第三方许可证说明；不再使用 ES CLI、独立 Everything 页面或下载入口。宿主复用已运行的引擎，否则以 `-startup` 启动随包引擎，等待数据库就绪后调用同步 `everythingSearch(query, 1, limit, offset)`。内置 Cordis 插件注入 `search`、`everything`，通过 effect 注册到主启动器的通用搜索提供者注册表；禁用插件移除贡献，主界面不得硬编码 Everything。文件操作只接受宿主结果能力表中登记的不透明 ID（capability ID，不是密码学签名）；未知、篡改或过期 ID 必须拒绝。引擎未就绪、组件缺失或非 Windows 平台必须明确显示不可用或不支持状态。
 - 应用搜索：独立 Cordis 插件注入 `search`，接入主搜索提供者注册表，与 Everything 文件搜索并存。Windows 扫描用户和公共开始菜单及桌面 `.lnk`，macOS 扫描应用目录 `.app`，按显示名称、去空格名称和通用首字母缩写匹配；图标来自 Electron 原生 `app.getFileIcon()`，打开原快捷方式或应用包以保留参数与工作目录。搜索结果使用宿主登记的不透明 ID 授权启动；缓存有界，查询时按 60 秒刷新，Fiber 卸载清理状态。
 - 搜索展示：应用优先显示为原生图标和名称网格，不显示快捷方式路径或文件元数据；Windows 解析 `.lnk` 的指定图标或目标程序获取图标，启动仍使用原快捷方式。搜索窗口按内容收缩，最多 690 逻辑像素且小屏幕保留 48 像素工作区余量，溢出结果在内容区滚动，尺寸变化保留窗口中心。
+- 聚合结果：应用和指令合并到“最佳搜索结果”，参照 ZTools 每行 9 项、32px 图标、86px 卡片，默认两行，超出通过展开/收起切换；首页最近使用和已固定同样折叠。文件提供者结果使用紧凑列表；固定、文件定位和复制路径通过右键菜单操作，键盘只选择当前可见项目。
+- 搜索插件：插件列表只显示一个可启停的 `builtin-search`（搜索），内部组合 Everything 服务、文件结果提供者和应用提供者，子 Fiber 随组合插件一起卸载和恢复。旧 `everything-provider`、`everything`、`applications` 开关迁移到统一键并删除；显式新键优先，旧文件与应用开关同时关闭时默认迁移为关闭。
 
 ---
 

@@ -4,7 +4,7 @@ import { useDesktopStore } from './store'
 import AppIcon from './components/AppIcon.vue'
 import CommandTile from './components/CommandTile.vue'
 import SearchProviderResults from './components/SearchProviderResults.vue'
-import type { DesktopEvent, Settings } from '../shared/contracts'
+import type { Command, DesktopEvent, LauncherSearchItem, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
 const search = ref<HTMLInputElement | null>(null)
@@ -21,24 +21,52 @@ const hotkey = ref('')
 const systemDark = ref(false)
 const searchMode = computed(() => desktop.query.trim().length > 0)
 const hasHomeHistory = computed(() => desktop.recentCommands.length > 0 || desktop.pinnedCommands.length > 0)
+const expandedSections = ref<string[]>([])
+const applicationGroup = computed(() => desktop.searchGroups.find(group => group.providerId === 'applications'))
+const bestResults = computed(() => [
+  ...desktop.results.map(command => ({ kind: 'command' as const, command })),
+  ...(applicationGroup.value?.items ?? []).map(item => ({ kind: 'application' as const, item })),
+])
+const bestTotal = computed(() => desktop.results.length + (applicationGroup.value?.total ?? 0))
+const visibleBestResults = computed(() => expandedSections.value.includes('results') ? bestResults.value : bestResults.value.slice(0, 18))
 const commandSections = computed(() => {
-  if (searchMode.value) return desktop.results.length ? [{ id: 'results', title: '搜索结果', commands: desktop.results, offset: 0 }] : []
+  if (searchMode.value) return []
+  let offset = 0
   return [
-    { id: 'recent', title: '最近使用', commands: desktop.recentCommands, offset: 0 },
-    { id: 'pinned', title: '固定指令', commands: desktop.pinnedCommands, offset: desktop.recentCommands.length },
-  ].filter(section => section.commands.length)
+    { id: 'recent', title: '最近使用', commands: desktop.recentCommands },
+    { id: 'pinned', title: '已固定', commands: desktop.pinnedCommands },
+  ].filter(section => section.commands.length).map(section => {
+    const commands = expandedSections.value.includes(section.id) ? section.commands : section.commands.slice(0, 18)
+    const result = { ...section, total: section.commands.length, commands, offset }
+    offset += commands.length
+    return result
+  })
 })
 const visibleCommands = computed(() => commandSections.value.flatMap(section => section.commands))
-const orderedSearchGroups = computed(() => [
-  ...desktop.searchGroups.filter(group => group.providerId === 'applications'),
-  ...desktop.searchGroups.filter(group => group.providerId !== 'applications'),
-])
 const providerSections = computed(() => {
-  let offset = visibleCommands.value.length
-  return orderedSearchGroups.value.map(group => { const section = { group, offset }; offset += group.items.length; return section })
+  let offset = searchMode.value ? visibleBestResults.value.length : visibleCommands.value.length
+  return desktop.searchGroups.filter(group => group.providerId !== 'applications').map(group => { const section = { group, offset }; offset += group.items.length; return section })
 })
-const providerItems = computed(() => orderedSearchGroups.value.flatMap(group => group.items.map(item => ({ providerId: group.providerId, item }))))
-const resultCount = computed(() => visibleCommands.value.length + providerItems.value.length)
+const selectableResults = computed<Array<{ command: Command } | { providerId: string; item: LauncherSearchItem }>>(() => searchMode.value ? [
+  ...visibleBestResults.value.map(result => result.kind === 'command' ? { command: result.command } : { providerId: 'applications', item: result.item }),
+  ...providerSections.value.flatMap(({ group }) => group.items.map(item => ({ providerId: group.providerId, item }))),
+] : visibleCommands.value.map(command => ({ command })))
+const resultCount = computed(() => selectableResults.value.length)
+const navigationSections = computed(() => [
+  ...(searchMode.value ? [{ offset: 0, count: visibleBestResults.value.length, columns: 9 }] : commandSections.value.map(section => ({ offset: section.offset, count: section.commands.length, columns: 9 }))),
+  ...providerSections.value.map(section => ({ offset: section.offset, count: section.group.items.length, columns: 1 })),
+].filter(section => section.count))
+const navigationRows = computed(() => navigationSections.value.flatMap(section => Array.from({ length: Math.ceil(section.count / section.columns) }, (_, row) => ({ offset: section.offset + row * section.columns, count: Math.min(section.columns, section.count - row * section.columns) }))))
+async function toggleSection(id: string) {
+  const expanding = !expandedSections.value.includes(id)
+  expandedSections.value = expanding ? [...expandedSections.value, id] : expandedSections.value.filter(section => section !== id)
+  const query = desktop.query
+  while (expanding && id === 'results' && expandedSections.value.includes(id) && desktop.query === query && applicationGroup.value?.hasMore && !desktop.searchLoading) {
+    const count = applicationGroup.value.items.length
+    await desktop.searchLauncher('applications')
+    if (applicationGroup.value?.items.length === count || desktop.searchError) break
+  }
+}
 const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
 const settings = computed(() => desktop.snapshot?.settings)
 const dark = computed(() => settings.value?.theme === 'dark' || (settings.value?.theme === 'system' && systemDark.value))
@@ -61,7 +89,7 @@ const navigation = [
 ] as const
 
 watch(() => settings.value?.hotkey, value => { hotkey.value = value ?? '' })
-watch(() => desktop.query, () => { selected.value = 0; if (searchMode.value) desktop.page = 'launcher' })
+watch(() => desktop.query, () => { selected.value = 0; expandedSections.value = []; if (searchMode.value) desktop.page = 'launcher' })
 watch(resultCount, count => { selected.value = Math.min(selected.value, Math.max(0, count - 1)) })
 let layoutObserver: ResizeObserver | undefined
 let layoutFrame: number | undefined
@@ -103,6 +131,7 @@ watch(() => desktop.page, async page => {
 })
 watch(() => desktop.focusRequest, async () => {
   selected.value = 0
+  expandedSections.value = []
   await nextTick()
   if (desktop.page === 'launcher') search.value?.focus()
   else if (!document.activeElement?.closest('.settings-layout')) {
@@ -158,28 +187,29 @@ function keydown(event: KeyboardEvent) {
     return
   }
   if (desktop.page !== 'launcher' || !resultCount.value || desktop.busy || desktop.searchActionBusy) return
-  if (target.closest('.pin-action') || target.closest('.brand-button')) return
+  if (target.closest('.command-context-menu, .brand-button')) return
   const resultTarget = target.closest('.command-launch, .search-result-open')
   if (event.key === 'Enter' && (target === search.value || resultTarget)) {
     event.preventDefault()
-    const command = visibleCommands.value[selected.value]
-    if (command) void desktop.run(command)
-    else {
-      const result = providerItems.value[selected.value - visibleCommands.value.length]
-      const action = result?.item.actions.find(action => action.id === 'open') ?? result?.item.actions[0]
-      if (result && action) void desktop.performSearchAction(result.providerId, result.item, action.id)
+    const result = selectableResults.value[selected.value]
+    if (result && 'command' in result && result.command) void desktop.run(result.command)
+    else if (result && 'item' in result && result.item && 'providerId' in result && result.providerId) {
+      const action = result.item.actions.find(action => action.id === 'open') ?? result.item.actions[0]
+      if (action) void desktop.performSearchAction(result.providerId, result.item, action.id)
     }
     return
   }
   const movement = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key)
   if (movement === -1 || (target !== search.value && !resultTarget)) return
   event.preventDefault()
-  const tile = document.querySelector<HTMLElement>('.command-tile')
-  const grid = tile?.parentElement
-  const columns = grid && tile ? Math.max(1, Math.round(grid.clientWidth / tile.getBoundingClientRect().width)) : 1
-  const inCommands = selected.value < visibleCommands.value.length
-  const offsets = [-1, 1, inCommands ? -columns : -1, inCommands ? columns : 1]
-  selected.value = Math.max(0, Math.min(resultCount.value - 1, selected.value + (offsets[movement] ?? 0)))
+  const rowIndex = navigationRows.value.findIndex(row => selected.value >= row.offset && selected.value < row.offset + row.count)
+  const row = navigationRows.value[rowIndex]
+  if (!row) return
+  if (movement < 2) selected.value = (selected.value + (movement === 0 ? resultCount.value - 1 : 1)) % resultCount.value
+  else {
+    const nextRow = navigationRows.value[(rowIndex + (movement === 2 ? navigationRows.value.length - 1 : 1)) % navigationRows.value.length]
+    if (nextRow) selected.value = nextRow.offset + Math.min(selected.value - row.offset, nextRow.count - 1)
+  }
   const selectedResult = document.querySelector<HTMLButtonElement>(`[data-command-index="${selected.value}"], [data-search-index="${selected.value}"]`)
   if (target !== search.value) selectedResult?.focus()
   selectedResult?.scrollIntoView({ block: 'nearest' })
@@ -231,10 +261,22 @@ onUnmounted(() => {
     <main v-else-if="desktop.page === 'launcher' && launcherExpanded" class="launcher" aria-label="启动器" :aria-busy="desktop.busy">
       <div ref="launcherContent" class="launcher-content">
       <section v-for="section in commandSections" :key="section.id" :aria-labelledby="`${section.id}-heading`" :data-command-section="section.id">
-        <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><span>{{ section.commands.length }} 项指令</span></div>
+        <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><button v-if="section.total > 18" class="section-expand" :aria-expanded="expandedSections.includes(section.id)" @click="toggleSection(section.id)">{{ expandedSections.includes(section.id) ? '收起' : `展开 (${section.total})` }}</button></div>
         <div v-if="section.commands.length" class="command-grid"><CommandTile v-for="(command, index) in section.commands" :key="command.id" :command="command" :index="section.offset + index" :selected="selected === section.offset + index" :pinned="desktop.snapshot.pinned.includes(command.id)" :disabled="desktop.busy" @select="selected = section.offset + index" @run="desktop.run(command)" @pin="desktop.pin(command)" /></div>
       </section>
       <template v-if="searchMode">
+        <section v-if="bestResults.length" data-command-section="results" aria-labelledby="results-heading">
+          <div class="section-heading"><h1 id="results-heading">最佳搜索结果</h1><button v-if="bestTotal > 18" class="section-expand" data-testid="best-results-expand" :aria-expanded="expandedSections.includes('results')" :disabled="desktop.searchLoading" @click="toggleSection('results')">{{ expandedSections.includes('results') ? '收起' : `展开 (${bestTotal})` }}</button></div>
+          <div class="command-grid">
+            <template v-for="(result, index) in visibleBestResults" :key="result.kind === 'command' ? result.command.id : result.item.id">
+              <CommandTile v-if="result.kind === 'command'" :command="result.command" :index="index" :selected="selected === index" :pinned="desktop.snapshot.pinned.includes(result.command.id)" :disabled="desktop.busy" @select="selected = index" @run="desktop.run(result.command)" @pin="desktop.pin(result.command)" />
+              <div v-else class="command-tile application-tile" :class="{ selected: selected === index }" data-testid="search-result-row" :data-result-id="result.item.id" :data-result-index="index">
+                <button class="command-launch search-result-open" :data-search-index="index" data-testid="search-result-open" :title="result.item.name" :aria-label="`打开${result.item.name}`" :aria-current="selected === index ? 'true' : undefined" :disabled="desktop.busy || desktop.searchActionBusy" @focus="selected = index" @click="desktop.performSearchAction('applications', result.item, 'open')"><span class="command-icon"><img v-if="result.item.iconUrl" class="application-icon" :src="result.item.iconUrl" alt="" /><AppIcon v-else :name="result.item.icon ?? 'command'" /></span><span class="command-title">{{ result.item.name }}</span></button>
+              </div>
+            </template>
+          </div>
+        </section>
+        <div v-if="applicationGroup && (applicationGroup.status !== 'ready' || applicationGroup.message)" class="search-provider-status" data-testid="search-provider-status" :data-provider-id="applicationGroup.providerId" :data-status="applicationGroup.status" role="status">{{ applicationGroup.message || '应用搜索暂时不可用。' }}<button v-if="applicationGroup.status !== 'ready'" class="text-button" :disabled="desktop.searchLoading" @click="desktop.searchLauncher()">重试</button></div>
         <p v-if="desktop.searchLoading" class="search-provider-progress" data-testid="search-loading" role="status">正在搜索…</p>
         <div v-if="desktop.searchError" class="error-strip" data-testid="search-error" role="alert"><span>{{ desktop.searchError }}</span><button class="text-button" data-testid="search-provider-retry" :disabled="desktop.searchLoading" @click="desktop.searchLauncher()">重试</button></div>
         <SearchProviderResults v-for="section in providerSections" :key="section.group.providerId" :group="section.group" :offset="section.offset" :selected="selected" :loading="desktop.searchLoading" :disabled="desktop.busy || desktop.searchActionBusy" @select="selected = $event" @action="desktop.performSearchAction" @retry="desktop.searchLauncher()" @load-more="desktop.searchLauncher" />

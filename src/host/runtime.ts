@@ -18,6 +18,17 @@ interface PluginEntry {
 }
 const statuses = ['pending', 'loading', 'active', 'failed', 'disposed', 'unloading'] as const
 
+function builtInSearchPlugin(environment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment) {
+  return {
+    name: 'builtin-search', inject: ['search'],
+    async apply(ctx: Context) {
+      await ctx.plugin(everythingPlugin(environment)).await()
+      await ctx.plugin(everythingSearchPlugin).await()
+      if (applicationsEnvironment) await ctx.plugin(applicationsPlugin(applicationsEnvironment)).await()
+    },
+  }
+}
+
 export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment) {
   const ctx = new Context()
   const entries: PluginEntry[] = [
@@ -25,11 +36,9 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     { id: 'commands', name: '命令注册表', protected: true, plugin: commandsPlugin },
     { id: 'search', name: '搜索提供者注册表', protected: true, plugin: searchPlugin },
     { id: 'desktop', name: 'Electron 桌面宿主', protected: true, plugin: { name: 'desktop', apply(scope: Context) { scope.provide('desktop', desktop) } } },
-    { id: 'everything-provider', name: 'Everything 搜索服务', protected: true, plugin: everythingPlugin(everythingEnvironment) },
     { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
     { id: 'theme', name: '主题', protected: true, plugin: themePlugin },
-    { id: 'everything', name: 'Everything 文件搜索', protected: false, plugin: everythingSearchPlugin },
-    ...(applicationsEnvironment ? [{ id: 'applications', name: '应用搜索', protected: false, plugin: applicationsPlugin(applicationsEnvironment) }] : []),
+    { id: 'builtin-search', name: '搜索', protected: false, plugin: builtInSearchPlugin(everythingEnvironment, applicationsEnvironment) },
   ]
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
@@ -62,6 +71,17 @@ export async function createRuntime(path: string, desktop: DesktopService, every
       if (!entry.protected && ctx.get('storage')!.read().enabled[entry.id] === false) continue
       entry.fiber = ctx.plugin(entry.plugin, undefined)
       await entry.fiber.await()
+      if (entry.id === 'storage') {
+        const storage = ctx.get('storage')!
+        const state = storage.read()
+        if (state.enabled['builtin-search'] === undefined || ['everything-provider', 'everything', 'applications'].some(id => Object.hasOwn(state.enabled, id))) {
+          const enabled: Record<string, boolean> = { ...state.enabled, 'builtin-search': state.enabled['builtin-search'] ?? (state.enabled.everything !== false || state.enabled.applications !== false) }
+          delete enabled['everything-provider']
+          delete enabled.everything
+          delete enabled.applications
+          storage.write({ ...state, enabled })
+        }
+      }
     }
     await desktop.applySettings(ctx.get('storage')!.read().settings)
   } catch (error) {
