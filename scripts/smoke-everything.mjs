@@ -235,8 +235,16 @@ try {
   await page.getByTestId('everything-row').locator('.everything-copy-path').click()
   const clipboard = await powershell('[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes((Get-Clipboard -Raw).TrimEnd([char]13,[char]10)))')
   assert.equal(Buffer.from(clipboard, 'base64').toString('utf16le'), fixtures.at(-1).path)
+  await eventually('Copy action did not complete in renderer', async () => (await page.locator('.everything-feedback').textContent()).includes('已复制路径：'))
   await page.getByTestId('everything-row').locator('.everything-reveal').click()
-  await eventually('shell.showItemInFolder did not select the safe fixture in Explorer', async () => (await explorerShows(dirname(fixtures.at(-1).path), fixtures.at(-1).path)) === 'yes')
+  await eventually('Reveal action did not complete in renderer', async () => (await page.locator('.everything-feedback').textContent()).includes('已在资源管理器中定位：'))
+  try {
+    await eventually('shell.showItemInFolder did not select the safe fixture in Explorer', async () => (await explorerShows(dirname(fixtures.at(-1).path), fixtures.at(-1).path)) === 'yes')
+  } catch (error) {
+    const explorerState = await powershell('$shell=New-Object -ComObject Shell.Application; $windows=$shell.Windows(); $state=@(); for ($i=0; $i -lt $windows.Count; $i++) { try { $window=$windows.Item($i); $selected=$window.Document.SelectedItems(); $paths=@(); for ($j=0; $j -lt $selected.Count; $j++) { $paths += $selected.Item($j).Path }; $state += [pscustomobject]@{ folder=$window.Document.Folder.Self.Path; selected=$paths } } catch { $state += [pscustomobject]@{ error=$_.Exception.Message } } }; ConvertTo-Json -InputObject $state -Depth 4 -Compress')
+    await writeFile(join(evidence, 'explorer-state.json'), explorerState)
+    throw new Error(`${error.message}; target=${fixtures.at(-1).path}; Explorer=${explorerState}`, { cause: error })
+  }
   await page.screenshot({ path: join(evidence, 'unicode-actions.png') })
   checks.push('Packaged UI load-more/filter/sort and real Electron system clipboard/open/reveal use actual host-authorized fixture results')
   await stopEngine()
