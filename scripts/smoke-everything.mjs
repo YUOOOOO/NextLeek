@@ -74,7 +74,7 @@ async function stopEngine() {
   await eventually('Owned default IPC window did not disappear', async () => !(await enginePresent()))
 }
 async function rawNativeSearch(request = { query, offset: 0, limit: fixtures.length + 1 }) {
-  const source = `const native = require(${JSON.stringify(addon)}); const request = ${JSON.stringify(request)}; const running = native.everythingIsRuning(); const loaded = running && native.everythingIsDBLoaded(); console.log(JSON.stringify({ electron: process.versions.electron, version: native.getEverythingVersion(), running, loaded, result: loaded ? native.everythingSearch(request.query, 1, request.limit, request.offset) : null }));`
+  const source = `const native = require(${JSON.stringify(addon)}); const request = ${JSON.stringify(request)}; const nativeQuery = 'path:<' + request.query + '>'; const running = native.everythingIsRuning(); const loaded = running && native.everythingIsDBLoaded(); console.log(JSON.stringify({ electron: process.versions.electron, version: native.getEverythingVersion(), nativeQuery, running, loaded, result: loaded ? native.everythingSearch(nativeQuery, 1, request.limit, request.offset) : null }));`
   const { stdout } = await exec(executable, ['-e', source], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 15000, maxBuffer: 1024 * 1024, windowsHide: true })
   const result = JSON.parse(stdout.trim())
   assert.match(result.electron, /^41\./)

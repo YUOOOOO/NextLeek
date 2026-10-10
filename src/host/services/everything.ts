@@ -166,8 +166,9 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
       const validated = launcherSearchRequest(request)
       const native = await prepare()
       supported()
+      // Apply full-path matching to the whole expression without changing engine settings.
       // ZTools' positional contract is SORT, LIMIT, OFFSET; launcher uses name ascending (1).
-      const result = native.everythingSearch(validated.query, 1, validated.limit, validated.offset)
+      const result = native.everythingSearch(`path:<${validated.query}>`, 1, validated.limit, validated.offset)
       const items = parseResults(result, validated)
       for (const item of items) {
         authorized.set(item.id, item.path)

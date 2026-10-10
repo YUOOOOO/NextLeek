@@ -43,12 +43,12 @@ function harness() {
   }
 }
 
-test('native search passes raw Unicode, quoted and switch-like queries with exact sort/limit/offset positions', async () => {
+test('native search applies grouped full-path matching while preserving query syntax and sort/limit/offset positions', async () => {
   const h = harness()
   try {
-    for (const query of ['ext:txt "中文, 文件" | folder:', 'C:\\资料\\', '"C:\\Program Files\\"', '-exit', 'report']) {
+    for (const query of ['ext:txt "中文, 文件" | folder:', 'C:\\资料\\', '"C:\\Program Files\\"', '-exit', 'vscode', '1.txt', 'report folder', 'foo | bar', '!draft ext:txt', 'nopath:report']) {
       await h.service.search({ query, offset: 15, limit: 30 })
-      assert.deepEqual(h.calls.at(-1), [query, 1, 30, 15])
+      assert.deepEqual(h.calls.at(-1), [`path:<${query}>`, 1, 30, 15])
     }
     assert.deepEqual(h.loads, [h.environment.addonPath]); assert.deepEqual(h.starts, [])
   } finally { await h.ctx.fiber.dispose() }
