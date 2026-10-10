@@ -171,6 +171,29 @@ test('actions use only host-owned IDs and recheck existence', async () => {
   } finally { await h.ctx.fiber.dispose() }
 })
 
+test('reveal actions await native launch and propagate asynchronous launch errors', async () => {
+  const h = harness()
+  try {
+    h.output([row('Unicode 中文,逗号.txt')]); const item = (await h.service.search(request)).items[0]
+    let rejectLaunch!: (error: Error) => void
+    let started!: () => void
+    const launched = new Promise<void>(resolve => { started = resolve })
+    h.environment.revealPath = path => {
+      assert.equal(path, item.path)
+      started()
+      return new Promise<void>((_resolve, reject) => { rejectLaunch = reject })
+    }
+    let completed = false
+    const action = h.service.performAction(item.id, 'reveal').then(() => { completed = true })
+    await launched
+    assert.equal(completed, false)
+    const rejected = assert.rejects(action, /Explorer launch failed/)
+    rejectLaunch(new Error('Explorer launch failed'))
+    await rejected
+    assert.equal(completed, false)
+  } finally { await h.ctx.fiber.dispose() }
+})
+
 test('Cordis disposal kills active ES children and cancels queries', async () => {
   const h = harness(); h.output([row()]); const item = (await h.service.search(request)).items[0]; h.hold(true)
   const searches = Array.from({ length: 4 }, () => h.service.search(request)); const rejected = searches.map(search => assert.rejects(search, /查询已取消/))

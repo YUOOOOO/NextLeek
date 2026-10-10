@@ -11,7 +11,7 @@ export interface EverythingEnvironment {
   executable: string
   platform?: NodeJS.Platform
   openPath(path: string): Promise<string>
-  revealPath(path: string): void
+  revealPath(path: string): void | Promise<void>
   copyPath(path: string): void
 }
 interface ProcessOptions {
@@ -161,7 +161,7 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
       if (action === 'open') {
         const message = await env.openPath(path)
         if (message) throw new Error(`无法打开文件：${message}`)
-      } else if (action === 'reveal') env.revealPath(path)
+      } else if (action === 'reveal') await env.revealPath(path)
       else env.copyPath(path)
     },
   }

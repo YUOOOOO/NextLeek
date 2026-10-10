@@ -1,5 +1,6 @@
 import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import { spawn } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -125,7 +126,31 @@ async function start() {
       executable: app.isPackaged ? join(process.resourcesPath, 'everything', 'es.exe') : join(app.getAppPath(), 'resources', 'everything', 'es.exe'),
       platform: process.platform,
       openPath: path => shell.openPath(path),
-      revealPath: path => shell.showItemInFolder(path),
+      async revealPath(path) {
+        if (process.platform !== 'win32') { shell.showItemInFolder(path); return }
+        const executable = join(process.env.SystemRoot ?? process.env.WINDIR!, 'explorer.exe')
+        await new Promise<void>((resolve, reject) => {
+          let closed = false
+          let release: (() => unknown) | undefined
+          release = runtime!.ctx.effect(() => {
+            // Explorer splits comma-delimited fields itself; quote only the path,
+            // and bypass Node's CRT escaping so the quotes reach Explorer intact.
+            const child = spawn(executable, [`/select,"${path}"`], {
+              shell: false, windowsVerbatimArguments: true, argv0: `"${executable}"`,
+            })
+            // Explorer may keep this process alive: acknowledge successful launch,
+            // not its eventual exit. Launch errors still reject the IPC action.
+            child.once('spawn', resolve)
+            child.once('error', reject)
+            child.once('close', () => { closed = true; void release?.() })
+            return () => {
+              if (closed) return
+              child.kill()
+              reject(new Error('Everything 服务已关闭，文件定位已取消。'))
+            }
+          }, 'Everything Explorer subprocess')
+        })
+      },
       copyPath: path => clipboard.writeText(path),
     })
     const ctx = runtime.ctx
