@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { chromium } from 'playwright-core'
 import { promisify } from 'node:util'
+import { createServer } from 'node:net'
 
 const executable = resolve(process.argv[2])
 const expectUpdateSupported = process.argv.includes('--expect-update-supported')
 const checkUpdates = process.argv.includes('--check-updates')
 const appArgs = process.argv.slice(3).filter(arg => !['--expect-update-supported', '--check-updates'].includes(arg))
-const debugPort = 9300 + (process.pid % 500)
+let debugPort
 const profile = await mkdtemp(resolve(tmpdir(), 'nextleek-smoke-'))
 const evidence = resolve('artifacts/smoke')
 await mkdir(evidence, { recursive: true })
@@ -29,6 +30,14 @@ async function eventually(description, operation) {
   throw new Error(description, { cause: error })
 }
 async function launch() {
+  debugPort = await new Promise((resolvePort, rejectPort) => {
+    const server = createServer()
+    server.once('error', rejectPort)
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port
+      server.close(error => error ? rejectPort(error) : resolvePort(port))
+    })
+  })
   child = spawn(executable, [...appArgs, `--remote-debugging-port=${debugPort}`, `--profile-dir=${profile}`], { stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', chunk => logs.push(String(chunk)))
   child.stderr.on('data', chunk => logs.push(String(chunk)))
