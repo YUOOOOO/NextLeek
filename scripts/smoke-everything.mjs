@@ -33,6 +33,7 @@ const engineDirectory = join(temporary, 'engine')
 const engineExecutable = join(engineDirectory, 'Everything.exe')
 const fixtureDirectory = join(temporary, 'fixtures')
 const configuration = join(engineDirectory, 'Everything.ini')
+const filelist = join(temporary, 'fixtures.efu')
 const query = `"${fixtureDirectory}\\"`
 const pause = milliseconds => new Promise(resolvePause => setTimeout(resolvePause, milliseconds))
 async function eventually(description, operation) {
