@@ -15,7 +15,6 @@ export const useDesktopStore = defineStore('desktop', () => {
   const error = ref('')
   const query = ref('')
   const focusRequest = ref(0)
-  const launcherRevealed = ref(false)
   const updateState = ref<UpdateState | null>(null)
   const updateBusy = ref(false)
   const updateError = ref('')
@@ -43,11 +42,11 @@ export const useDesktopStore = defineStore('desktop', () => {
       return terms.every(term => text.includes(term))
     }).sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)))
   })
-  const homeCommands = computed(() => {
-    const ids = new Set([...(snapshot.value?.pinned ?? []), ...(snapshot.value?.recent ?? [])])
-    const byId = new Map(commands.value.map(command => [command.id, command]))
-    return [...ids].map(id => byId.get(id)).filter((command): command is Command => Boolean(command))
-  })
+  const commandsById = computed(() => new Map(commands.value.map(command => [command.id, command])))
+  const recentCommands = computed(() => (snapshot.value?.recent ?? [])
+    .map(id => commandsById.value.get(id)).filter((command): command is Command => Boolean(command)))
+  const pinnedCommands = computed(() => (snapshot.value?.pinned ?? [])
+    .map(id => commandsById.value.get(id)).filter((command): command is Command => Boolean(command)))
 
   function cancelSearch() {
     clearTimeout(searchTimer)
@@ -119,7 +118,6 @@ export const useDesktopStore = defineStore('desktop', () => {
   function navigate(target: typeof page.value) {
     if (target === 'launcher') {
       query.value = ''
-      launcherRevealed.value = false
     }
     page.value = target
   }
@@ -138,13 +136,12 @@ export const useDesktopStore = defineStore('desktop', () => {
     if (event.type === 'shown') {
       if (page.value === 'launcher') {
         query.value = ''
-        launcherRevealed.value = false
       }
       focusRequest.value++
     }
     if (event.type === 'close-request') {
       if (page.value === 'launcher') void hide()
-      else if (snapshot.value?.settings.escHide) void hide().then(hidden => { if (hidden) navigate('launcher') })
+      else if (snapshot.value?.settings.escHide) void hide()
       else navigate('launcher')
     }
     if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
@@ -200,9 +197,9 @@ export const useDesktopStore = defineStore('desktop', () => {
     try { await window.desktop.setHotkeyCapture(active); return true }
     catch (cause) { message(cause); return false }
   }
-  async function setLauncherExpanded(expanded: boolean) {
+  async function setLauncherHeight(height: number) {
     if (!window.desktop) return
-    try { await window.desktop.setLauncherExpanded(expanded) }
+    try { await window.desktop.setLauncherHeight(height) }
     catch (cause) { message(cause) }
   }
   async function refreshUpdateState() {
@@ -232,5 +229,5 @@ export const useDesktopStore = defineStore('desktop', () => {
     return hidden
   }
   function dispose() { disposed = true; cancelSearch(); stopSearchWatch(); unsubscribe?.(); unsubscribe = undefined }
-  return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, searchGroups, searchLoading, searchError, searchFeedback, searchActionBusy, searchComposing, searchLauncher, setSearchComposing, performSearchAction, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
+  return { snapshot, commands, page, loading, busy, error, query, focusRequest, results, recentCommands, pinnedCommands, searchGroups, searchLoading, searchError, searchFeedback, searchActionBusy, searchComposing, searchLauncher, setSearchComposing, performSearchAction, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherHeight, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
 })

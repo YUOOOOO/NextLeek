@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { basename, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
 import { promisify } from 'node:util'
 import { createServer } from 'node:net'
@@ -20,6 +20,9 @@ let child
 let browser
 const checks = []
 let nativeWindow
+let applicationFixture
+const applicationName = `NextLeek Smoke App ${basename(profile)}`
+const launchMarker = resolve(profile, 'application-launched')
 function stage(message) {
   logs.push(`Stage: ${message}`)
   console.log(`[desktop-smoke] ${message}`)
@@ -33,6 +36,40 @@ async function bounded(description, operation) {
   } finally { clearTimeout(timer) }
 }
 const powershell = source => promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })
+const psLiteral = value => `'${value.replaceAll("'", "''")}'`
+async function createApplicationFixture() {
+  if (process.platform === 'darwin') {
+    const applications = resolve(homedir(), 'Applications')
+    await mkdir(applications, { recursive: true })
+    applicationFixture = resolve(applications, `${applicationName}.app`)
+    await mkdir(resolve(applicationFixture, 'Contents', 'MacOS'), { recursive: true })
+    await mkdir(resolve(applicationFixture, 'Contents', 'Resources'))
+    const marker = `'${launchMarker.replaceAll("'", "'\\''")}'`
+    await writeFile(resolve(applicationFixture, 'Contents', 'MacOS', 'launch'), `#!/bin/sh\nprintf launched > ${marker}\n`, { mode: 0o755 })
+    await copyFile('/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns', resolve(applicationFixture, 'Contents', 'Resources', 'Smoke.icns'))
+    await writeFile(resolve(applicationFixture, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.nextleek.smoke.${basename(profile)}</string><key>CFBundleName</key><string>${applicationName}</string><key>CFBundleDisplayName</key><string>${applicationName}</string><key>CFBundleExecutable</key><string>launch</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>Smoke.icns</string><key>LSBackgroundOnly</key><true/></dict></plist>`)
+  } else if (process.platform === 'win32') {
+    assert.ok(process.env.APPDATA, 'User Start Menu requires APPDATA')
+    const programs = resolve(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs')
+    await mkdir(programs, { recursive: true })
+    applicationFixture = resolve(programs, `${applicationName}.lnk`)
+    const script = resolve(profile, 'launch-application.bat')
+    await writeFile(script, `@echo off\r\n<nul set /p=launched > "${launchMarker}"\r\n`)
+    const cmd = process.env.ComSpec ?? resolve(process.env.SystemRoot, 'System32', 'cmd.exe')
+    const icon = `${resolve(process.env.SystemRoot, 'System32', 'shell32.dll')},2`
+    await powershell(`$shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut(${psLiteral(applicationFixture)}); $shortcut.TargetPath = ${psLiteral(cmd)}; $shortcut.Arguments = ${psLiteral(`/d /c ""${script}""`)}; $shortcut.IconLocation = ${psLiteral(icon)}; $shortcut.Save()`)
+  }
+}
+async function launcherTracksContent(page) {
+  return page.evaluate(() => {
+    const header = document.querySelector('.search-header')
+    const content = document.querySelector('.launcher-content')
+    const footer = document.querySelector('.launcher-footer')
+    if (!header || !content || !footer) return false
+    const intrinsicHeight = header.getBoundingClientRect().height + content.scrollHeight + footer.getBoundingClientRect().height + 1
+    return window.innerHeight > header.getBoundingClientRect().height + footer.getBoundingClientRect().height && window.innerHeight <= Math.ceil(intrinsicHeight) + 1
+  })
+}
 function releaseOwnedStreams(processChild) {
   if (!processChild || (processChild.exitCode === null && processChild.signalCode === null)) return
   // A grandchild can inherit these pipes after the root exits. Release only
@@ -107,6 +144,7 @@ async function quit(page) {
   }
 }
 try {
+  await createApplicationFixture()
   let page = await launch()
   await page.locator('button.brand-button').waitFor()
   const initial = await page.evaluate(() => window.desktop.getSnapshot())
@@ -125,12 +163,33 @@ try {
   await eventually('Empty launcher did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
   assert.equal(await page.locator('.launcher').count(), 0)
   await page.locator('.app-shell > .search-header .search-input').fill('设置')
-  await eventually('Search did not expand window', async () => (await page.evaluate(() => window.innerHeight)) > 400)
+  await eventually('Search window did not follow content height', () => launcherTracksContent(page))
   await page.getByRole('heading', { name: '搜索结果' }).waitFor()
   await page.keyboard.press('Escape')
   await eventually('Cleared search did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
   checks.push('Empty launcher collapses; search expands; clearing restores input-only window')
   await page.screenshot({ path: resolve(evidence, 'launcher.png') })
+  if (applicationFixture) {
+    stage('Searching and launching real installed application fixture')
+    await page.locator('.app-shell > .search-header .search-input').fill(applicationName)
+    const applications = page.locator('[data-testid="search-provider"][data-provider-id="applications"]')
+    const application = applications.getByTestId('search-result-row').filter({ has: page.locator('strong', { hasText: applicationName }) })
+    await application.waitFor()
+    assert.equal(await applications.getAttribute('data-status'), 'ready')
+    assert.equal(await application.count(), 1)
+    const icon = application.locator('img.application-icon')
+    await icon.waitFor()
+    await eventually('Installed application icon did not decode as native PNG', () => icon.evaluate(image => image.complete && image.naturalWidth > 0 && image.naturalHeight > 0 && image.src.startsWith('data:image/png;base64,')))
+    await eventually('Application results did not resize launcher to content', () => launcherTracksContent(page))
+    await page.screenshot({ path: resolve(evidence, 'application-search.png') })
+    await application.getByTestId('search-result-open').click()
+    await eventually('Native application launch did not execute fixture', async () => await readFile(launchMarker, 'utf8') === 'launched')
+    assert.equal(await page.getByTestId('search-error').count(), 0)
+    checks.push('Real installed application search displays decoded native PNG icon and native launch executes owned marker fixture')
+    await page.locator('.app-shell > .search-header .search-input').focus()
+    await page.keyboard.press('Escape')
+    await eventually('Application search clear did not collapse launcher', async () => (await page.evaluate(() => window.innerHeight)) < 120)
+  }
   assert.equal(await page.locator('.search-header .window-action').count(), 0)
   await page.locator('button.brand-button').click()
   assert.equal(await page.locator('.settings-sidebar .quit-button').count(), 0)
@@ -228,17 +287,17 @@ try {
     await nativeClose()
     await waitVisibility(false)
     await show()
-    await emptyLauncher()
-    await page.locator('.app-shell > .search-header .search-input').fill('设置')
-    await page.locator('button.brand-button').click()
+    await page.locator('#hotkey').waitFor()
+    assert.equal(await page.locator('.app-shell > .search-header .search-input').inputValue(), '设置')
+    await page.locator('.app-shell > .search-header .search-input').focus()
     await page.keyboard.press('Escape')
     await waitVisibility(false)
     await show()
-    await emptyLauncher()
-    await page.locator('button.brand-button').click()
+    await page.locator('#hotkey').waitFor()
+    assert.equal(await page.locator('.app-shell > .search-header .search-input').inputValue(), '设置')
     await page.getByRole('switch', { name: 'ESC 隐藏', exact: true }).click()
     await eventually('ESC hide setting not restored', async () => !(await page.evaluate(() => window.desktop.getSnapshot())).settings.escHide)
-    checks.push('ESC hide enabled makes native settings close and Escape hide and reset launcher; native Windows Alt+Space restores without system menu')
+    checks.push('ESC hide enabled preserves native settings page and query across native close and Escape hide/show; native Windows Alt+Space restores without system menu')
   }
   stage('Exercising updater settings and persistent history')
   await page.getByRole('heading', { name: '在线更新', exact: true }).scrollIntoViewIfNeeded()
@@ -262,14 +321,18 @@ try {
   const reopened = await page.evaluate(() => window.desktop.getSnapshot())
   assert.equal(reopened.settings.theme, 'dark')
   assert.ok(reopened.pinned.includes(commands[0].id))
-  await eventually('History and pins did not expand reopened launcher', async () => (await page.evaluate(() => window.innerHeight)) > 400)
+  await eventually('History window did not follow content height', () => launcherTracksContent(page))
   await page.locator('.launcher').waitFor()
   assert.ok(reopened.recent.includes(commands[0].id))
   checks.push('Reopened empty-query launcher expands with persistent history and pinned commands')
   await page.locator('[data-command-section="pinned"] .command-launch').first().waitFor()
   await page.locator('[data-command-section="recent"] .command-launch').first().waitFor()
   assert.equal(await page.locator('[data-command-section="pinned"] .command-launch').count(), 1)
-  assert.equal(await page.locator('[data-command-section="recent"] .command-launch').count(), 1)
+  assert.equal(await page.locator('[data-command-section="recent"] .command-launch').count(), 2)
+  assert.deepEqual(await page.locator('[data-command-section]').evaluateAll(sections => sections.map(section => section.getAttribute('data-command-section'))), ['recent', 'pinned'])
+  assert.equal((await page.locator('[data-command-section="recent"] .command-title').last().textContent()).trim(), commands[0].title)
+  assert.equal((await page.locator('[data-command-section="pinned"] .command-title').first().textContent()).trim(), commands[0].title)
+  assert.equal(await page.locator('[data-command-section="pinned"] .command-launch').first().getAttribute('data-command-index'), '2')
   await page.screenshot({ path: resolve(evidence, 'history-pins.png') })
   checks.push('LMDB theme and pinned commands survive process restart')
   const mainQuery = page.locator('.app-shell > .search-header .search-input')
@@ -289,6 +352,8 @@ try {
   if (nativeWindow) {
     await page.locator('.app-shell > .search-header .search-input').focus()
     await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowRight')
+    assert.equal(await page.locator('[data-command-section="pinned"] .command-tile').first().evaluate(tile => tile.classList.contains('selected')), true)
     assert.equal(await page.locator('.command-tile').first().evaluate(tile => tile.classList.contains('selected')), false)
     await nativeWindow.sendAltSpace()
     await nativeWindow.waitVisibility(false)
@@ -370,6 +435,7 @@ try {
     if (browser) await bounded('Final desktop CDP disconnect', () => browser.close()).catch(error => logs.push(String(error)))
     await stopOwnedChild()
   } finally {
+    if (applicationFixture) await rm(applicationFixture, { recursive: true, force: true })
     stage(`Cleanup complete; active resources: ${process.getActiveResourcesInfo().join(', ')}`)
     await writeFile(resolve(evidence, 'host.log'), logs.join('\n'))
   }

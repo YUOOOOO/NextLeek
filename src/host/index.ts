@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } from 'electron'
+import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard, screen } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
@@ -52,10 +52,13 @@ async function start() {
   let currentHotkey: string | undefined
   let hotkeyCapture = false
   let captureAltSpace = false
-  const setLauncherExpanded = (expanded: boolean) => {
+  const setLauncherHeight = (height: number) => {
+    if (!Number.isFinite(height) || height < 0) throw new TypeError('Invalid launcher height')
     if (window.isDestroyed()) return
-    const [width] = window.getSize()
-    window.setSize(width, expanded ? 690 : 82)
+    const bounds = window.getBounds()
+    const workArea = screen.getDisplayMatching(bounds).workArea
+    const nextHeight = Math.min(workArea.height, Math.max(64, Math.ceil(height)))
+    window.setBounds({ ...bounds, height: nextHeight, y: Math.max(workArea.y, Math.min(bounds.y, workArea.y + workArea.height - nextHeight)) })
   }
   const emit = (event: DesktopEvent) => { if (!view.webContents.isDestroyed()) view.webContents.send(channels.event, event) }
   const show = () => {
@@ -186,6 +189,12 @@ exit 1
         } finally { await release?.() }
       },
       copyPath: path => clipboard.writeText(path),
+    }, {
+      platform: process.platform,
+      desktopDirectory: app.getPath('desktop'),
+      preferredLanguages: app.getPreferredSystemLanguages(),
+      getFileIcon: async path => (await app.getFileIcon(path, { size: 'normal' })).toDataURL(),
+      openPath: path => shell.openPath(path),
     })
     const ctx = runtime.ctx
     ctx.effect(() => {
@@ -253,7 +262,7 @@ exit 1
         await cleanup
       },
     })
-    installIPC(runtime, view, rendererURL, setHotkeyCapture, setLauncherExpanded, updater)
+    installIPC(runtime, view, rendererURL, setHotkeyCapture, setLauncherHeight, updater)
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
     show()
   } catch (error) {
@@ -265,7 +274,7 @@ exit 1
   }
 }
 
-function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, setHotkeyCapture: (active: boolean) => void, setLauncherExpanded: (expanded: boolean) => void, updater: OnlineUpdater) {
+function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, setHotkeyCapture: (active: boolean) => void, setLauncherHeight: (height: number) => void, updater: OnlineUpdater) {
   const verify = (event: IpcMainInvokeEvent) => {
     const frame = event.senderFrame
     if (event.sender !== view.webContents || !frame || frame !== view.webContents.mainFrame) throw new Error('Unauthorized IPC sender')
@@ -293,7 +302,7 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.hide, 0, () => runtime.ctx.get('desktop')!.hide())
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
   bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
-  bind(channels.layout, 1, expanded => setLauncherExpanded(boolean(expanded)))
+  bind(channels.layout, 1, height => { if (typeof height !== 'number') throw new TypeError('Invalid launcher height'); setLauncherHeight(height) })
   bind(channels.searchLauncher, 1, request => runtime.searchLauncher(launcherSearchRequest(request)))
   bind(channels.searchAction, 3, (providerId, itemId, action) => runtime.performSearchAction(identifier(providerId), searchItemId(itemId), identifier(action)))
   bind(channels.updateState, 0, () => updater.getState())

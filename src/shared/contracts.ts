@@ -41,6 +41,7 @@ export interface LauncherSearchItem {
   size: number | null
   modifiedAt: string | null
   icon?: string
+  iconUrl?: string
   actions: LauncherSearchAction[]
 }
 export interface LauncherSearchGroup {
@@ -78,7 +79,7 @@ export interface DesktopAPI {
   hide(): Promise<void>
   quit(): Promise<void>
   setHotkeyCapture(active: boolean): Promise<void>
-  setLauncherExpanded(expanded: boolean): Promise<void>
+  setLauncherHeight(height: number): Promise<void>
   getUpdateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   downloadUpdate(): Promise<UpdateState>

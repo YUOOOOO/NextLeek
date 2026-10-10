@@ -5,17 +5,20 @@ import { useDesktopStore } from '../src/client/store'
 import { defaultSettings } from '../src/shared/validation'
 import type { DesktopAPI, DesktopEvent, LauncherSearchGroup, LauncherSearchItem, LauncherSearchRequest, Snapshot } from '../src/shared/contracts'
 
-test('search show clears query, plugin show preserves page, and native close exits plugin by default', async () => {
+test('show clears launcher query while settings hide and escHide native close retain page and query', async () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   let receive: ((event: DesktopEvent) => void) | undefined
   let hideFails = false
+  let hides = 0
+  const heights: number[] = []
   const snapshot: Snapshot = { settings: { ...defaultSettings }, plugins: [], recent: ['settings.open'], pinned: ['settings.open'] }
   const api: Partial<DesktopAPI> = {
     subscribe(callback) { receive = callback; return () => { receive = undefined } },
     async getSnapshot() { return snapshot },
     async listCommands() { return [{ id: 'settings.open', title: '设置', description: '', icon: 'gear', keywords: [] }] },
     async getUpdateState() { return { status: 'unsupported', currentVersion: '4.0.7', supported: false, message: '' } },
-    async hide() { if (hideFails) throw new Error('Window hide failed') },
+    async hide() { hides++; if (hideFails) throw new Error('Window hide failed') },
+    async setLauncherHeight(height) { heights.push(height) },
   }
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { desktop: api } })
   setActivePinia(createPinia())
@@ -32,7 +35,6 @@ test('search show clears query, plugin show preserves page, and native close exi
     store.query = '设置'
     receive!({ type: 'shown' })
     assert.equal(store.query, '')
-    assert.equal(store.launcherRevealed, false)
     assert.equal(store.focusRequest, 2)
     store.navigate('theme')
     store.query = '设置'
@@ -49,7 +51,23 @@ test('search show clears query, plugin show preserves page, and native close exi
     assert.equal(store.query, '')
     receive!({ type: 'shown' })
     assert.equal(store.page, 'launcher')
-    assert.deepEqual(store.homeCommands.map(command => command.id), ['settings.open'])
+    assert.deepEqual(store.recentCommands.map(command => command.id), ['settings.open'])
+    assert.deepEqual(store.pinnedCommands.map(command => command.id), ['settings.open'])
+    await store.setLauncherHeight(81)
+    await store.setLauncherHeight(325)
+    assert.deepEqual(heights, [81, 325])
+    snapshot.settings.escHide = true
+    store.navigate('settings')
+    store.query = '保留设置查询'
+    const priorHides = hides
+    receive!({ type: 'close-request' })
+    await settle()
+    assert.equal(hides, priorHides + 1)
+    assert.equal(store.page, 'settings')
+    assert.equal(store.query, '保留设置查询')
+    receive!({ type: 'shown' })
+    assert.equal(store.page, 'settings')
+    assert.equal(store.query, '保留设置查询')
   } finally {
     store.dispose()
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)

@@ -8,6 +8,11 @@ import type { DesktopEvent, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
 const search = ref<HTMLInputElement | null>(null)
+const header = ref<HTMLElement | null>(null)
+const launcherContent = ref<HTMLElement | null>(null)
+const footer = ref<HTMLElement | null>(null)
+const errorStrip = ref<HTMLElement | null>(null)
+const stateMessage = ref<HTMLElement | null>(null)
 const themeControl = ref<HTMLSelectElement | null>(null)
 const selected = ref(0)
 const hotkeyInput = ref<HTMLInputElement | null>(null)
@@ -15,16 +20,13 @@ const capturingHotkey = ref(false)
 const hotkey = ref('')
 const systemDark = ref(false)
 const searchMode = computed(() => desktop.query.trim().length > 0)
-const hasHomeHistory = computed(() => Boolean(desktop.snapshot?.recent.length || desktop.snapshot?.pinned.length))
+const hasHomeHistory = computed(() => desktop.recentCommands.length > 0 || desktop.pinnedCommands.length > 0)
 const commandSections = computed(() => {
   if (searchMode.value) return [{ id: 'results', title: '搜索结果', commands: desktop.results, offset: 0 }]
-  const pinned = desktop.homeCommands.filter(command => desktop.snapshot?.pinned.includes(command.id))
-  const recent = desktop.homeCommands.filter(command => !desktop.snapshot?.pinned.includes(command.id))
-  if (hasHomeHistory.value) return [
-    { id: 'pinned', title: '固定指令', commands: pinned, offset: 0 },
-    { id: 'recent', title: '最近使用', commands: recent, offset: pinned.length },
+  return [
+    { id: 'recent', title: '最近使用', commands: desktop.recentCommands, offset: 0 },
+    { id: 'pinned', title: '固定指令', commands: desktop.pinnedCommands, offset: desktop.recentCommands.length },
   ].filter(section => section.commands.length)
-  return desktop.launcherRevealed ? [{ id: 'commands', title: '全部指令', commands: desktop.results, offset: 0 }] : []
 })
 const visibleCommands = computed(() => commandSections.value.flatMap(section => section.commands))
 const providerSections = computed(() => {
@@ -33,7 +35,7 @@ const providerSections = computed(() => {
 })
 const providerItems = computed(() => desktop.searchGroups.flatMap(group => group.items.map(item => ({ providerId: group.providerId, item }))))
 const resultCount = computed(() => visibleCommands.value.length + providerItems.value.length)
-const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || desktop.launcherRevealed || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
+const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
 const settings = computed(() => desktop.snapshot?.settings)
 const dark = computed(() => settings.value?.theme === 'dark' || (settings.value?.theme === 'system' && systemDark.value))
 const updateLabels = {
@@ -57,7 +59,33 @@ const navigation = [
 watch(() => settings.value?.hotkey, value => { hotkey.value = value ?? '' })
 watch(() => desktop.query, () => { selected.value = 0; if (searchMode.value) desktop.page = 'launcher' })
 watch(resultCount, count => { selected.value = Math.min(selected.value, Math.max(0, count - 1)) })
-watch(launcherExpanded, expanded => { void desktop.setLauncherExpanded(expanded) }, { immediate: true })
+let layoutObserver: ResizeObserver | undefined
+let layoutFrame: number | undefined
+let layoutActive = false
+function scheduleLauncherHeight() {
+  if (!layoutActive) return
+  void nextTick(() => {
+    if (!layoutActive || layoutFrame !== undefined) return
+    layoutFrame = requestAnimationFrame(() => {
+      layoutFrame = undefined
+      const height = desktop.page === 'launcher'
+        ? (header.value?.getBoundingClientRect().height ?? 0) + (launcherContent.value?.scrollHeight ?? 0)
+          + (footer.value?.getBoundingClientRect().height ?? 0) + (errorStrip.value?.getBoundingClientRect().height ?? 0)
+          + (stateMessage.value?.getBoundingClientRect().height ?? 0) + 1
+        : 690
+      void desktop.setLauncherHeight(Math.ceil(height))
+    })
+  })
+}
+function observeLauncherLayout() {
+  layoutObserver?.disconnect()
+  for (const element of [header.value, launcherContent.value, footer.value, errorStrip.value, stateMessage.value]) {
+    if (element) layoutObserver?.observe(element)
+  }
+  scheduleLauncherHeight()
+}
+watch([header, launcherContent, footer, errorStrip, stateMessage], observeLauncherLayout, { flush: 'post' })
+watch([() => desktop.page, launcherExpanded, () => settings.value?.compact, () => desktop.focusRequest], scheduleLauncherHeight, { flush: 'post' })
 watch(() => desktop.page, async page => {
   selected.value = 0
   void releaseHotkeyCapture()
@@ -116,7 +144,7 @@ function keydown(event: KeyboardEvent) {
     event.preventDefault()
     if (desktop.page === 'launcher' && desktop.query) desktop.query = ''
     else if (desktop.page !== 'launcher') {
-      if (settings.value?.escHide) void desktop.hide().then(hidden => { if (hidden) desktop.navigate('launcher') })
+      if (settings.value?.escHide) void desktop.hide()
       else desktop.navigate('launcher')
     } else void desktop.hide()
     return
@@ -155,6 +183,9 @@ function receiveHotkey(event: DesktopEvent) {
 }
 function syncSystemTheme(event: MediaQueryListEvent) { systemDark.value = event.matches }
 onMounted(() => {
+  layoutActive = true
+  layoutObserver = new ResizeObserver(scheduleLauncherHeight)
+  observeLauncherLayout()
   media = window.matchMedia('(prefers-color-scheme: dark)')
   systemDark.value = media.matches
   media.addEventListener('change', syncSystemTheme)
@@ -165,6 +196,9 @@ onMounted(() => {
   void desktop.initialize().then(() => nextTick(() => search.value?.focus()))
 })
 onUnmounted(() => {
+  layoutActive = false
+  layoutObserver?.disconnect()
+  if (layoutFrame !== undefined) cancelAnimationFrame(layoutFrame)
   unsubscribeHotkey?.()
   media?.removeEventListener('change', syncSystemTheme)
   window.removeEventListener('keydown', keydown)
@@ -177,16 +211,17 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell" :class="{ dark, compact: settings?.compact, collapsed: !launcherExpanded }" :data-accent="settings?.accent ?? 'green'">
-    <header class="search-header">
+    <header ref="header" class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" data-testid="launcher-query" type="search" aria-label="搜索应用、文件和指令" placeholder="搜索应用、文件和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="desktop.setSearchComposing(true)" @compositionend="desktop.setSearchComposing(false)" />
       <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
     </header>
 
-    <div v-if="desktop.error" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
-    <main v-if="desktop.loading" class="state-message" role="status">正在连接桌面运行时…</main>
-    <main v-else-if="!desktop.snapshot" class="state-message"><AppIcon name="command" /><h1>无法连接桌面运行时</h1><p>未读取到设置和指令。请重试连接，或重新打开应用。</p><button class="text-button" @click="desktop.initialize()">重新连接</button></main>
+    <div v-if="desktop.error" ref="errorStrip" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
+    <main v-if="desktop.loading" ref="stateMessage" class="state-message" role="status">正在连接桌面运行时…</main>
+    <main v-else-if="!desktop.snapshot" ref="stateMessage" class="state-message"><AppIcon name="command" /><h1>无法连接桌面运行时</h1><p>未读取到设置和指令。请重试连接，或重新打开应用。</p><button class="text-button" @click="desktop.initialize()">重新连接</button></main>
     <main v-else-if="desktop.page === 'launcher' && launcherExpanded" class="launcher" aria-label="启动器" :aria-busy="desktop.busy">
+      <div ref="launcherContent" class="launcher-content">
       <section v-for="section in commandSections" :key="section.id" :aria-labelledby="`${section.id}-heading`" :data-command-section="section.id">
         <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><span>{{ section.commands.length }} 项指令</span></div>
         <div v-if="section.commands.length" class="command-grid"><CommandTile v-for="(command, index) in section.commands" :key="command.id" :command="command" :index="section.offset + index" :selected="selected === section.offset + index" :pinned="desktop.snapshot.pinned.includes(command.id)" :disabled="desktop.busy" @select="selected = section.offset + index" @run="desktop.run(command)" @pin="desktop.pin(command)" /></div>
@@ -198,6 +233,7 @@ onUnmounted(() => {
         <p v-if="desktop.searchFeedback" class="search-feedback" data-testid="search-feedback" role="status">{{ desktop.searchFeedback }}</p>
       </template>
       <div v-if="!resultCount && !desktop.searchLoading && !desktop.searchError && !desktop.searchGroups.some(group => group.status !== 'ready')" class="empty-state"><h2>{{ searchMode ? '没有匹配的结果' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试应用名称、文件名、路径或指令关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="!searchMode" class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
+      </div>
     </main>
     <div v-else-if="desktop.page !== 'launcher'" class="settings-layout">
       <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
@@ -207,7 +243,7 @@ onUnmounted(() => {
           <div class="setting-row"><div><label for="hotkey">呼出快捷键</label><p>点击输入框录入组合键，再点击保存</p></div><form class="hotkey-control" @submit.prevent="saveHotkey"><input id="hotkey" ref="hotkeyInput" v-model="hotkey" data-hotkey aria-describedby="hotkey-hint" :disabled="desktop.busy" @focus="startHotkeyCapture" @blur="releaseHotkeyCapture" @keydown="captureHotkey" @keyup.stop /><button type="submit" :disabled="desktop.busy || hotkey === settings.hotkey || !hotkey.trim()">保存</button><button type="button" :disabled="desktop.busy || hotkey === settings.hotkey" @click="cancelHotkey">取消</button><span id="hotkey-hint" class="sr-only">按下包含 Control、Alt 或 Super 的组合键，然后点击保存。Escape 取消修改，不会隐藏窗口。</span></form></div>
           <div class="setting-row"><div><label id="autostart-label">开机自启</label><p>登录电脑后自动运行 NextLeek</p></div><button class="switch" role="switch" aria-labelledby="autostart-label" :aria-checked="settings.autostart" :disabled="desktop.busy" @click="desktop.update({ autostart: !settings.autostart })"><span /></button></div>
           <div class="setting-row"><div><label id="compact-label">紧凑顶部栏</label><p>缩小搜索框，留出更多内容空间</p></div><button class="switch" role="switch" aria-labelledby="compact-label" :aria-checked="settings.compact" :disabled="desktop.busy" @click="desktop.update({ compact: !settings.compact })"><span /></button></div>
-          <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>默认返回搜索；开启后在页面中按 Esc 隐藏窗口，下次唤出返回搜索</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
+          <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>默认返回搜索；开启后在页面中按 Esc 隐藏窗口，下次唤出保留当前页面</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
           <section class="setting-row update-row" aria-labelledby="update-heading" :aria-busy="updateInProgress">
             <div class="update-info">
               <h2 id="update-heading">在线更新</h2>
@@ -243,6 +279,6 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
-    <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
+    <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" ref="footer" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

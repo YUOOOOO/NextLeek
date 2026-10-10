@@ -5,8 +5,9 @@ import type { DesktopService } from './services/contracts'
 import { storagePlugin } from './services/storage'
 import { commandsPlugin } from './services/commands'
 import { searchPlugin } from './services/search'
-import { quickLaunchPlugin, settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
+import { settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
 import { everythingPlugin, type EverythingEnvironment } from './services/everything'
+import { applicationsPlugin, type ApplicationsEnvironment } from './services/applications'
 
 interface PluginEntry {
   id: string
@@ -17,7 +18,7 @@ interface PluginEntry {
 }
 const statuses = ['pending', 'loading', 'active', 'failed', 'disposed', 'unloading'] as const
 
-export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment) {
+export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment) {
   const ctx = new Context()
   const entries: PluginEntry[] = [
     { id: 'storage', name: 'LMDB 存储', protected: true, plugin: storagePlugin(path) },
@@ -27,8 +28,8 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     { id: 'everything-provider', name: 'Everything 搜索服务', protected: true, plugin: everythingPlugin(everythingEnvironment) },
     { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
     { id: 'theme', name: '主题', protected: true, plugin: themePlugin },
-    { id: 'quick-launch', name: '快速启动', protected: false, plugin: quickLaunchPlugin },
     { id: 'everything', name: 'Everything 文件搜索', protected: false, plugin: everythingSearchPlugin },
+    ...(applicationsEnvironment ? [{ id: 'applications', name: '应用搜索', protected: false, plugin: applicationsPlugin(applicationsEnvironment) }] : []),
   ]
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
