@@ -9,6 +9,7 @@ import { argumentsCount, boolean, identifier, settingsPatch, launcherSearchReque
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
+import { getApplicationIcon } from './services/application-icons'
 
 
 function trayImage(directory: string) {
@@ -52,13 +53,20 @@ async function start() {
   let currentHotkey: string | undefined
   let hotkeyCapture = false
   let captureAltSpace = false
+  let layoutBounds = window.getBounds()
+  let launcherCenterY = layoutBounds.y + layoutBounds.height / 2
   const setLauncherHeight = (height: number) => {
     if (!Number.isFinite(height) || height < 0) throw new TypeError('Invalid launcher height')
     if (window.isDestroyed()) return
     const bounds = window.getBounds()
     const workArea = screen.getDisplayMatching(bounds).workArea
-    const nextHeight = Math.min(workArea.height, Math.max(64, Math.ceil(height)))
-    window.setBounds({ ...bounds, height: nextHeight, y: Math.max(workArea.y, Math.min(bounds.y, workArea.y + workArea.height - nextHeight)) })
+    if (bounds.y !== layoutBounds.y) launcherCenterY = bounds.y + bounds.height / 2
+    const margin = Math.min(24, Math.max(0, (workArea.height - 64) / 2))
+    const nextHeight = Math.min(690, workArea.height - margin * 2, Math.max(64, Math.ceil(height)))
+    const y = Math.round(Math.max(workArea.y + margin, Math.min(launcherCenterY - nextHeight / 2, workArea.y + workArea.height - margin - nextHeight)))
+    if (bounds.height === nextHeight && bounds.y === y) return
+    window.setBounds({ ...bounds, height: nextHeight, y })
+    layoutBounds = window.getBounds()
   }
   const emit = (event: DesktopEvent) => { if (!view.webContents.isDestroyed()) view.webContents.send(channels.event, event) }
   const show = () => {
@@ -193,7 +201,11 @@ exit 1
       platform: process.platform,
       desktopDirectory: app.getPath('desktop'),
       preferredLanguages: app.getPreferredSystemLanguages(),
-      getFileIcon: async path => (await app.getFileIcon(path, { size: 'normal' })).toDataURL(),
+      getFileIcon: path => getApplicationIcon(path, {
+        readShortcutLink: shortcut => shell.readShortcutLink(shortcut),
+        getFileIcon: target => app.getFileIcon(target, { size: 'normal' }),
+        nativeImage,
+      }),
       openPath: path => shell.openPath(path),
     })
     const ctx = runtime.ctx

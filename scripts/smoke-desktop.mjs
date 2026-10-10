@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, execFile } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
 import { promisify } from 'node:util'
 import { createServer } from 'node:net'
@@ -22,6 +22,8 @@ const checks = []
 let nativeWindow
 let applicationFixture
 const applicationName = `NextLeek Smoke App ${basename(profile)}`
+const broadApplicationName = `NextLeek Height Fixture ${basename(profile)}`
+const broadApplicationFixtures = []
 const launchMarker = resolve(profile, 'application-launched')
 function stage(message) {
   logs.push(`Stage: ${message}`)
@@ -60,14 +62,33 @@ async function createApplicationFixture() {
     await powershell(`$shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut(${psLiteral(applicationFixture)}); $shortcut.TargetPath = ${psLiteral(cmd)}; $shortcut.Arguments = ${psLiteral(`/d /c ""${script}""`)}; $shortcut.IconLocation = ${psLiteral(icon)}; $shortcut.Save()`)
   }
 }
+async function createBroadApplicationFixtures() {
+  if (!applicationFixture) return
+  for (let index = 0; index < 50; index++) {
+    const name = `${broadApplicationName} ${String(index).padStart(2, '0')}`
+    const fixture = resolve(dirname(applicationFixture), `${name}${process.platform === 'darwin' ? '.app' : '.lnk'}`)
+    broadApplicationFixtures.push(fixture)
+    if (process.platform === 'darwin') {
+      await cp(applicationFixture, fixture, { recursive: true })
+      const plist = resolve(fixture, 'Contents', 'Info.plist')
+      await writeFile(plist, (await readFile(plist, 'utf8')).replaceAll(applicationName, name).replace(`app.nextleek.smoke.${basename(profile)}`, `app.nextleek.smoke.${basename(profile)}.height${index}`))
+    } else await copyFile(applicationFixture, fixture)
+  }
+}
 async function launcherTracksContent(page) {
   return page.evaluate(() => {
     const header = document.querySelector('.search-header')
+    const launcher = document.querySelector('.launcher')
     const content = document.querySelector('.launcher-content')
     const footer = document.querySelector('.launcher-footer')
-    if (!header || !content || !footer) return false
-    const intrinsicHeight = header.getBoundingClientRect().height + content.scrollHeight + footer.getBoundingClientRect().height + 1
-    return window.innerHeight > header.getBoundingClientRect().height + footer.getBoundingClientRect().height && window.innerHeight <= Math.ceil(intrinsicHeight) + 1
+    if (!header || !launcher || !content || !footer) return false
+    const error = document.querySelector('.app-shell > .error-strip')
+    const intrinsicHeight = header.getBoundingClientRect().height + content.getBoundingClientRect().height + footer.getBoundingClientRect().height + (error?.getBoundingClientRect().height ?? 0) + 1
+    const cap = Math.min(690, Math.max(64, window.screen.availHeight - 48))
+    const expected = Math.min(Math.ceil(intrinsicHeight), cap)
+    const overflow = intrinsicHeight > cap + 1
+    return Math.abs(window.innerHeight - expected) <= 1
+      && (overflow ? launcher.scrollHeight > launcher.clientHeight && getComputedStyle(launcher).overflowY === 'auto' : launcher.scrollHeight <= launcher.clientHeight + 1)
   })
 }
 function releaseOwnedStreams(processChild) {
@@ -145,6 +166,7 @@ async function quit(page) {
 }
 try {
   await createApplicationFixture()
+  await createBroadApplicationFixtures()
   let page = await launch()
   await page.locator('button.brand-button').waitFor()
   const initial = await page.evaluate(() => window.desktop.getSnapshot())
@@ -178,6 +200,8 @@ try {
     assert.equal(await applications.getAttribute('data-status'), 'ready')
     assert.equal(await application.count(), 1)
     const icon = application.locator('img.application-icon')
+    assert.equal(await applications.locator('.search-result-path, .search-result-metadata').count(), 0)
+    assert.equal(await applications.locator('.application-results').evaluate(list => getComputedStyle(list).display), 'grid')
     await icon.waitFor()
     await eventually('Installed application icon did not decode as native PNG', () => icon.evaluate(image => image.complete && image.naturalWidth > 0 && image.naturalHeight > 0 && image.src.startsWith('data:image/png;base64,')))
     await eventually('Application results did not resize launcher to content', () => launcherTracksContent(page))
@@ -189,6 +213,31 @@ try {
     await page.locator('.app-shell > .search-header .search-input').focus()
     await page.keyboard.press('Escape')
     await eventually('Application search clear did not collapse launcher', async () => (await page.evaluate(() => window.innerHeight)) < 120)
+    const collapsedPosition = await page.evaluate(() => ({ y: window.screenY, height: window.innerHeight }))
+    stage('Searching fifty real application fixtures and verifying bounded scrolling')
+    await page.locator('.app-shell > .search-header .search-input').fill(broadApplicationName)
+    await eventually('Broad application search did not return initial page', async () => await applications.getByTestId('search-result-row').count() === 30)
+    await applications.getByTestId('search-provider-load-more').click()
+    await eventually('Broad native application search did not return fifty fixtures', async () => await applications.getByTestId('search-result-row').count() === 50)
+    await eventually('Broad search did not cap height and retain scroll overflow', () => launcherTracksContent(page))
+    assert.equal(await page.getByRole('heading', { name: '搜索结果', exact: true }).count(), 0)
+    const largeLayout = await page.evaluate(() => {
+      const launcher = document.querySelector('.launcher')
+      const content = document.querySelector('.launcher-content')
+      return { height: window.innerHeight, cap: Math.min(690, Math.max(64, window.screen.availHeight - 48)), intrinsic: content.getBoundingClientRect().height, overflow: launcher.scrollHeight - launcher.clientHeight, screenHeight: window.screen.availHeight }
+    })
+    assert.ok(largeLayout.intrinsic > largeLayout.cap, 'Fixture must exercise genuinely overflowing content, not a few snug rows')
+    assert.ok(Math.abs(largeLayout.height - largeLayout.cap) <= 1, JSON.stringify(largeLayout))
+    assert.ok(largeLayout.height < largeLayout.screenHeight && largeLayout.overflow > 0, JSON.stringify(largeLayout))
+    assert.equal(await page.locator('.launcher').evaluate(launcher => {
+      launcher.scrollTop = launcher.scrollHeight
+      return launcher.scrollTop > 0 && launcher.scrollTop + launcher.clientHeight >= launcher.scrollHeight - 1
+    }), true, 'All overflowing results must remain reachable by scrolling')
+    await page.screenshot({ path: resolve(evidence, 'application-search-capped.png') })
+    await page.locator('.app-shell > .search-header .search-input').focus()
+    await page.keyboard.press('Escape')
+    await eventually('Clearing broad search did not restore snug header and stable position', async () => page.evaluate(position => Math.abs(window.innerHeight - position.height) <= 1 && Math.abs(window.screenY - position.y) <= 1 && !document.querySelector('.launcher'), collapsedPosition))
+    checks.push('Fifty real installed applications cap search at690/workarea-minus48, retain scrolling, and clear back to the same snug header position without drift')
   }
   assert.equal(await page.locator('.search-header .window-action').count(), 0)
   await page.locator('button.brand-button').click()
@@ -436,6 +485,7 @@ try {
     await stopOwnedChild()
   } finally {
     if (applicationFixture) await rm(applicationFixture, { recursive: true, force: true })
+    await Promise.all(broadApplicationFixtures.map(fixture => rm(fixture, { recursive: true, force: true })))
     stage(`Cleanup complete; active resources: ${process.getActiveResourcesInfo().join(', ')}`)
     await writeFile(resolve(evidence, 'host.log'), logs.join('\n'))
   }

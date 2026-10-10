@@ -22,18 +22,22 @@ const systemDark = ref(false)
 const searchMode = computed(() => desktop.query.trim().length > 0)
 const hasHomeHistory = computed(() => desktop.recentCommands.length > 0 || desktop.pinnedCommands.length > 0)
 const commandSections = computed(() => {
-  if (searchMode.value) return [{ id: 'results', title: '搜索结果', commands: desktop.results, offset: 0 }]
+  if (searchMode.value) return desktop.results.length ? [{ id: 'results', title: '搜索结果', commands: desktop.results, offset: 0 }] : []
   return [
     { id: 'recent', title: '最近使用', commands: desktop.recentCommands, offset: 0 },
     { id: 'pinned', title: '固定指令', commands: desktop.pinnedCommands, offset: desktop.recentCommands.length },
   ].filter(section => section.commands.length)
 })
 const visibleCommands = computed(() => commandSections.value.flatMap(section => section.commands))
+const orderedSearchGroups = computed(() => [
+  ...desktop.searchGroups.filter(group => group.providerId === 'applications'),
+  ...desktop.searchGroups.filter(group => group.providerId !== 'applications'),
+])
 const providerSections = computed(() => {
   let offset = visibleCommands.value.length
-  return desktop.searchGroups.map(group => { const section = { group, offset }; offset += group.items.length; return section })
+  return orderedSearchGroups.value.map(group => { const section = { group, offset }; offset += group.items.length; return section })
 })
-const providerItems = computed(() => desktop.searchGroups.flatMap(group => group.items.map(item => ({ providerId: group.providerId, item }))))
+const providerItems = computed(() => orderedSearchGroups.value.flatMap(group => group.items.map(item => ({ providerId: group.providerId, item }))))
 const resultCount = computed(() => visibleCommands.value.length + providerItems.value.length)
 const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
 const settings = computed(() => desktop.snapshot?.settings)
@@ -62,6 +66,7 @@ watch(resultCount, count => { selected.value = Math.min(selected.value, Math.max
 let layoutObserver: ResizeObserver | undefined
 let layoutFrame: number | undefined
 let layoutActive = false
+let requestedLauncherHeight: number | undefined
 function scheduleLauncherHeight() {
   if (!layoutActive) return
   void nextTick(() => {
@@ -69,11 +74,14 @@ function scheduleLauncherHeight() {
     layoutFrame = requestAnimationFrame(() => {
       layoutFrame = undefined
       const height = desktop.page === 'launcher'
-        ? (header.value?.getBoundingClientRect().height ?? 0) + (launcherContent.value?.scrollHeight ?? 0)
+        ? (header.value?.getBoundingClientRect().height ?? 0) + (launcherContent.value?.getBoundingClientRect().height ?? 0)
           + (footer.value?.getBoundingClientRect().height ?? 0) + (errorStrip.value?.getBoundingClientRect().height ?? 0)
           + (stateMessage.value?.getBoundingClientRect().height ?? 0) + 1
         : 690
-      void desktop.setLauncherHeight(Math.ceil(height))
+      const nextHeight = Math.min(690, Math.ceil(height))
+      if (nextHeight === requestedLauncherHeight) return
+      requestedLauncherHeight = nextHeight
+      void desktop.setLauncherHeight(nextHeight)
     })
   })
 }
