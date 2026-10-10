@@ -3,7 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { EverythingAction, EverythingItem, EverythingSearchRequest, EverythingStatus } from '../../shared/contracts'
 import AppIcon from './AppIcon.vue'
 
-const props = defineProps<{ active: boolean }>()
+const props = defineProps<{ active: boolean; focusRequest: number }>()
 defineEmits<{ back: [] }>()
 const query = ref('')
 const filter = ref<EverythingSearchRequest['filter']>('all')
@@ -127,6 +127,13 @@ function modified(item: EverythingItem) {
 function keydown(event: KeyboardEvent) {
   if (event.isComposing || composing.value || event.keyCode === 229 || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
   const target = event.target as HTMLElement
+  if (event.key === 'Escape' && query.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    query.value = ''
+    input.value?.focus()
+    return
+  }
   if (target !== input.value && !target.closest('.everything-open')) return
   if (!items.value.length || loading.value) return
   if (event.key === 'Enter') { event.preventDefault(); const item = items.value[selected.value]; if (item) void action(item, 'open'); return }
@@ -146,6 +153,11 @@ watch(() => props.active, async active => {
     actionRevision++
     checking.value = false
     actionBusy.value = false
+    query.value = ''
+    items.value = []
+    selected.value = 0
+    hasMore.value = false
+    dirty = true
     return
   }
   await nextTick()
@@ -153,6 +165,10 @@ watch(() => props.active, async active => {
   input.value?.focus()
   void refreshStatus()
 }, { immediate: true })
+watch(() => props.focusRequest, async () => {
+  await nextTick()
+  if (props.active && !disposed && !root.value?.contains(document.activeElement)) input.value?.focus()
+})
 onUnmounted(() => { disposed = true; cancelSearch(); statusRevision++; actionRevision++ })
 </script>
 

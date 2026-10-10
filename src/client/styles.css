@@ -97,10 +97,9 @@ button { border: 0; }
 .search-input::placeholder { color: var(--muted); opacity: .85; }
 .search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .brand-button { width: var(--space-12); height: var(--space-12); display: grid; place-items: center; flex-shrink: 0; border-radius: var(--radius-pill); background: var(--brand); color: var(--brand-ink); }
-.brand-button svg { width: var(--space-8); height: var(--space-8); stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: square; }
-.back-button, .clear-button { display: grid; place-items: center; padding: var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
-.back-button:hover, .clear-button:hover { background: var(--surface-hover); color: var(--ink); }
-.clear-button .icon { width: var(--space-4); height: var(--space-4); }
+.brand-button svg { width: var(--space-8); height: var(--space-8); }
+.back-button { display: grid; place-items: center; padding: var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
+.back-button:hover { background: var(--surface-hover); color: var(--ink); }
 .launcher { padding: var(--space-6) var(--space-6) var(--space-8); flex: 1; overflow-y: auto; }
 .launcher section + section { margin-top: var(--space-8); }
 .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-3); }

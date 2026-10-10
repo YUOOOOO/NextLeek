@@ -69,7 +69,7 @@ test('ES protocol preserves a whole Everything query without exposing command op
     const query = '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"'
     const result = await h.service.search({ ...request, query, filter: 'files', sort: 'modified', descending: true, offset: 25 })
     assert.deepEqual(result, { items: [], hasMore: false, offset: 25 })
-    assert.deepEqual(h.calls[0].args, ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
+    assert.deepEqual(h.calls[0].args, ['-no-argv', '-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf', '-count', '18446744073709551615', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
     await h.service.search({ ...request, filter: 'folders', sort: 'path' })
     assert(h.calls[1].args.includes('/ad') && h.calls[1].args.includes('-sort-ascending'))
     await h.service.search({ ...request, sort: 'size' })
@@ -83,7 +83,7 @@ test('native ES parameter transport preserves quoted paths, backslashes, Unicode
   const h = harness()
   h.environment.executable = 'C:\\Program Files\\NextLeek\\everything\\es.exe'
   const queries = [
-    '', 'ext:txt', '  leading and trailing spaces  ',
+    '', 'ext:txt', '报告', 'NextLeek', 'C:\\Users\\测试 用户\\Documents', '  leading and trailing spaces  ',
     '"C:\\Users\\测试 用户\\NextLeek\\fixtures\\"',
     '"\\\\server\\共享 空间\\fixtures\\"',
     'regex:"C:\\\\资料\\\\[^\\\\]+\\.txt$"',
@@ -135,8 +135,10 @@ test('Unicode JSON results preserve metadata, normalize folders, and keep lookah
 test('missing engine, missing bundled ES and unsupported hosts report genuine states', async () => {
   const h = harness()
   try {
-    h.output('1.4.1.1026\r\n'); assert.equal((await h.service.getStatus()).status, 'ready'); assert.deepEqual(h.calls[0].args, ['-no-argv', '-get-everything-version'])
-    h.error(Object.assign(new Error('IPC not found'), { code: 8 })); assert.match((await h.service.getStatus()).message, /安装并启动 Everything/)
+    h.output('1.4.1.1026\r\n'); assert.equal((await h.service.getStatus()).status, 'ready'); assert.deepEqual(h.calls[0].args, ['-no-argv', '-timeout', '5000', '-get-everything-version'])
+    h.error(Object.assign(new Error('IPC not found or database still loading'), { code: 8 }))
+    const unavailable = await h.service.getStatus()
+    assert.equal(unavailable.status, 'unavailable'); assert.match(unavailable.message, /安装并启动 Everything/); assert.match(unavailable.message, /等待索引完成/)
     await assert.rejects(h.service.search(request), /安装并启动 Everything/)
     h.error(Object.assign(new Error('missing'), { code: 'ENOENT' })); assert.match((await h.service.getStatus()).message, /ES.exe.*重新安装/)
     h.error(Object.assign(new Error('timeout'), { killed: true })); await assert.rejects(h.service.search(request), /超时/)
@@ -150,10 +152,25 @@ test('missing engine, missing bundled ES and unsupported hosts report genuine st
 test('malformed output and stale filesystem entries never become fabricated results', async () => {
   const h = harness()
   try {
+    h.output('{"name":'); await assert.rejects(h.service.search(request), /无效的 JSON 结果/)
     for (const output of ['not-json', '{}', JSON.stringify([{ ...row(), filename: 'relative.txt' }]), JSON.stringify([{ ...row(), filename: '' }]), JSON.stringify([{ ...row(), date_modified: 123 }])]) { h.output(output); await assert.rejects(h.service.search(request)) }
     h.output([row(), row(), row(), row()]); await assert.rejects(h.service.search(request), /超出请求范围/)
     h.output([row('类型未知', null)]); h.directory(true); assert.equal((await h.service.search(request)).items[0].isDirectory, true)
     h.missing(true); assert.deepEqual((await h.service.search(request)).items, [])
+  } finally { await h.ctx.fiber.dispose() }
+})
+
+test('ES queries override saved matching and count settings without rewriting Everything syntax', async () => {
+  const h = harness()
+  try {
+    // ES es.c:11407-11421 loads these settings; 8702-8715 turns a saved
+    // count into an extra filter, even when -max-results is explicitly set.
+    const query = 'case:NextLeek | path:"C:\\资料" count:2'
+    await h.service.search({ ...request, query })
+    const { args } = h.calls[0]
+    assert.equal(args[args.indexOf('-count') + 1], '18446744073709551615')
+    for (const option of ['-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf']) assert(args.includes(option))
+    assert.deepEqual(decodeEsSearchParameter(args.at(-1)!), { query, remaining: '' })
   } finally { await h.ctx.fiber.dispose() }
 })
 

@@ -31,7 +31,7 @@ export interface EverythingPorts {
 function failure(error: Error): Error {
   const code = (error as Error & { code?: string | number }).code
   if (code === 'ENOENT') return new Error('未找到随 NextLeek 安装的 ES.exe，请重新安装 NextLeek。')
-  if (code === 8 || code === '8') return new Error('未连接到 Everything。请安装并启动 Everything，然后重试。')
+  if (code === 8 || code === '8') return new Error('未连接到就绪的 Everything 索引。请安装并启动 Everything；如果已经启动，请等待索引完成后重试。')
   if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return new Error('Everything 返回的数据过大，请缩小搜索范围。')
   if ((error as Error & { killed?: boolean }).killed) return new Error('Everything 查询超时，请确认 Everything 已启动并完成索引。')
   return new Error(`Everything 查询失败：${error.message}`)
@@ -41,7 +41,9 @@ export function everythingArguments(request: EverythingSearchRequest): string[] 
   // ES 1.1.0.38's -search uses its own decoder even in -argv mode:
   // triple quotes become a literal quote; backslashes are always literal.
   // Supply native ES quoting verbatim, never through a shell or Node's CRT quoting.
-  const args = ['-no-argv', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', String(request.limit + 1), '-offset', String(request.offset)]
+  // ES loads the user's shared es.ini before flags. Inherited count:0 or
+  // whole-word/case matching can hide every ordinary filename result.
+  const args = ['-no-argv', '-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf', '-count', '18446744073709551615', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', String(request.limit + 1), '-offset', String(request.offset)]
   if (request.filter !== 'all') args.push(request.filter === 'folders' ? '/ad' : '/a-d')
   args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', `"${request.query.replace(/"/g, '"""')}"`)
   return args
@@ -50,7 +52,9 @@ export function everythingArguments(request: EverythingSearchRequest): string[] 
 function parseResults(stdout: string): Array<Omit<EverythingItem, 'id'> & { attributes: number | null }> {
   // ES emits no JSON bytes at all for an empty result set.
   const text = stdout.replace(/^\uFEFF/, '').trim()
-  const records: unknown = text ? JSON.parse(text) : []
+  let records: unknown
+  try { records = text ? JSON.parse(text) : [] }
+  catch { throw new Error('Everything 返回了无效的 JSON 结果，请重试连接。') }
   if (!Array.isArray(records)) throw new Error('Everything 返回了无效的结果数据。')
   return records.map((record: unknown) => {
     if (!record || typeof record !== 'object') throw new Error('Everything 返回了无效的结果数据。')
@@ -119,7 +123,9 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
     async getStatus() {
       if (!environment || (environment.platform ?? process.platform) !== 'win32') return { status: 'unsupported', message: 'Everything 文件搜索仅支持 Windows。' }
       try {
-        const version = (await execute(['-no-argv', '-get-everything-version'])).trim()
+        // With a nonzero timeout ES checks IS_DB_LOADED before returning a
+        // version; finding the IPC window alone does not mean queries are ready.
+        const version = (await execute(['-no-argv', '-timeout', '5000', '-get-everything-version'])).trim()
         if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version)) throw new Error('未能读取 Everything 版本，请启动 Everything 后重试。')
         return { status: 'ready', message: '已连接正在运行的 Everything 索引。', version }
       } catch (error) { return { status: 'unavailable', message: error instanceof Error ? error.message : String(error) } }

@@ -60,7 +60,15 @@ watch(() => desktop.page, async page => {
   if (page === 'launcher') search.value?.focus()
   if (page === 'theme') themeControl.value?.focus()
 })
-watch(() => desktop.focusRequest, async () => { await nextTick(); if (desktop.page === 'launcher') search.value?.focus() })
+watch(() => desktop.focusRequest, async () => {
+  selected.value = 0
+  await nextTick()
+  if (desktop.page === 'launcher') search.value?.focus()
+  else if (desktop.page !== 'everything' && !document.activeElement?.closest('.settings-layout')) {
+    if (desktop.page === 'theme') themeControl.value?.focus()
+    else search.value?.focus()
+  }
+})
 
 function changeTheme(event: Event) {
   void desktop.update({ theme: (event.target as HTMLSelectElement).value as Settings['theme'] })
@@ -102,12 +110,14 @@ function keydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     event.preventDefault()
     if (desktop.page === 'launcher' && desktop.query) desktop.query = ''
-    else if (desktop.page !== 'launcher' && !settings.value?.escHide) desktop.navigate('launcher')
-    else void desktop.hide()
+    else if (desktop.page !== 'launcher') {
+      if (settings.value?.escHide) void desktop.hide().then(hidden => { if (hidden) desktop.navigate('launcher') })
+      else desktop.navigate('launcher')
+    } else void desktop.hide()
     return
   }
   if (desktop.page !== 'launcher' || !visibleCommands.value.length || desktop.busy) return
-  if (target.closest('.pin-action') || target.closest('.brand-button') || target.closest('.clear-button')) return
+  if (target.closest('.pin-action') || target.closest('.brand-button')) return
   if (event.key === 'Enter' && (target === search.value || target.closest('.command-launch'))) {
     event.preventDefault()
     const command = visibleCommands.value[selected.value]
@@ -157,8 +167,7 @@ onUnmounted(() => {
     <header v-if="desktop.page !== 'everything'" class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" type="search" aria-label="搜索应用和指令" placeholder="搜索应用和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="composing = true" @compositionend="composing = false" />
-      <button v-if="desktop.query" class="clear-button" aria-label="清除搜索" title="清除搜索" @click="desktop.query = ''; search?.focus()"><AppIcon name="close" /></button>
-      <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 24V8l16 16V8M8 8h9M15 24h9" /></svg></button>
+      <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
     </header>
 
     <div v-if="desktop.error" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
@@ -179,13 +188,13 @@ onUnmounted(() => {
           <div class="setting-row"><div><label for="hotkey">呼出快捷键</label><p>点击输入框录入组合键，再点击保存</p></div><form class="hotkey-control" @submit.prevent="saveHotkey"><input id="hotkey" ref="hotkeyInput" v-model="hotkey" data-hotkey aria-describedby="hotkey-hint" :disabled="desktop.busy" @focus="startHotkeyCapture" @blur="releaseHotkeyCapture" @keydown="captureHotkey" @keyup.stop /><button type="submit" :disabled="desktop.busy || hotkey === settings.hotkey || !hotkey.trim()">保存</button><button type="button" :disabled="desktop.busy || hotkey === settings.hotkey" @click="cancelHotkey">取消</button><span id="hotkey-hint" class="sr-only">按下包含 Control、Alt 或 Super 的组合键，然后点击保存。Escape 取消修改，不会隐藏窗口。</span></form></div>
           <div class="setting-row"><div><label id="autostart-label">开机自启</label><p>登录电脑后自动运行 NextLeek</p></div><button class="switch" role="switch" aria-labelledby="autostart-label" :aria-checked="settings.autostart" :disabled="desktop.busy" @click="desktop.update({ autostart: !settings.autostart })"><span /></button></div>
           <div class="setting-row"><div><label id="compact-label">紧凑顶部栏</label><p>缩小搜索框，留出更多内容空间</p></div><button class="switch" role="switch" aria-labelledby="compact-label" :aria-checked="settings.compact" :disabled="desktop.busy" @click="desktop.update({ compact: !settings.compact })"><span /></button></div>
-          <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>在设置中按 Esc 隐藏窗口，下次唤出返回搜索</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
+          <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>默认返回搜索；开启后在页面中按 Esc 隐藏窗口，下次唤出返回搜索</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
           <section class="setting-row update-row" aria-labelledby="update-heading" :aria-busy="updateInProgress">
             <div class="update-info">
               <h2 id="update-heading">在线更新</h2>
               <template v-if="desktop.updateState">
                 <p>当前版本 v{{ desktop.updateState.currentVersion }}<template v-if="desktop.updateState.version"> · 更新版本 v{{ desktop.updateState.version }}</template></p>
-                <p class="update-status" :role="desktop.updateState.status === 'error' ? 'alert' : 'status'">{{ updateLabels[desktop.updateState.status] }}<template v-if="desktop.updateState.message"> · {{ desktop.updateState.message }}</template></p>
+                <p class="update-status" :role="desktop.updateState.status === 'error' ? 'alert' : 'status'">{{ updateLabels[desktop.updateState.status] }}<template v-if="desktop.updateState.status !== 'downloading' && desktop.updateState.message"> · {{ desktop.updateState.message }}</template></p>
                 <div v-if="desktop.updateState.status === 'downloading' && desktop.updateState.progress" class="update-progress">
                   <progress :value="updatePercent" max="100" aria-label="更新下载进度" />
                   <span>{{ updatePercent.toFixed(1) }}% · {{ (desktop.updateState.progress.transferred / 1024 / 1024).toFixed(1) }} / {{ (desktop.updateState.progress.total / 1024 / 1024).toFixed(1) }} MB</span>
@@ -215,7 +224,7 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
-    <EverythingPage v-if="desktop.snapshot" v-show="desktop.page === 'everything'" :active="desktop.page === 'everything'" @back="desktop.navigate('launcher')" />
+    <EverythingPage v-if="desktop.snapshot" v-show="desktop.page === 'everything'" :active="desktop.page === 'everything'" :focus-request="desktop.focusRequest" @back="desktop.navigate('launcher')" />
     <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

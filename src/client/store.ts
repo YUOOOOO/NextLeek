@@ -43,7 +43,10 @@ export const useDesktopStore = defineStore('desktop', () => {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
   function navigate(target: typeof page.value) {
-    if (target === 'launcher' && page.value !== 'launcher') launcherRevealed.value = true
+    if (target === 'launcher') {
+      query.value = ''
+      launcherRevealed.value = false
+    }
     page.value = target
   }
   function receive(event: DesktopEvent) {
@@ -58,7 +61,18 @@ export const useDesktopStore = defineStore('desktop', () => {
       if (pluginsChanged) void refreshCommands()
     }
     if (event.type === 'navigate') navigate(event.page)
-    if (event.type === 'shown' && page.value === 'launcher') focusRequest.value++
+    if (event.type === 'shown') {
+      if (page.value === 'launcher') {
+        query.value = ''
+        launcherRevealed.value = false
+      }
+      focusRequest.value++
+    }
+    if (event.type === 'close-request') {
+      if (page.value === 'launcher') void hide()
+      else if (snapshot.value?.settings.escHide) void hide().then(hidden => { if (hidden) navigate('launcher') })
+      else navigate('launcher')
+    }
     if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
   }
   async function refreshCommands() {
@@ -139,12 +153,9 @@ export const useDesktopStore = defineStore('desktop', () => {
   async function downloadUpdate() { await performUpdate(() => window.desktop.downloadUpdate()) }
   async function installUpdate() { await performUpdate(() => window.desktop.installUpdate()) }
   async function hide() {
-    await perform(async () => {
-      await window.desktop.hide()
-      page.value = 'launcher'
-      query.value = ''
-      launcherRevealed.value = false
-    })
+    let hidden = false
+    await perform(async () => { await window.desktop.hide(); hidden = true })
+    return hidden
   }
   function dispose() { disposed = true; unsubscribe?.(); unsubscribe = undefined }
   return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }

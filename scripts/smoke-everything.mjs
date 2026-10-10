@@ -29,6 +29,9 @@ let app
 let engine
 let browser
 let page
+let sharedEsIni
+let savedEsIni
+let sharedEsIniChanged = false
 const engineDirectory = join(temporary, 'engine')
 const engineExecutable = join(engineDirectory, 'Everything.exe')
 const fixtureDirectory = join(temporary, 'fixtures')
@@ -131,6 +134,17 @@ try {
   let existingEngine = false
   try { await exec(cli, ['-get-everything-version'], { timeout: 5000 }); existingEngine = true } catch {}
   assert.equal(existingEngine, false, 'Default Everything IPC instance already exists; refusing to replace it')
+  // ES 1.1.0.38 config.c:54-67 and os.c:507-509 use CSIDL_APPDATA,
+  // not the executable's directory or an assumed environment override.
+  const roamingAppData = await powershell('[Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)')
+  assert.ok(roamingAppData, 'Windows roaming ApplicationData path is unavailable')
+  sharedEsIni = join(roamingAppData, 'voidtools', 'es', 'es.ini')
+  try { savedEsIni = await readFile(sharedEsIni) }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  await mkdir(dirname(sharedEsIni), { recursive: true })
+  // Track ownership before writing so even a partially failed write restores bytes.
+  sharedEsIniChanged = true
+  await writeFile(sharedEsIni, '[es]\r\ncount=0\r\nmatch_case=1\r\nmatch_whole_word=1\r\n', 'utf8')
   await downloadVerified(engineAsset, join(temporary, 'everything.zip'))
   await extractZip(join(temporary, 'everything.zip'), engineDirectory)
   assert.equal(sha256(await readFile(engineExecutable)), 'f191f756996a14a11e5445fa7103d302efd510cf2fbf920e6c0c8ed51d512e36')
@@ -183,6 +197,14 @@ try {
   checks.push('Missing real Everything returns unavailable without fabricated results')
   await startEngine()
   assert.equal((await page.evaluate(() => window.desktop.getEverythingStatus())).status, 'ready')
+  // -max-results alone does not override es.ini count:0. This control proves
+  // the real CLI read the adverse shared preferences, without a mock process.
+  const inherited = await exec(cli, ['-no-argv', '-json', '-max-results', '100', '-search', '"uNiCo"'], { timeout: 8000, windowsVerbatimArguments: true, argv0: `"${cli}"`, windowsHide: true })
+  assert.equal(inherited.stdout.trim(), '', 'Raw ES unexpectedly ignored the seeded count:0 preference')
+  const ordinary = await search({ query: 'uNiCo' })
+  samePaths(ordinary.items, [fixtures.at(-1)])
+  assert.equal(ordinary.hasMore, false)
+  checks.push('Real shared ES INI count:0/case/whole-word preferences cannot hide ordinary partial mixed-case filename searches in NextLeek')
   const all = await collect({ query })
   samePaths(all, fixtures)
   assert.equal(new Set(all.map(item => item.id)).size, all.length)
@@ -210,7 +232,10 @@ try {
   await assert.rejects(page.evaluate(() => window.desktop.performEverythingAction('not-a-host-issued-result', 'open')))
   checks.push('Real IPC index exactly matches finite Unicode/comma fixture, files/folders, all sort directions, pagination, empty results, and authorization')
   await page.getByTestId('everything-retry').click()
-  await eventually('UI did not recover from unavailable', async () => (await page.getByTestId('everything-status').getAttribute('data-status')) === 'ready')
+  await eventually('UI did not reconnect before ordinary filename search', async () => (await page.getByTestId('everything-status').getAttribute('data-status')) === 'ready')
+  await page.getByTestId('everything-query').fill('uNiCo')
+  await eventually('UI ordinary partial mixed-case search failed with adverse ES preferences', async () => (await page.getByTestId('everything-row').count()) === 1 && (await page.getByTestId('everything-row').textContent()).includes('Unicode 中文,逗号.txt'))
+  await page.screenshot({ path: join(evidence, 'shared-es-preferences.png') })
   await page.getByTestId('everything-query').fill(query)
   await eventually('UI did not show first real result page', async () => (await page.getByTestId('everything-row').count()) === 100)
   await page.getByTestId('everything-load-more').click()
@@ -251,9 +276,23 @@ try {
   await eventually('Engine stop did not become unavailable', async () => (await page.evaluate(() => window.desktop.getEverythingStatus())).status === 'unavailable')
   await page.getByTestId('everything-retry').click()
   await eventually('UI did not report stopped engine', async () => (await page.getByTestId('everything-status').getAttribute('data-status')) === 'unavailable')
+  // Reuse the already-owned engine restart with real folder scanning instead
+  // of EFU metadata. Fixed volumes remain excluded; no extra engine/download.
+  const indexedConfiguration = (await readFile(configuration, 'utf8'))
+    .replace(/^folders=.*$/m, `folders=${iniList(fixtureDirectory)}`)
+    .replace(/^filelists=.*$/m, 'filelists=')
+  await writeFile(configuration, indexedConfiguration, 'utf8')
   await startEngine()
   await page.getByTestId('everything-retry').click()
   await eventually('UI did not recover after real engine restart', async () => (await page.getByTestId('everything-status').getAttribute('data-status')) === 'ready')
+  const indexed = (await collect({ query })).filter(item => normalized(item.path) !== normalized(fixtureDirectory))
+  samePaths(indexed, fixtures)
+  assert.ok(indexed.filter(item => !item.isDirectory).every(item => item.size !== null && item.modifiedAt !== null))
+  const indexedOrdinary = await search({ query: 'uNiCo' })
+  samePaths(indexedOrdinary.items, [fixtures.at(-1)])
+  assert.equal(indexedOrdinary.hasMore, false)
+  await writeFile(join(evidence, 'indexed-folder-results.json'), JSON.stringify({ configuration: indexedConfiguration, indexed, ordinary: indexedOrdinary }, null, 2))
+  checks.push('Real Everything folder-scanned index (no EFU) preserves paths/types/metadata and ordinary partial mixed-case filename queries')
   checks.push('Real engine stop/restart transitions unavailable → ready without restarting NextLeek')
   await page.screenshot({ path: join(evidence, 'recovered.png') })
   await writeFile(join(evidence, 'checks.json'), JSON.stringify(checks, null, 2))
@@ -268,6 +307,12 @@ try {
   await browser?.close().catch(() => {})
   await stopChild(app).catch(error => logs.push(String(error)))
   await stopEngine().catch(error => { logs.push(String(error)); process.exitCode = 1 })
+  if (sharedEsIniChanged) {
+    try {
+      if (savedEsIni === undefined) await rm(sharedEsIni)
+      else await writeFile(sharedEsIni, savedEsIni)
+    } catch (error) { logs.push(`Failed to restore shared ES INI: ${error.stack ?? error}`); process.exitCode = 1 }
+  }
   const encodedFixture = Buffer.from(fixtureDirectory, 'utf16le').toString('base64')
   await powershell(`$root=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedFixture}')); $shell=New-Object -ComObject Shell.Application; @($shell.Windows()) | ForEach-Object { try { if ($_.Document.Folder.Self.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $_.Quit() } } catch {} }`).catch(error => logs.push(String(error)))
   await writeFile(join(evidence, 'process.log'), logs.join('\n'))

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
-import { realpathSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
@@ -11,15 +11,14 @@ import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
 
 
-function trayImage() {
-  const pixels = Buffer.alloc(24 * 24 * 4)
-  for (let y = 2; y < 22; y++) for (let x = 2; x < 22; x++) {
-    const on = (x < 7 || x > 16 || Math.abs(x - y) < 3)
-    if (!on) continue
-    const offset = (y * 24 + x) * 4
-    pixels[offset] = 52; pixels[offset + 1] = 190; pixels[offset + 2] = 130; pixels[offset + 3] = 255
+function trayImage(directory: string) {
+  const image = nativeImage.createFromPath(join(directory, process.platform === 'darwin' ? 'trayTemplate.png' : 'tray-16.png'))
+  if (process.platform === 'darwin') image.setTemplateImage(true)
+  else {
+    image.addRepresentation({ scaleFactor: 1.5, buffer: readFileSync(join(directory, 'tray-24.png')) })
+    image.addRepresentation({ scaleFactor: 2, buffer: readFileSync(join(directory, 'tray-32.png')) })
   }
-  return nativeImage.createFromBitmap(pixels, { width: 24, height: 24, scaleFactor: 1 })
+  return image
 }
 
 async function start() {
@@ -33,9 +32,11 @@ async function start() {
   const rendererFile = join(here, '../renderer/index.html')
   const devURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
   const rendererURL = devURL ?? pathToFileURL(rendererFile).href
+  const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
   const window = new BrowserWindow({
     width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
     title: 'NextLeek', frame: false, backgroundColor: '#f4f6fa', autoHideMenuBar: true,
+    icon: join(iconDirectory, 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
   })
   const view = new WebContentsView({ webPreferences: {
@@ -187,7 +188,7 @@ exit 1
     const ctx = runtime.ctx
     ctx.effect(() => {
       window.on('resize', resize)
-      const close = (event: Electron.Event) => { if (!quitting) { event.preventDefault(); window.hide() } }
+      const close = (event: Electron.Event) => { if (!quitting) { event.preventDefault(); emit({ type: 'close-request' }) } }
       const quit = (event: Electron.Event) => {
         if (quitting) return
         event.preventDefault()
@@ -231,7 +232,7 @@ exit 1
       }
     }, 'Electron lifecycle and security')
     ctx.effect(() => {
-      const tray = new Tray(trayImage())
+      const tray = new Tray(trayImage(iconDirectory))
       tray.setToolTip('NextLeek — Alt+Z')
       tray.setContextMenu(Menu.buildFromTemplate([
         { label: '显示 NextLeek', click: show },

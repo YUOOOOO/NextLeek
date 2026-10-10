@@ -91,6 +91,12 @@ jobs:
           Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath artifacts/portable
           $exe = Join-Path (Resolve-Path artifacts/portable) 'NextLeek.exe'
           if (!(Test-Path -LiteralPath $exe)) { throw 'Missing root portable NextLeek.exe' }
+          # The portable ZIP contains one runnable app, never release/source archives.
+          $nestedPackages = @(Get-ChildItem artifacts/portable -Recurse -File | Where-Object { $_.Name -match '-Setup\.exe$|\.zip$|^latest\.yml$|\.blockmap$' })
+          if ($nestedPackages.Count -ne 0) { throw 'Portable ZIP contains nested release packages' }
+          foreach ($sourceDirectory in @('src', 'scripts', 'docs', '.git', '.github')) {
+            if (Test-Path (Join-Path artifacts/portable $sourceDirectory)) { throw "Portable ZIP contains repository sources: $sourceDirectory" }
+          }
           node scripts/smoke-desktop.mjs $exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -118,18 +124,6 @@ jobs:
           "executable=$exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           node scripts/smoke-desktop.mjs $exe --expect-update-supported
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Upload release build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextleek-windows-x64
-          path: |
-            release/*.zip
-            release/*.sha256
-            release/*-Setup.exe
-            release/*-Setup.exe.blockmap
-            release/latest.yml
-          if-no-files-found: error
-          retention-days: 30
       - name: Publish immutable GitHub release after packaged smoke
         shell: pwsh
         env:
@@ -137,7 +131,7 @@ jobs:
         run: |
           $assets = @(Get-ChildItem release -File | Where-Object { $_.Name -match '\.zip$|\.sha256$|-Setup\.exe$|-Setup\.exe\.blockmap$|^latest\.yml$' } | ForEach-Object { $_.FullName })
           if ($assets.Count -ne 5) { throw 'Expected ZIP, checksum, NSIS installer, blockmap, and latest.yml' }
-          $notes = 'Windows: install Setup.exe for check/download/restart-install online updates. Incremental download uses blockmaps and falls back to the full installer when needed. Portable ZIP cannot auto-install updates; install Setup.exe first. Everything Search includes the official ES CLI and requires the free Everything desktop application from voidtools.com to be installed and running; it reuses the local index over IPC with no HTTP configuration. Windows binaries are unsigned and may show SmartScreen warnings. macOS/Linux and development builds require manual updates. Future releases must bump package.json; tags are never overwritten.'
+          $notes = 'Downloads are separate: Setup.exe is the installer; win-x64.zip is only the portable runnable application; GitHub Source code (zip/tar.gz) is only repository source. No combined download bundle is published. Install Setup.exe for check/download/restart-install online updates. Portable ZIP cannot auto-install updates. Everything Search requires Everything from voidtools.com installed, running, and indexed; ES CLI is included, engine is not. Windows binaries are unsigned and may show SmartScreen warnings. macOS/Linux and development builds require manual updates. Tags are immutable.'
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "NextLeek $env:RELEASE_TAG" --notes $notes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest

@@ -1,7 +1,7 @@
 import { accents, themes, type Settings, type EverythingSearchRequest, type EverythingAction } from './contracts'
 
 export const defaultSettings: Readonly<Settings> = Object.freeze({
-  hotkey: 'Alt+Z', autostart: false, theme: 'system', accent: 'blue', compact: false, escHide: true,
+  hotkey: 'Alt+Z', autostart: false, theme: 'system', accent: 'blue', compact: false, escHide: false,
 })
 export function identifier(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-z][a-z0-9.-]{0,79}$/.test(value)) throw new TypeError('Invalid identifier')

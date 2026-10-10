@@ -4,7 +4,13 @@ defineProps<{ name: string }>()
 
 <template>
   <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <template v-if="name.includes('setting') || name === 'gear'">
+    <template v-if="name === 'brand' || name === 'logo'">
+      <g fill="currentColor" stroke="none">
+        <path d="M5 18V10a5 5 0 0 1 5-5h1v7Z" />
+        <path d="M13 5h3l5 7-5 7h-3l5-7Z" />
+      </g>
+    </template>
+    <template v-else-if="name.includes('setting') || name === 'gear'">
       <path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 2-1 3 2 2-2 3-1v-3l2-2-1-3-3-1-1-3Z" />
       <circle cx="12" cy="12" r="3" />
     </template>

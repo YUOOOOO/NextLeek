@@ -2,6 +2,7 @@ appId: com.nextleek.desktop
 productName: NextLeek
 directories:
   output: release
+  buildResources: resources/icons
 files:
   - out/**
   - package.json
@@ -15,7 +16,12 @@ asarUnpack:
 npmRebuild: true
 nativeRebuilder: sequential
 artifactName: 'NextLeek-${version}-${os}-${arch}.${ext}'
+extraResources:
+  - from: resources/icons
+    to: icons
+    filter: ['*.png', '*.ico']
 win:
+  icon: resources/icons/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -39,8 +45,10 @@ nsis:
   allowToChangeInstallationDirectory: true
   differentialPackage: true
 mac:
+  icon: resources/icons/icon.icns
   category: public.app-category.productivity
   target: [zip]
 linux:
+  icon: resources/icons/icon-512.png
   category: Utility
   target: [tar.gz]

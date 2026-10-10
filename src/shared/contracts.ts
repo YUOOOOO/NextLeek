@@ -70,6 +70,7 @@ export type DesktopEvent =
   | { type: 'snapshot'; snapshot: Snapshot }
   | { type: 'navigate'; page: Page }
   | { type: 'shown' }
+  | { type: 'close-request' }
   | { type: 'hotkey'; value: string }
   | { type: 'update'; update: UpdateState }
 export interface DesktopAPI {
