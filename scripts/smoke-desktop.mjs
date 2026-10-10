@@ -54,7 +54,7 @@ async function createApplicationFixture() {
     await mkdir(programs, { recursive: true })
     applicationFixture = resolve(programs, `${applicationName}.lnk`)
     const script = resolve(profile, 'launch-application.bat')
-    await writeFile(script, `@echo off\r\n<nul set /p=launched > "${launchMarker}"\r\n`)
+    await writeFile(script, `@echo off\r\n>"${launchMarker}" <nul set /p=launched\r\n`)
     const cmd = process.env.ComSpec ?? resolve(process.env.SystemRoot, 'System32', 'cmd.exe')
     const icon = `${resolve(process.env.SystemRoot, 'System32', 'shell32.dll')},2`
     await powershell(`$shell = New-Object -ComObject WScript.Shell; $shortcut = $shell.CreateShortcut(${psLiteral(applicationFixture)}); $shortcut.TargetPath = ${psLiteral(cmd)}; $shortcut.Arguments = ${psLiteral(`/d /c ""${script}""`)}; $shortcut.IconLocation = ${psLiteral(icon)}; $shortcut.Save()`)
