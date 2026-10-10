@@ -10,48 +10,6 @@ import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
 
-// PowerShell startup/Add-Type costs more than Explorer /select, but gives us a
-// checked native selection result without a separate native build toolchain.
-const windowsRevealSource = String.raw`
-using System;
-using System.Runtime.InteropServices;
-public static class NextLeekReveal {
-    [DllImport("ole32.dll")] static extern int CoInitializeEx(IntPtr reserved, uint flags);
-    [DllImport("ole32.dll")] static extern void CoUninitialize();
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    static extern int SHParseDisplayName(string name, IntPtr binding, out IntPtr pidl, uint attributes, IntPtr resultAttributes);
-    [DllImport("shell32.dll")] static extern IntPtr ILClone(IntPtr pidl);
-    [DllImport("shell32.dll")] static extern IntPtr ILFindLastID(IntPtr pidl);
-    [DllImport("shell32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)] static extern bool ILRemoveLastID(IntPtr pidl);
-    [DllImport("shell32.dll")]
-    static extern int SHOpenFolderAndSelectItems(IntPtr folder, uint count, [In] IntPtr[] children, uint flags);
-    static void Check(int result, string operation) {
-        if (result < 0) throw new COMException(operation + " failed (0x" + result.ToString("X8") + ")", result);
-    }
-    public static void Select(string path) {
-        Check(CoInitializeEx(IntPtr.Zero, 2), "CoInitializeEx");
-        IntPtr item = IntPtr.Zero, parent = IntPtr.Zero;
-        try {
-            Check(SHParseDisplayName(path, IntPtr.Zero, out item, 0, IntPtr.Zero), "SHParseDisplayName");
-            // apidl requires child-relative PIDLs, not the absolute item PIDL.
-            // Derive both from one namespace path, including drive/share roots.
-            IntPtr child = ILFindLastID(item);
-            if (child == IntPtr.Zero || Marshal.ReadInt16(child) == 0)
-                throw new InvalidOperationException("The item has no selectable parent.");
-            parent = ILClone(item);
-            if (parent == IntPtr.Zero) throw new OutOfMemoryException("ILClone failed.");
-            if (!ILRemoveLastID(parent)) throw new InvalidOperationException("ILRemoveLastID failed.");
-            Check(SHOpenFolderAndSelectItems(parent, 1, new IntPtr[] { child }, 0), "SHOpenFolderAndSelectItems");
-        } finally {
-            // child points inside item and must not be freed separately.
-            Marshal.FreeCoTaskMem(parent);
-            Marshal.FreeCoTaskMem(item);
-            CoUninitialize();
-        }
-    }
-}
-`
 
 function trayImage() {
   const pixels = Buffer.alloc(24 * 24 * 4)
@@ -175,10 +133,28 @@ async function start() {
         // Both transports are base64: no file path is parsed as shell syntax.
         const script = `$ErrorActionPreference = 'Stop'
 try {
-Add-Type -TypeDefinition @'
-${windowsRevealSource}
-'@
-[NextLeekReveal]::Select([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from(path, 'utf16le').toString('base64')}')))
+$path = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from(path, 'utf16le').toString('base64')}'))
+$parent = [IO.Path]::GetDirectoryName($path)
+$name = [IO.Path]::GetFileName($path)
+$shell = New-Object -ComObject Shell.Application
+$shell.Open($parent)
+$deadline = [DateTime]::UtcNow.AddSeconds(10)
+do {
+  $windows = $shell.Windows()
+  for ($i = 0; $i -lt $windows.Count; $i++) {
+    $view = $windows.Item($i).Document
+    if ($view.Folder.Self.Path -ne $parent) { continue }
+    $item = $view.Folder.ParseName($name)
+    if ($null -eq $item) { continue }
+    $view.SelectItem($item, 29)
+    $selected = $view.SelectedItems()
+    for ($j = 0; $j -lt $selected.Count; $j++) {
+      if ($selected.Item($j).Path -eq $path) { exit 0 }
+    }
+  }
+  Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $deadline)
+throw 'Explorer did not select the requested file.'
 } catch {
 [Console]::Error.WriteLine($_.Exception.ToString())
 exit 1
