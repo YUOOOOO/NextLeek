@@ -60,7 +60,7 @@ export function createUpdateController(ctx: Context, options: {
       ['checking-for-update', () => publish({ status: 'checking', version: undefined, progress: undefined, message: '正在检查 GitHub Releases…' })],
       ['update-available', (info: UpdateInfo) => publish({ status: 'available', version: info.version, message: `发现新版本 ${info.version}，可下载更新。` })],
       ['update-not-available', (info: UpdateInfo) => publish({ status: 'not-available', version: info.version, message: '当前已是最新版本。' })],
-      ['download-progress', (progress: NonNullable<UpdateState['progress']>) => publish({ status: 'downloading', progress: { percent: progress.percent, transferred: progress.transferred, total: progress.total, bytesPerSecond: progress.bytesPerSecond }, message: '正在下载更新（支持增量下载，必要时回退完整安装包）…' })],
+      ['download-progress', (progress: NonNullable<UpdateState['progress']>) => publish({ status: 'downloading', progress: { percent: progress.percent, transferred: progress.transferred, total: progress.total, bytesPerSecond: progress.bytesPerSecond }, message: '正在下载更新…' })],
       ['update-downloaded', (info: UpdateInfo) => publish({ status: 'downloaded', version: info.version, progress: undefined, message: '更新已下载并校验，点击重启安装。' })],
       ['error', fail],
     ]
