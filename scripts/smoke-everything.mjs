@@ -124,7 +124,7 @@ async function powershell(source) {
 async function explorerShows(path, selectedPath) {
   const encoded = Buffer.from(path, 'utf16le').toString('base64')
   const selected = Buffer.from(selectedPath ?? '', 'utf16le').toString('base64')
-  return powershell(`$target=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')); $selected=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${selected}')); $shell=New-Object -ComObject Shell.Application; $found=@($shell.Windows() | Where-Object { try { ($_.Document.Folder.Self.Path -eq $target) -and (($selected -eq '') -or (@($_.Document.SelectedItems() | Where-Object { $_.Path -eq $selected }).Count -gt 0)) } catch { $false } }); if ($found.Count -gt 0) { 'yes' }`)
+  return powershell(`$target=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')); $selected=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${selected}')); $shell=New-Object -ComObject Shell.Application; $windows=$shell.Windows(); for ($i=0; $i -lt $windows.Count; $i++) { try { $window=$windows.Item($i); if ($window.Document.Folder.Self.Path -ne $target) { continue }; if ($selected -eq '') { 'yes'; break }; $items=$window.Document.SelectedItems(); for ($j=0; $j -lt $items.Count; $j++) { if ($items.Item($j).Path -eq $selected) { 'yes'; return } } } catch {} }`)
 }
 try {
   // Refuse to commandeer a default instance. The caller must provide an isolated CI runner.
