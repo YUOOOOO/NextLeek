@@ -1,0 +1,7 @@
+packages:
+  - '.'
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - lmdb
+  - msgpackr-extract

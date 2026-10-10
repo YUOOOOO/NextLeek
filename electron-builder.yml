@@ -1,0 +1,54 @@
+appId: com.nextleek.desktop
+productName: NextTools
+directories:
+  output: release
+  buildResources: resources/icons
+files:
+  - out/**
+  - package.json
+asar: true
+asarUnpack:
+  - '**/*.node'
+  - '**/lmdb/**'
+  - '**/@lmdb/**'
+  - '**/msgpackr-extract/**'
+  - '**/@msgpackr-extract/**'
+npmRebuild: true
+nativeRebuilder: sequential
+artifactName: 'NextTools-${version}-${os}-${arch}.${ext}'
+extraResources:
+  - from: resources/icons
+    to: icons
+    filter: ['*.png', '*.ico', 'ZTools-LICENSE']
+win:
+  icon: resources/icons/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  signAndEditExecutable: true
+  extraResources:
+    - from: resources/everything
+      to: everything
+      filter: ['addon-x64.node', 'Everything.exe', 'Everything.ini', 'LICENSE-*']
+  publish:
+    provider: github
+    owner: YUOOOOO
+    repo: NextLeek
+    releaseType: release
+    publishAutoUpdate: true
+nsis:
+  artifactName: 'NextTools-${version}-win-${arch}-Setup.${ext}'
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: true
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.productivity
+  target: [zip]
+linux:
+  icon: resources/icons/icon-512.png
+  category: Utility
+  target: [tar.gz]

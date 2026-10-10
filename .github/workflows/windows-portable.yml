@@ -1,0 +1,180 @@
+name: Desktop Windows release
+
+on:
+  push:
+    branches: [main, v4]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.repository == 'YUOOOOO/NextLeek' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v4')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # LMDB's upstream Windows builds use Node-API, not private V8 symbols.
+      ENABLE_V8_FUNCTIONS: 'false'
+      ENABLE_FAST_API_CALLS: 'false'
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a new release version
+        id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { version } = JSON.parse(require('node:fs').readFileSync('package.json', 'utf8'))
+            if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Release version must be stable semver')
+            const tag = `v${version}`
+            try {
+              await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })
+              throw new Error(`${tag} already exists. Bump package.json version; tags are never overwritten.`)
+            } catch (error) {
+              if (error.status !== 404) throw error
+            }
+            try {
+              await github.rest.repos.getReleaseByTag({ ...context.repo, tag })
+              throw new Error(`${tag} release already exists (possibly a draft). Resolve explicitly; never overwrite.`)
+            } catch (error) {
+              if (error.status !== 404) throw error
+            }
+            core.setOutput('version', version)
+            core.setOutput('tag', tag)
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $output = @(pnpm install --frozen-lockfile 2>&1)
+          $installExit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($installExit -ne 0) {
+            $errors = @($output | Where-Object { "$_" -match '(?i)error|fatal|failed|gyp ERR|MSB[0-9]+' })
+            $failure = ($errors | Select-Object -First 20) -join "`n"
+            $failure = $failure.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Dependency installation failed::$failure"
+            exit $installExit
+          }
+      - run: pnpm typecheck
+      - run: pnpm gates
+      - run: pnpm test
+      - run: pnpm build:win
+      - name: Package lower-version installed baseline for real update smoke
+        shell: pwsh
+        run: |
+          # Test-only installer: same source, lower version; never uploaded or published.
+          # All stable v4 releases compare greater than 4.0.0.
+          $output = @(pnpm exec electron-builder --win nsis --x64 --publish never '-c.extraMetadata.version=4.0.0' '-c.directories.output=artifacts/update-baseline' 2>&1)
+          $buildExit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($buildExit -ne 0) {
+            $failure = (($output | Select-Object -Last 20) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error title=Baseline packaging failed::$failure"
+            exit $buildExit
+          }
+      - name: Extract and exercise portable main launcher and native search
+        shell: pwsh
+        run: |
+          $zip = @(Get-ChildItem release -Filter '*.zip' -File)
+          if ($zip.Count -ne 1) { throw 'Expected exactly one portable ZIP' }
+          Expand-Archive -LiteralPath $zip[0].FullName -DestinationPath artifacts/portable
+          $exe = Join-Path (Resolve-Path artifacts/portable) 'NextTools.exe'
+          if (!(Test-Path -LiteralPath $exe)) { throw 'Missing root portable NextTools.exe' }
+          # The portable ZIP contains one runnable app, never release/source archives.
+          $nestedPackages = @(Get-ChildItem artifacts/portable -Recurse -File | Where-Object { $_.Name -match '-Setup\.exe$|\.zip$|^latest\.yml$|\.blockmap$' })
+          if ($nestedPackages.Count -ne 0) { throw 'Portable ZIP contains nested release packages' }
+          foreach ($sourceDirectory in @('src', 'scripts', 'docs', '.git', '.github')) {
+            if (Test-Path (Join-Path artifacts/portable $sourceDirectory)) { throw "Portable ZIP contains repository sources: $sourceDirectory" }
+          }
+          # The native smoke starts its controlled folder index before NextTools
+          # can auto-start the bundled engine. Both binaries are hash-verified.
+          node scripts/smoke-everything.mjs $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/smoke-desktop.mjs $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/smoke-marketplace.mjs $exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($zip[0].Name)" | Set-Content -LiteralPath "$($zip[0].FullName).sha256" -Encoding ascii
+      - name: Install and exercise NSIS application
+        id: installed
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem release -Filter '*-Setup.exe' -File)
+          if ($setup.Count -ne 1) { throw 'Expected exactly one NSIS installer' }
+          if (!(Test-Path "$($setup[0].FullName).blockmap")) { throw 'Missing installer blockmap' }
+          if (!(Test-Path 'release/latest.yml')) { throw 'Missing latest.yml update metadata' }
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'NextTools-installed'
+          $installer = Start-Process -FilePath $setup[0].FullName -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "NSIS install failed: $($installer.ExitCode)" }
+          $exe = Join-Path $installDirectory 'NextTools.exe'
+          if (!(Test-Path $exe) -or !(Test-Path (Join-Path $installDirectory 'Uninstall NextTools.exe'))) { throw 'NSIS installation is incomplete' }
+          "executable=$exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          node scripts/smoke-desktop.mjs $exe --expect-update-supported
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish immutable GitHub release after packaged smoke
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $assets = @(Get-ChildItem release -File | Where-Object { $_.Name -match '\.zip$|\.sha256$|-Setup\.exe$|-Setup\.exe\.blockmap$|^latest\.yml$' } | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 5) { throw 'Expected ZIP, checksum, NSIS installer, blockmap, and latest.yml' }
+          $notes = 'Downloads are separate: Setup.exe is the installer; win-x64.zip is only the portable runnable application; GitHub Source code (zip/tar.gz) is only repository source. No combined download bundle is published. Install Setup.exe for check/download/restart-install online updates. Portable ZIP cannot auto-install updates. Windows main launcher searches files through the bundled native addon and Everything engine; the engine starts automatically when needed and indexes local files. Windows binaries are unsigned and may show SmartScreen warnings. macOS/Linux and development builds require manual updates. Tags are immutable.'
+          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "NextTools $env:RELEASE_TAG" --notes $notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify anonymous update feed and installed update check
+        shell: pwsh
+        env:
+          INSTALLED_EXE: ${{ steps.installed.outputs.executable }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          # Download anonymously: the shipped updater has no GitHub credentials.
+          $release = Invoke-RestMethod "https://api.github.com/repos/YUOOOOO/NextLeek/releases/tags/$env:RELEASE_TAG"
+          foreach ($asset in $release.assets) {
+            if ($asset.name -match '-Setup\.exe$|-Setup\.exe\.blockmap$|^latest\.yml$') {
+              $destination = Join-Path $env:RUNNER_TEMP $asset.name
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $destination
+              $local = Join-Path 'release' $asset.name
+              if ((Get-FileHash $destination -Algorithm SHA512).Hash -ne (Get-FileHash $local -Algorithm SHA512).Hash) { throw "Public release asset mismatch: $($asset.name)" }
+            }
+          }
+          node scripts/smoke-desktop.mjs $env:INSTALLED_EXE --expect-update-supported --check-updates
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise real installed check download and relaunch-install
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          # Isolate the lower-version install from the preceding current install.
+          $uninstaller = Join-Path (Split-Path '${{ steps.installed.outputs.executable }}' -Parent) 'Uninstall NextTools.exe'
+          $removed = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($removed.ExitCode -ne 0) { throw 'Failed to remove smoke install before baseline update' }
+          $baseline = @(Get-ChildItem artifacts/update-baseline -Filter '*-Setup.exe' -File)
+          if ($baseline.Count -ne 1) { throw 'Expected one lower-version test installer' }
+          node scripts/smoke-update.mjs $baseline[0].FullName $env:RELEASE_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload desktop behavior evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-evidence
+          path: |
+            artifacts/smoke/
+            artifacts/update-smoke/
+            artifacts/everything-smoke/
+            artifacts/marketplace-smoke/
+          if-no-files-found: ignore
+          retention-days: 14
