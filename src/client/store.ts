@@ -157,7 +157,7 @@ export const useDesktopStore = defineStore('desktop', () => {
     loading.value = true
     error.value = ''
     try {
-      if (!window.desktop) throw new Error('桌面连接不可用，请在 NextLeek 桌面应用中打开。')
+      if (!window.desktop) throw new Error('桌面连接不可用，请在 NextTools 桌面应用中打开。')
       unsubscribe?.()
       unsubscribe = window.desktop.subscribe(receive)
       const startRevision = revision

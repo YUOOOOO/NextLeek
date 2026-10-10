@@ -127,7 +127,7 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
       }
       addon = loaded
       return loaded
-    } catch (error) { throw new Error(`无法加载随 NextLeek 安装的 Everything 原生模块，请重新安装 NextLeek：${error instanceof Error ? error.message : String(error)}`) }
+    } catch (error) { throw new Error(`无法加载随 NextTools 安装的 Everything 原生模块，请重新安装 NextTools：${error instanceof Error ? error.message : String(error)}`) }
   }
   async function prepare(): Promise<NativeEverythingAddon> {
     const env = supported()
@@ -144,7 +144,7 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
       const deadline = ports.now() + 8000
       while (true) {
         supported()
-        if (startupError) throw new Error(`无法启动随 NextLeek 安装的 Everything 引擎：${startupError.message}`)
+        if (startupError) throw new Error(`无法启动随 NextTools 安装的 Everything 引擎：${startupError.message}`)
         if (native.everythingIsRuning() && native.everythingIsDBLoaded()) return native
         if (ports.now() >= deadline) throw new Error('Everything 索引尚未就绪，等待超时。请确认服务正常运行并等待索引完成后重试。')
         await Promise.race([ports.sleep(Math.min(200, deadline - ports.now()), ctx), cancelled])

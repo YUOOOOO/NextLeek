@@ -18,10 +18,10 @@ const installer = resolve(process.argv[2])
 const targetVersion = process.argv[3]
 assert.ok(targetVersion, 'Expected target version')
 assert.equal(process.platform, 'win32', 'Real NSIS update smoke runs on Windows')
-const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'nextleek-upgrade-')))
+const root = realpathSync.native(await mkdtemp(join(tmpdir(), 'nexttools-upgrade-')))
 const installDirectory = join(root, 'app')
 const profile = join(root, 'profile')
-const executable = join(installDirectory, 'NextLeek.exe')
+const executable = join(installDirectory, 'NextTools.exe')
 const evidence = resolve('artifacts/update-smoke')
 await mkdir(evidence, { recursive: true })
 let child
@@ -76,13 +76,13 @@ try {
   }, 180000)
   checks.push(`NSIS installed application version ${targetVersion}`)
   await eventually('Installer did not automatically relaunch updated app', async () => {
-    const { stdout } = await execute('powershell.exe', ['-NoProfile', '-Command', '@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTLEEK_EXE }).Count'], { env: { ...process.env, NEXTLEEK_EXE: executable } })
+    const { stdout } = await execute('powershell.exe', ['-NoProfile', '-Command', '@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTTOOLS_EXE }).Count'], { env: { ...process.env, NEXTTOOLS_EXE: executable } })
     return Number(stdout.trim()) > 0
   })
   checks.push('Installer automatically relaunches updated app')
   // Forced relaunch uses the normal profile, whereas this scenario uses an
   // isolated profile. Close only this test installation before probing it again.
-  await execute('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTLEEK_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'], { env: { ...process.env, NEXTLEEK_EXE: executable } })
+  await execute('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTTOOLS_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'], { env: { ...process.env, NEXTTOOLS_EXE: executable } })
   page = await launch()
   const updated = await page.evaluate(() => window.desktop.getUpdateState())
   assert.equal(updated.currentVersion, targetVersion)
@@ -105,6 +105,6 @@ try {
   if (child?.exitCode === null) child.kill()
   // NSIS force-run starts a second app with the default profile. Only stop
   // processes whose executable is inside this unique smoke install directory.
-  await execute('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTLEEK_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'], { env: { ...process.env, NEXTLEEK_EXE: executable } }).catch(() => {})
+  await execute('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:NEXTTOOLS_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'], { env: { ...process.env, NEXTTOOLS_EXE: executable } }).catch(() => {})
   await writeFile(join(evidence, 'host.log'), logs.join(''))
 }

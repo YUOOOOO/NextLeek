@@ -4,6 +4,7 @@ import { useDesktopStore } from './store'
 import AppIcon from './components/AppIcon.vue'
 import CommandTile from './components/CommandTile.vue'
 import SearchProviderResults from './components/SearchProviderResults.vue'
+import PluginMarket from '../../plugins/plugin-market/client.vue'
 import type { Command, DesktopEvent, LauncherSearchItem, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
@@ -252,7 +253,7 @@ onUnmounted(() => {
     <header ref="header" class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" data-testid="launcher-query" type="search" aria-label="搜索应用、文件和指令" placeholder="搜索应用、文件和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="desktop.setSearchComposing(true)" @compositionend="desktop.setSearchComposing(false)" />
-      <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
+      <button class="brand-button" aria-label="打开设置" title="NextTools · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
     </header>
 
     <div v-if="desktop.error" ref="errorStrip" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
@@ -285,13 +286,13 @@ onUnmounted(() => {
       <div v-if="!resultCount && !desktop.searchLoading && !desktop.searchError && !desktop.searchGroups.some(group => group.status !== 'ready')" class="empty-state"><h2>{{ searchMode ? '没有匹配的结果' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试应用名称、文件名、路径或指令关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="!searchMode" class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
       </div>
     </main>
-    <div v-else-if="desktop.page !== 'launcher'" class="settings-layout">
+    <div v-else-if="desktop.page !== 'launcher' && desktop.page !== 'plugin-market'" class="settings-layout">
       <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
       <main class="settings-content" :aria-busy="desktop.busy">
         <template v-if="desktop.page === 'settings' && settings">
           <h1 class="sr-only">通用设置</h1>
           <div class="setting-row"><div><label for="hotkey">呼出快捷键</label><p>点击输入框录入组合键，再点击保存</p></div><form class="hotkey-control" @submit.prevent="saveHotkey"><input id="hotkey" ref="hotkeyInput" v-model="hotkey" data-hotkey aria-describedby="hotkey-hint" :disabled="desktop.busy" @focus="startHotkeyCapture" @blur="releaseHotkeyCapture" @keydown="captureHotkey" @keyup.stop /><button type="submit" :disabled="desktop.busy || hotkey === settings.hotkey || !hotkey.trim()">保存</button><button type="button" :disabled="desktop.busy || hotkey === settings.hotkey" @click="cancelHotkey">取消</button><span id="hotkey-hint" class="sr-only">按下包含 Control、Alt 或 Super 的组合键，然后点击保存。Escape 取消修改，不会隐藏窗口。</span></form></div>
-          <div class="setting-row"><div><label id="autostart-label">开机自启</label><p>登录电脑后自动运行 NextLeek</p></div><button class="switch" role="switch" aria-labelledby="autostart-label" :aria-checked="settings.autostart" :disabled="desktop.busy" @click="desktop.update({ autostart: !settings.autostart })"><span /></button></div>
+          <div class="setting-row"><div><label id="autostart-label">开机自启</label><p>登录电脑后自动运行 NextTools</p></div><button class="switch" role="switch" aria-labelledby="autostart-label" :aria-checked="settings.autostart" :disabled="desktop.busy" @click="desktop.update({ autostart: !settings.autostart })"><span /></button></div>
           <div class="setting-row"><div><label id="compact-label">紧凑顶部栏</label><p>缩小搜索框，留出更多内容空间</p></div><button class="switch" role="switch" aria-labelledby="compact-label" :aria-checked="settings.compact" :disabled="desktop.busy" @click="desktop.update({ compact: !settings.compact })"><span /></button></div>
           <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>默认返回搜索；开启后在页面中按 Esc 隐藏窗口，下次唤出保留当前页面</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
           <section class="setting-row update-row" aria-labelledby="update-heading" :aria-busy="updateInProgress">
@@ -329,6 +330,7 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
+    <PluginMarket v-show="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" :active="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" @back="desktop.navigate('launcher')" />
     <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" ref="footer" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

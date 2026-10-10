@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { app, BrowserWindow, WebContentsView, Menu, Tray, nativeImage, globalShortcut, ipcMain, nativeTheme, shell, dialog, clipboard, screen } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
@@ -23,8 +24,9 @@ function trayImage(directory: string) {
 }
 
 async function start() {
-  app.setName('NextLeek')
+  app.setName('NextTools')
   app.setAppUserModelId('com.nextleek.desktop')
+  app.setPath('userData', join(app.getPath('appData'), 'NextLeek'))
   const profileDirectory = process.argv.find(argument => argument.startsWith('--profile-dir='))?.slice('--profile-dir='.length)
   if (profileDirectory) app.setPath('userData', profileDirectory)
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
@@ -33,10 +35,11 @@ async function start() {
   const rendererFile = join(here, '../renderer/index.html')
   const devURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
   const rendererURL = devURL ?? pathToFileURL(rendererFile).href
+  const frameNonce = randomBytes(18).toString('base64url')
   const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
   const window = new BrowserWindow({
     width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
-    title: 'NextLeek', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
+    title: 'NextTools', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
     icon: join(iconDirectory, 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
   })
@@ -207,7 +210,7 @@ exit 1
         nativeImage,
       }),
       openPath: path => shell.openPath(path),
-    })
+    }, { version: app.getVersion() })
     const ctx = runtime.ctx
     ctx.effect(() => {
       window.on('resize', resize)
@@ -232,21 +235,25 @@ exit 1
       app.on('activate', activate)
       view.webContents.setWindowOpenHandler(denyPopup)
       view.webContents.on('will-navigate', denyNavigation)
+      view.webContents.on('will-frame-navigate', denyNavigation)
       view.webContents.on('will-attach-webview', denyWebview)
       const session = view.webContents.session
       session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
       session.setPermissionCheckHandler(() => false)
       const headers: Electron.WebRequestFilter = { urls: [devURL ? `${new URL(devURL).origin}/*` : 'file://*/*'] }
       session.webRequest.onHeadersReceived(headers, (details, callback) => {
-        callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [devURL
-          ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws:; object-src 'none'; frame-src 'none'; base-uri 'none'"
-          : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'"] } })
+        const policy = devURL
+          ? `default-src 'self'; script-src 'self' 'nonce-${frameNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws:; object-src 'none'; frame-src 'self' data: about:; base-uri 'none'`
+          : `default-src 'self'; script-src 'self' 'nonce-${frameNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'self' data: about:; base-uri 'none'`
+        callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [policy] } })
       })
       return () => {
         window.removeListener('resize', resize); window.removeListener('close', close)
         window.removeListener('system-context-menu', systemMenu)
         window.removeListener('blur', blur)
         app.removeListener('before-quit', quit); app.removeListener('second-instance', activate); app.removeListener('activate', activate)
+        view.webContents.removeListener('will-navigate', denyNavigation)
+        view.webContents.removeListener('will-frame-navigate', denyNavigation)
         session.webRequest.onHeadersReceived(null)
         session.setPermissionRequestHandler(null); session.setPermissionCheckHandler(null)
         globalShortcut.unregisterAll()
@@ -256,9 +263,9 @@ exit 1
     }, 'Electron lifecycle and security')
     ctx.effect(() => {
       const tray = new Tray(trayImage(iconDirectory))
-      tray.setToolTip('NextLeek — Alt+Z')
+      tray.setToolTip('NextTools — Alt+Z')
       tray.setContextMenu(Menu.buildFromTemplate([
-        { label: '显示 NextLeek', click: show },
+        { label: '显示 NextTools', click: show },
         { label: '设置', click: () => { show(); emit({ type: 'navigate', page: 'settings' }) } },
         { type: 'separator' }, { label: '退出', click: () => app.quit() },
       ]))
@@ -274,7 +281,7 @@ exit 1
         await cleanup
       },
     })
-    installIPC(runtime, view, rendererURL, setHotkeyCapture, setLauncherHeight, updater)
+    installIPC(runtime, view, rendererURL, frameNonce, setHotkeyCapture, setLauncherHeight, updater)
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
     show()
   } catch (error) {
@@ -286,7 +293,7 @@ exit 1
   }
 }
 
-function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, setHotkeyCapture: (active: boolean) => void, setLauncherHeight: (height: number) => void, updater: OnlineUpdater) {
+function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, frameNonce: string, setHotkeyCapture: (active: boolean) => void, setLauncherHeight: (height: number) => void, updater: OnlineUpdater) {
   const verify = (event: IpcMainInvokeEvent) => {
     const frame = event.senderFrame
     if (event.sender !== view.webContents || !frame || frame !== view.webContents.mainFrame) throw new Error('Unauthorized IPC sender')
@@ -311,12 +318,18 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.run, 1, id => runtime.runCommand(identifier(id)))
   bind(channels.pin, 2, (id, pinned) => runtime.setPinned(identifier(id), boolean(pinned)))
   bind(channels.plugin, 2, (id, enabled) => runtime.setPluginEnabled(identifier(id), boolean(enabled)))
+  bind(channels.invokePlugin, 3, (pluginId, method, args) => {
+    if (typeof method !== 'string') throw new TypeError('Invalid plugin method')
+    identifier(method.toLowerCase())
+    return runtime.invokePlugin(identifier(pluginId), method, args)
+  })
   bind(channels.hide, 0, () => runtime.ctx.get('desktop')!.hide())
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
   bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
   bind(channels.layout, 1, height => { if (typeof height !== 'number') throw new TypeError('Invalid launcher height'); setLauncherHeight(height) })
   bind(channels.searchLauncher, 1, request => runtime.searchLauncher(launcherSearchRequest(request)))
   bind(channels.searchAction, 3, (providerId, itemId, action) => runtime.performSearchAction(identifier(providerId), searchItemId(itemId), identifier(action)))
+  bind(channels.frameNonce, 0, () => frameNonce)
   bind(channels.updateState, 0, () => updater.getState())
   bind(channels.updateCheck, 0, () => updater.check())
   bind(channels.updateDownload, 0, () => updater.download())
@@ -325,6 +338,6 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
 
 start().catch(error => {
   console.error(error)
-  dialog.showErrorBox('NextLeek 无法启动', error instanceof Error ? error.message : String(error))
+  dialog.showErrorBox('NextTools 无法启动', error instanceof Error ? error.message : String(error))
   app.exit(1)
 })

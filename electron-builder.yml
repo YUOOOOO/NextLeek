@@ -1,5 +1,5 @@
 appId: com.nextleek.desktop
-productName: NextLeek
+productName: NextTools
 directories:
   output: release
   buildResources: resources/icons
@@ -15,7 +15,7 @@ asarUnpack:
   - '**/@msgpackr-extract/**'
 npmRebuild: true
 nativeRebuilder: sequential
-artifactName: 'NextLeek-${version}-${os}-${arch}.${ext}'
+artifactName: 'NextTools-${version}-${os}-${arch}.${ext}'
 extraResources:
   - from: resources/icons
     to: icons
@@ -39,7 +39,7 @@ win:
     releaseType: release
     publishAutoUpdate: true
 nsis:
-  artifactName: 'NextLeek-${version}-win-${arch}-Setup.${ext}'
+  artifactName: 'NextTools-${version}-win-${arch}-Setup.${ext}'
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

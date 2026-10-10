@@ -10,13 +10,13 @@ import { nativeAssets, sha256 } from './prepare-everything.mjs'
 
 // Own the default IPC instance only on an isolated, ephemeral Windows runner.
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true') throw new Error('Native search smoke requires an isolated GitHub Actions Windows runner')
-if (!process.argv[2]) throw new Error('Pass the packaged NextLeek.exe')
+if (!process.argv[2]) throw new Error('Pass the packaged NextTools.exe')
 const executable = resolve(process.argv[2])
 const resources = join(dirname(executable), 'resources/everything')
 const engineExecutable = join(resources, nativeAssets.engine.file)
 const addon = join(resources, nativeAssets.addon.file)
 const exec = promisify(execFile)
-const temporary = realpathSync.native(await mkdtemp(join(tmpdir(), 'nextleek-everything-')))
+const temporary = realpathSync.native(await mkdtemp(join(tmpdir(), 'nexttools-everything-')))
 const evidence = resolve('artifacts/everything-smoke')
 await mkdir(evidence, { recursive: true })
 const logs = []
@@ -114,12 +114,12 @@ async function rawNativeSearch(request = { query, offset: 0, limit: fixtures.len
   return result
 }
 async function launchApp() {
-  stage('Launching NextLeek against owned index')
+  stage('Launching NextTools against owned index')
   // Start the controlled index first: production auto-start must not launch a
   // different engine or scan the runner's disks before the fixture is ready.
   assert.equal(await enginePresent(), true)
   app = spawn(executable, ['--remote-debugging-port=9335', `--profile-dir=${profile}`], { stdio: ['ignore', 'pipe', 'pipe'] })
-  recordChild(app, 'NextLeek')
+  recordChild(app, 'NextTools')
   await eventually('Packaged Electron CDP unavailable', async () => (await fetch('http://127.0.0.1:9335/json/version', { signal: AbortSignal.timeout(2000) })).ok)
   stage('Connecting native-smoke CDP')
   browser = await chromium.connectOverCDP('http://127.0.0.1:9335', { timeout: 15000 })
@@ -132,10 +132,10 @@ async function launchApp() {
   assert.match(await page.evaluate(() => navigator.userAgent), /Electron\/41\./, 'Smoke must exercise the addon inside shipped Electron 41')
 }
 async function quitApp() {
-  stage('Quitting native-smoke NextLeek')
+  stage('Quitting native-smoke NextTools')
   try {
     await bounded('Native smoke quit IPC', () => page?.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
-    if (app) await eventually('Resident NextLeek did not quit', () => app.exitCode !== null || app.signalCode !== null)
+    if (app) await eventually('Resident NextTools did not quit', () => app.exitCode !== null || app.signalCode !== null)
     releaseOwnedStreams(app)
   } finally {
     await bounded('Native smoke CDP disconnect', () => browser?.close()).catch(error => logs.push(String(error)))
@@ -296,7 +296,7 @@ try {
   const indexedFilename = await search({ query: '1.txt' })
   samePaths(indexedFilename.items, fixtures.filter(item => !item.isDirectory && basename(item.path).toLowerCase().includes('1.txt')))
   assert.ok(indexedFilename.items.some(item => normalized(item.path) === normalized(textFixture.path)))
-  const empty = await search({ query: 'this-file-does-not-exist-nextleek' })
+  const empty = await search({ query: 'this-file-does-not-exist-nexttools' })
   assert.equal(empty.total, 0)
   assert.equal(empty.items.length, 0)
   const id = all[0].id
@@ -369,7 +369,7 @@ try {
   samePaths(await collect(), fixtures)
   await page.locator('.app-shell > .search-header .search-input').fill('1.txt')
   await eventually('Relaunched main field did not recover real native results', async () => (await page.locator('[data-testid="search-provider"][data-provider-id="everything"] [data-testid="search-result-row"]').count()) === indexedFilename.items.length)
-  checks.push('Native addon honestly reports stopped engine; owned engine restart and NextLeek relaunch recover the same real index without production fixture flags or uncontrolled auto-start')
+  checks.push('Native addon honestly reports stopped engine; owned engine restart and NextTools relaunch recover the same real index without production fixture flags or uncontrolled auto-start')
   await writeFile(join(evidence, 'checks.json'), JSON.stringify(checks, null, 2))
   console.log(checks.join('\n'))
 } catch (error) {

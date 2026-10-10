@@ -17,6 +17,11 @@ export interface CommandsService {
   has(id: string): boolean
   run(id: string): Promise<CommandResult>
 }
+export type PluginEndpointHandler = (method: string, args: unknown) => Promise<unknown> | unknown
+export interface PluginEndpointsService {
+  register(ctx: Context, pluginId: string, handler: PluginEndpointHandler): void
+  invoke(pluginId: string, method: string, args: unknown): Promise<unknown>
+}
 export interface DesktopService {
   applySettings(next: Settings, previous?: Settings): Promise<void>
   emit(event: DesktopEvent): void
@@ -64,6 +69,7 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     storage: StorageService
     commands: CommandsService
+    pluginEndpoints: PluginEndpointsService
     search: SearchService
     desktop: DesktopService
     everything: EverythingService

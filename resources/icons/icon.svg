@@ -1,5 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect x="1" y="1" width="22" height="22" rx="5" fill="#078564"/>
-  <path d="M5 18V10a5 5 0 0 1 5-5h1v7Z" fill="#f2f6f2"/>
-  <path d="M13 5h3l5 7-5 7h-3l5-7Z" fill="#54c8a3"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">
+  <!-- Brand glyph provenance and MIT terms: ZTools-LICENSE. Palette and scale match the light search button. -->
+  <circle cx="18" cy="18" r="18" fill="#1e2822"/>
+  <g transform="translate(6 6)" fill="#f2f6f2">
+    <path d="M5 18V10a5 5 0 0 1 5-5h1v7Z"/>
+    <path d="M13 5h3l5 7-5 7h-3l5-7Z"/>
+  </g>
 </svg>

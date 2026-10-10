@@ -12,7 +12,7 @@ const expectUpdateSupported = process.argv.includes('--expect-update-supported')
 const checkUpdates = process.argv.includes('--check-updates')
 const appArgs = process.argv.slice(3).filter(arg => !['--expect-update-supported', '--check-updates'].includes(arg))
 let debugPort
-const profile = await mkdtemp(resolve(tmpdir(), 'nextleek-smoke-'))
+const profile = await mkdtemp(resolve(tmpdir(), 'nexttools-smoke-'))
 const evidence = resolve('artifacts/smoke')
 await mkdir(evidence, { recursive: true })
 const logs = []
@@ -21,8 +21,8 @@ let browser
 const checks = []
 let nativeWindow
 let applicationFixture
-const applicationName = `NextLeek Smoke App ${basename(profile)}`
-const broadApplicationName = `NextLeek Height Fixture ${basename(profile)}`
+const applicationName = `NextTools Smoke App ${basename(profile)}`
+const broadApplicationName = `NextTools Height Fixture ${basename(profile)}`
 const broadApplicationFixtures = []
 const launchMarker = resolve(profile, 'application-launched')
 function stage(message) {
@@ -49,7 +49,7 @@ async function createApplicationFixture() {
     const marker = `'${launchMarker.replaceAll("'", "'\\''")}'`
     await writeFile(resolve(applicationFixture, 'Contents', 'MacOS', 'launch'), `#!/bin/sh\nprintf launched > ${marker}\n`, { mode: 0o755 })
     await copyFile('/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns', resolve(applicationFixture, 'Contents', 'Resources', 'Smoke.icns'))
-    await writeFile(resolve(applicationFixture, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.nextleek.smoke.${basename(profile)}</string><key>CFBundleName</key><string>${applicationName}</string><key>CFBundleDisplayName</key><string>${applicationName}</string><key>CFBundleExecutable</key><string>launch</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>Smoke.icns</string><key>LSBackgroundOnly</key><true/></dict></plist>`)
+    await writeFile(resolve(applicationFixture, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.nexttools.smoke.${basename(profile)}</string><key>CFBundleName</key><string>${applicationName}</string><key>CFBundleDisplayName</key><string>${applicationName}</string><key>CFBundleExecutable</key><string>launch</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleIconFile</key><string>Smoke.icns</string><key>LSBackgroundOnly</key><true/></dict></plist>`)
   } else if (process.platform === 'win32') {
     assert.ok(process.env.APPDATA, 'User Start Menu requires APPDATA')
     const programs = resolve(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs')
@@ -71,9 +71,55 @@ async function createBroadApplicationFixtures() {
     if (process.platform === 'darwin') {
       await cp(applicationFixture, fixture, { recursive: true })
       const plist = resolve(fixture, 'Contents', 'Info.plist')
-      await writeFile(plist, (await readFile(plist, 'utf8')).replaceAll(applicationName, name).replace(`app.nextleek.smoke.${basename(profile)}`, `app.nextleek.smoke.${basename(profile)}.height${index}`))
+      await writeFile(plist, (await readFile(plist, 'utf8')).replaceAll(applicationName, name).replace(`app.nexttools.smoke.${basename(profile)}`, `app.nexttools.smoke.${basename(profile)}.height${index}`))
     } else await copyFile(applicationFixture, fixture)
   }
+}
+async function desktopIconMatchesBrand(page, theme) {
+  const development = /^electron(?:\.exe)?$/i.test(basename(executable))
+  const iconPath = development
+    ? new URL('../resources/icons/icon-512.png', import.meta.url)
+    : resolve(dirname(executable), process.platform === 'darwin' ? '../Resources/icons/icon-512.png' : 'resources/icons/icon-512.png')
+  const png = (await readFile(iconPath)).toString('base64')
+  await page.evaluate(() => window.desktop.updateSettings({ theme: 'light' }))
+  await eventually('Light brand palette did not apply for desktop icon comparison', () => page.locator('.app-shell').evaluate(shell => !shell.classList.contains('dark')))
+  const comparison = await page.evaluate(async base64 => {
+    const button = document.querySelector('.brand-button')
+    const styles = getComputedStyle(button)
+    const glyph = button.querySelector('svg').cloneNode(true)
+    const size = button.getBoundingClientRect().width
+    const glyphSize = button.querySelector('svg').getBoundingClientRect().width
+    const inset = (size - glyphSize) / 2
+    glyph.setAttribute('x', String(inset))
+    glyph.setAttribute('y', String(inset))
+    glyph.setAttribute('width', String(glyphSize))
+    glyph.setAttribute('height', String(glyphSize))
+    glyph.setAttribute('color', styles.color)
+    const reference = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="512" height="512"><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="${styles.backgroundColor}"/>${new XMLSerializer().serializeToString(glyph)}</svg>`
+    const pixels = async source => {
+      const image = new Image()
+      image.src = source
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 512
+      const context = canvas.getContext('2d')
+      context.drawImage(image, 0, 0, 512, 512)
+      return context.getImageData(0, 0, 512, 512).data
+    }
+    const [actual, expected] = await Promise.all([pixels(`data:image/png;base64,${base64}`), pixels(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(reference)}`)])
+    let mismatched = 0
+    for (let offset = 0; offset < actual.length; offset += 4) {
+      if ([0, 1, 2, 3].some(channel => Math.abs(actual[offset + channel] - expected[offset + channel]) > 32)) mismatched++
+    }
+    return { mismatchRatio: mismatched / (512 * 512), cornerAlpha: [actual[3], actual[511 * 4 + 3], actual[511 * 512 * 4 + 3], actual[actual.length - 1]], background: styles.backgroundColor, foreground: styles.color }
+  }, png)
+  assert.deepEqual(comparison.cornerAlpha, [0, 0, 0, 0], 'Desktop icon must retain transparent circular corners')
+  // Chromium and librsvg anti-alias curved edges differently; interior colors,
+  // glyph scale, geometry and circle still must agree over at least 99% of pixels.
+  assert.ok(comparison.mismatchRatio <= 0.01, JSON.stringify(comparison))
+  await page.evaluate(value => window.desktop.updateSettings({ theme: value }), theme)
+  await writeFile(resolve(evidence, 'desktop-icon-equivalence.json'), JSON.stringify(comparison, null, 2))
+  checks.push('Packaged desktop PNG matches the light search button glyph, scale, circle and palette with transparent corners')
 }
 async function launcherTracksContent(page) {
   return page.evaluate(() => {
@@ -88,6 +134,8 @@ async function launcherTracksContent(page) {
     const expected = Math.min(Math.ceil(intrinsicHeight), cap)
     const overflow = intrinsicHeight > cap + 1
     return Math.abs(window.innerHeight - expected) <= 1
+      && Math.abs(header.getBoundingClientRect().width - launcher.getBoundingClientRect().width) <= 1
+      && (overflow || Math.abs(header.getBoundingClientRect().width - launcher.clientWidth) <= 1)
       && (overflow ? launcher.scrollHeight > launcher.clientHeight && getComputedStyle(launcher).overflowY === 'auto' : launcher.scrollHeight <= launcher.clientHeight + 1)
   })
 }
@@ -126,7 +174,7 @@ async function eventually(description, operation) {
   throw new Error(description, { cause: error })
 }
 async function launch() {
-  stage('Allocating debugging port and launching NextLeek')
+  stage('Allocating debugging port and launching NextTools')
   debugPort = await new Promise((resolvePort, rejectPort) => {
     const server = createServer()
     server.once('error', rejectPort)
@@ -150,7 +198,7 @@ async function launch() {
   })
 }
 async function quit(page) {
-  stage(`Quitting NextLeek ${child.pid}`)
+  stage(`Quitting NextTools ${child.pid}`)
   try {
     await bounded('Desktop quit IPC', () => page.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
     await eventually('Resident app did not exit', () => child.exitCode !== null || child.signalCode !== null)
@@ -175,12 +223,16 @@ try {
   assert.equal(initial.settings.escHide, false)
   assert.equal(initial.plugins.filter(plugin => plugin.id === 'builtin-search').length, 1)
   assert.ok(!initial.plugins.some(plugin => ['everything-provider', 'everything', 'applications'].includes(plugin.id)))
-  await page.evaluate(() => window.desktop.setPluginEnabled('builtin-search', false))
-  assert.deepEqual(await page.evaluate(() => window.desktop.searchLauncher({ query: 'NextLeek', offset: 0, limit: 30 })), [])
-  await page.evaluate(() => window.desktop.setPluginEnabled('builtin-search', true))
-  assert.deepEqual((await page.evaluate(() => window.desktop.searchLauncher({ query: 'NextLeek', offset: 0, limit: 30 }))).map(group => group.providerId).sort(), ['applications', 'everything'])
-  checks.push('One built-in search plugin jointly disables and restores application and Everything providers')
+  assert.equal(initial.plugins.find(plugin => plugin.id === 'builtin-search').protected, true)
+  assert.equal(initial.plugins.find(plugin => plugin.id === 'builtin-search').enabled, true)
+  await assert.rejects(page.evaluate(() => window.desktop.setPluginEnabled('builtin-search', false)), /Core plugins cannot be disabled/)
+  const protectedSearch = (await page.evaluate(() => window.desktop.getSnapshot())).plugins.find(plugin => plugin.id === 'builtin-search')
+  assert.equal(protectedSearch.enabled, true)
+  assert.equal(protectedSearch.status, 'active')
+  assert.deepEqual((await page.evaluate(() => window.desktop.searchLauncher({ query: 'NextTools', offset: 0, limit: 30 }))).map(group => group.providerId).sort(), ['applications', 'everything'])
+  checks.push('Protected built-in search rejects disable and keeps both application and Everything providers active')
   checks.push('Actual Cordis plugins active through secured preload')
+  await desktopIconMatchesBrand(page, initial.settings.theme)
   const updateState = await page.evaluate(() => window.desktop.getUpdateState())
   assert.equal(updateState.supported, expectUpdateSupported)
   if (checkUpdates) {
@@ -192,11 +244,11 @@ try {
   await eventually('Empty launcher did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
   assert.equal(await page.locator('.launcher').count(), 0)
   await page.locator('.app-shell > .search-header .search-input').fill('设置')
-  await eventually('Search window did not follow content height', () => launcherTracksContent(page))
+  await eventually('Short search did not follow content height and full header width', () => launcherTracksContent(page))
   await page.getByRole('heading', { name: '搜索结果' }).waitFor()
   await page.keyboard.press('Escape')
   await eventually('Cleared search did not collapse', async () => (await page.evaluate(() => window.innerHeight)) < 120)
-  checks.push('Empty launcher collapses; search expands; clearing restores input-only window')
+  checks.push('Empty launcher collapses; short search fills header width without reserved scrollbar gutter; clearing restores input-only window')
   await page.screenshot({ path: resolve(evidence, 'launcher.png') })
   if (applicationFixture) {
     stage('Searching and launching real installed application fixture')
@@ -204,6 +256,7 @@ try {
     const applications = page.locator('[data-command-section="results"]')
     const application = applications.getByTestId('search-result-row').filter({ has: page.locator('.command-title', { hasText: applicationName }) })
     await application.waitFor()
+    await eventually('Clear and re-query did not restore full launcher width', () => launcherTracksContent(page))
     assert.equal(await application.count(), 1)
     const icon = application.locator('img.application-icon')
     assert.equal(await applications.locator('.search-result-path, .search-result-metadata').count(), 0)
@@ -232,6 +285,7 @@ try {
     stage('Searching one hundred real application fixtures and verifying collapse, grid navigation, expansion and bounded scrolling')
     await page.locator('.app-shell > .search-header .search-input').fill(broadApplicationName)
     await eventually('Broad application search did not show two collapsed rows', async () => await applications.getByTestId('search-result-row').count() === 18)
+    await eventually('Collapsed broad search permanently reserved scrollbar width', () => launcherTracksContent(page))
     assert.equal(await applications.getByTestId('best-results-expand').textContent(), '展开 (100)')
     await page.locator('.app-shell > .search-header .search-input').focus()
     await page.keyboard.press('ArrowDown')
@@ -267,6 +321,7 @@ try {
   await eventually('Settings back did not collapse empty launcher without history', async () => (await page.evaluate(() => window.innerHeight)) < 120)
   assert.equal(await page.locator('.app-shell > .search-header .search-input').inputValue(), '')
   await page.locator('.app-shell > .search-header .search-input').fill('设置')
+  await eventually('Repeated short query did not preserve full header width', () => launcherTracksContent(page))
   assert.equal(await page.locator('.app-shell > .search-header button').count(), 1)
   await page.screenshot({ path: resolve(evidence, 'search-results.png') })
   await page.locator('button.brand-button').click()
@@ -274,6 +329,7 @@ try {
   assert.equal(await page.locator('.app-shell > .search-header .search-input').inputValue(), '')
   await page.locator('.app-shell.collapsed').waitFor()
   await page.locator('.app-shell > .search-header .search-input').fill('设置')
+  await eventually('Settings clear and re-query did not preserve full header width', () => launcherTracksContent(page))
   await page.keyboard.press('Escape')
   assert.equal(await page.locator('.app-shell > .search-header .search-input').inputValue(), '')
   await page.locator('.app-shell.collapsed').waitFor()
@@ -384,7 +440,7 @@ try {
   await page.evaluate(id => window.desktop.runCommand(id), commands[1].id)
   await page.evaluate(id => window.desktop.setPinned(id, true), commands[0].id)
   await quit(page)
-  stage('Relaunching NextLeek to verify persistent history and pins')
+  stage('Relaunching NextTools to verify persistent history and pins')
   page = await launch()
   const reopened = await page.evaluate(() => window.desktop.getSnapshot())
   assert.equal(reopened.settings.theme, 'dark')
@@ -406,7 +462,7 @@ try {
   const mainQuery = page.locator('.app-shell > .search-header .search-input')
   const everythingGroup = page.locator('[data-testid="search-provider"][data-provider-id="everything"]')
   const searchFiles = async () => {
-    await mainQuery.fill('nextleek-smoke-no-matching-file')
+    await mainQuery.fill('nexttools-smoke-no-matching-file')
     await everythingGroup.waitFor()
     await eventually('Main native search did not settle', async () => ['ready', 'unavailable', 'unsupported', 'error'].includes(await everythingGroup.getAttribute('data-status')))
   }

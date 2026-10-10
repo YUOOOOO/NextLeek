@@ -15,7 +15,7 @@ export interface Command {
   icon: string
   keywords: string[]
 }
-export type Page = 'launcher' | 'settings' | 'plugins' | 'theme'
+export type Page = 'launcher' | 'settings' | 'plugins' | 'theme' | 'plugin-market'
 export interface CommandResult { navigate?: Page }
 export interface PluginInfo {
   id: string
@@ -76,6 +76,8 @@ export interface DesktopAPI {
   runCommand(id: string): Promise<CommandResult>
   setPinned(id: string, pinned: boolean): Promise<Snapshot>
   setPluginEnabled(id: string, enabled: boolean): Promise<Snapshot>
+  invokePlugin(pluginId: string, method: string, args: unknown): Promise<unknown>
+  getFrameNonce(): Promise<string>
   hide(): Promise<void>
   quit(): Promise<void>
   setHotkeyCapture(active: boolean): Promise<void>
@@ -96,4 +98,5 @@ export const channels = {
   updateState: 'desktop:update-state', updateCheck: 'desktop:update-check',
   updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
   searchLauncher: 'desktop:search-launcher', searchAction: 'desktop:search-action',
+  invokePlugin: 'desktop:invoke-plugin', frameNonce: 'desktop:frame-nonce',
 } as const

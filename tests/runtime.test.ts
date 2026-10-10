@@ -15,7 +15,7 @@ function desktop(events: DesktopEvent[]): DesktopService {
   return { emit: event => events.push(event), applySettings: async () => {}, hide() {}, quit() {}, openDataDirectory: async () => {} }
 }
 
-test('LMDB settings, command history, pins and plugin state survive runtime disposal', async () => {
+test('LMDB settings, command history and pins survive runtime disposal while builtins remain protected', async () => {
   const path = await mkdtemp(join(tmpdir(), 'nextleek-runtime-'))
   const events: DesktopEvent[] = []
   let runtime = await createRuntime(join(path, 'lmdb'), desktop(events))
@@ -29,7 +29,8 @@ test('LMDB settings, command history, pins and plugin state survive runtime disp
     await runtime.setPinned('settings.open', true)
     assert.deepEqual(runtime.getSnapshot().pinned, ['settings.open'])
     await runtime.updateSettings({ theme: 'dark', accent: 'green', compact: true })
-    await runtime.setPluginEnabled('builtin-search', false)
+    await assert.rejects(runtime.setPluginEnabled('builtin-search', false), /Core plugins/)
+    await assert.rejects(runtime.setPluginEnabled('plugin-market', false), /Core plugins/)
     assert(!runtime.getSnapshot().plugins.some(plugin => plugin.id === 'quick-launch'))
     await assert.rejects(runtime.runCommand('launcher.open'), /unavailable/)
     await assert.rejects(runtime.setPluginEnabled('settings', false), /Core plugins/)
@@ -42,9 +43,9 @@ test('LMDB settings, command history, pins and plugin state survive runtime disp
     assert.equal(saved.settings.compact, true)
     assert.deepEqual(saved.pinned, ['settings.open'])
     assert.deepEqual(saved.recent, ['settings.open', 'theme.open'])
-    assert.equal(saved.plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'disabled')
-    await runtime.setPluginEnabled('builtin-search', true)
-    assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'active')
+    assert.equal(saved.plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'active')
+    assert.equal(saved.plugins.find(plugin => plugin.id === 'builtin-search')?.protected, true)
+    assert.equal(saved.plugins.find(plugin => plugin.id === 'plugin-market')?.status, 'active')
     assert(events.some(event => event.type === 'navigate' && event.page === 'settings'))
   } finally { await runtime.dispose(); await rm(path, { recursive: true, force: true }) }
 })
@@ -111,7 +112,7 @@ test('main search contributions dispatch host-authorized result actions and disa
   } finally { await ctx.fiber.dispose() }
 })
 
-test('one builtin search toggle disposes both contributors, releases Everything, and restores fresh authorization', async () => {
+test('protected builtin search keeps both contributors active and runtime disposal releases authorization', async () => {
   const path = await mkdtemp(join(tmpdir(), 'nextleek-search-'))
   const addonPath = join(path, 'everything.cjs')
   const applicationsDirectory = join(path, 'Applications')
@@ -137,7 +138,8 @@ test('one builtin search toggle disposes both contributors, releases Everything,
   })
   const request = { query: 'Fixture', offset: 0, limit: 10 }
   try {
-    assert.deepEqual(runtime.getSnapshot().plugins.filter(plugin => !plugin.protected).map(plugin => ({ id: plugin.id, name: plugin.name })), [{ id: 'builtin-search', name: '搜索' }])
+    assert.deepEqual(runtime.getSnapshot().plugins.filter(plugin => !plugin.protected), [])
+    assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.protected, true)
     assert(!runtime.getSnapshot().plugins.some(plugin => ['everything-provider', 'everything', 'applications'].includes(plugin.id)))
     assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'search')?.protected, true)
     const service = runtime.ctx.get('everything')!
@@ -148,38 +150,36 @@ test('one builtin search toggle disposes both contributors, releases Everything,
     const fileId = groups.find(group => group.providerId === 'everything')!.items[0].id
     await runtime.performSearchAction('applications', applicationId, 'open')
     assert.deepEqual(opened, [applicationPath])
-    await runtime.setPluginEnabled('builtin-search', false)
-    assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'disabled')
+    await assert.rejects(runtime.setPluginEnabled('builtin-search', false), /Core plugins/)
+    assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'active')
+    assert.equal(runtime.ctx.get('everything'), service)
+    const active = await runtime.searchLauncher(request)
+    assert.deepEqual(active.map(group => group.providerId).sort(), ['applications', 'everything'])
+    assert(active.every(group => group.status === 'ready' && group.items.length === 1))
+    await runtime.performSearchAction('applications', active.find(group => group.providerId === 'applications')!.items[0].id, 'open')
+    assert.deepEqual(opened, [applicationPath, applicationPath])
+    await runtime.dispose()
     assert.equal(runtime.ctx.get('everything'), undefined)
-    assert.deepEqual(await runtime.searchLauncher(request), [])
     await assert.rejects(service.search(request), /服务已关闭/)
     await assert.rejects(service.performAction(fileId, 'open'), /服务已关闭/)
-    await assert.rejects(runtime.performSearchAction('applications', applicationId, 'open'), /provider unavailable/)
-    await runtime.setPluginEnabled('builtin-search', true)
-    assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'active')
-    assert.notEqual(runtime.ctx.get('everything'), service)
-    const restored = await runtime.searchLauncher(request)
-    assert.deepEqual(restored.map(group => group.providerId).sort(), ['applications', 'everything'])
-    assert(restored.every(group => group.status === 'ready' && group.items.length === 1))
-    await assert.rejects(runtime.performSearchAction('applications', applicationId, 'open'), /结果已失效/)
-    await assert.rejects(runtime.performSearchAction('everything', fileId, 'open'), /结果已失效/)
-    await runtime.performSearchAction('applications', restored.find(group => group.providerId === 'applications')!.items[0].id, 'open')
-    assert.deepEqual(opened, [applicationPath, applicationPath])
+    await assert.rejects(runtime.searchLauncher(request), /shutting down/)
+    await assert.rejects(runtime.performSearchAction('applications', applicationId, 'open'), /shutting down/)
   } finally { await runtime.dispose(); await rm(path, { recursive: true, force: true }) }
 })
 
-test('legacy search toggles migrate conservatively once and obsolete plugin IDs are rejected', async () => {
-  const cases: Array<{ enabled: Record<string, boolean>; expected: boolean }> = [
-    { enabled: {}, expected: true },
-    { enabled: { everything: false }, expected: true },
-    { enabled: { applications: false }, expected: true },
-    { enabled: { everything: false, applications: false, 'everything-provider': true }, expected: false },
-    { enabled: { everything: false, applications: true }, expected: true },
-    { enabled: { everything: true, applications: false }, expected: true },
-    { enabled: { 'builtin-search': false, everything: true, applications: true }, expected: false },
-    { enabled: { 'builtin-search': true, everything: false, applications: false }, expected: true },
+test('legacy disabled search state normalizes to protected active search and obsolete plugin IDs are rejected', async () => {
+  const cases: Array<Record<string, boolean>> = [
+    {},
+    { everything: false },
+    { applications: false },
+    { everything: false, applications: false, 'everything-provider': true },
+    { everything: false, applications: true },
+    { everything: true, applications: false },
+    { 'builtin-search': false },
+    { 'builtin-search': false, everything: true, applications: true },
+    { 'builtin-search': true, everything: false, applications: false },
   ]
-  for (const { enabled, expected } of cases) {
+  for (const enabled of cases) {
     const path = await mkdtemp(join(tmpdir(), 'nextleek-search-migration-'))
     const databasePath = join(path, 'lmdb')
     const seed = new Context()
@@ -189,16 +189,17 @@ test('legacy search toggles migrate conservatively once and obsolete plugin IDs 
     await seed.fiber.dispose()
     let runtime = await createRuntime(databasePath, desktop([]))
     try {
-      assert.deepEqual(runtime.ctx.storage.read().enabled, { 'builtin-search': expected, 'other-plugin': false })
-      assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, expected ? 'active' : 'disabled')
+      assert.deepEqual(runtime.ctx.storage.read().enabled, { 'builtin-search': true, 'other-plugin': false })
+      assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.status, 'active')
+      assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.protected, true)
       for (const id of ['everything-provider', 'everything', 'applications']) {
         await assert.rejects(runtime.setPluginEnabled(id, true), /Unknown plugin/)
       }
-      await runtime.setPluginEnabled('builtin-search', !expected)
+      await assert.rejects(runtime.setPluginEnabled('builtin-search', false), /Core plugins/)
       await runtime.dispose()
       runtime = await createRuntime(databasePath, desktop([]))
-      assert.deepEqual(runtime.ctx.storage.read().enabled, { 'builtin-search': !expected, 'other-plugin': false })
-      assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.enabled, !expected)
+      assert.deepEqual(runtime.ctx.storage.read().enabled, { 'builtin-search': true, 'other-plugin': false })
+      assert.equal(runtime.getSnapshot().plugins.find(plugin => plugin.id === 'builtin-search')?.enabled, true)
     } finally { await runtime.dispose(); await rm(path, { recursive: true, force: true }) }
   }
 })

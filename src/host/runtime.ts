@@ -1,4 +1,6 @@
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
+import { dirname, join } from 'node:path'
+import packageMetadata from '../../package.json'
 import type { CommandResult, PluginInfo, Settings, Snapshot, LauncherSearchRequest } from '../shared/contracts'
 import { settingsPatch, identifier, boolean, launcherSearchRequest, searchItemId } from '../shared/validation'
 import type { DesktopService } from './services/contracts'
@@ -8,6 +10,8 @@ import { searchPlugin } from './services/search'
 import { settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
 import { everythingPlugin, type EverythingEnvironment } from './services/everything'
 import { applicationsPlugin, type ApplicationsEnvironment } from './services/applications'
+import { pluginEndpointsPlugin } from './services/plugin-endpoints'
+import { marketPlugin } from '../../plugins/plugin-market/host'
 
 interface PluginEntry {
   id: string
@@ -28,17 +32,22 @@ function builtInSearchPlugin(environment?: EverythingEnvironment, applicationsEn
     },
   }
 }
+export interface RuntimeOptions { version?: string }
 
-export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment) {
+
+export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment, options: RuntimeOptions = {}) {
   const ctx = new Context()
+  const version = options.version ?? packageMetadata.version
   const entries: PluginEntry[] = [
     { id: 'storage', name: 'LMDB 存储', protected: true, plugin: storagePlugin(path) },
     { id: 'commands', name: '命令注册表', protected: true, plugin: commandsPlugin },
+    { id: 'plugin-endpoints', name: '插件端点注册表', protected: true, plugin: pluginEndpointsPlugin },
     { id: 'search', name: '搜索提供者注册表', protected: true, plugin: searchPlugin },
     { id: 'desktop', name: 'Electron 桌面宿主', protected: true, plugin: { name: 'desktop', apply(scope: Context) { scope.provide('desktop', desktop) } } },
     { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
     { id: 'theme', name: '主题', protected: true, plugin: themePlugin },
-    { id: 'builtin-search', name: '搜索', protected: false, plugin: builtInSearchPlugin(everythingEnvironment, applicationsEnvironment) },
+    { id: 'builtin-search', name: '搜索', protected: true, plugin: builtInSearchPlugin(everythingEnvironment, applicationsEnvironment) },
+    { id: 'plugin-market', name: '插件市场', protected: true, plugin: marketPlugin({ directory: join(dirname(path), 'plugins'), version }) },
   ]
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
@@ -55,7 +64,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
   function snapshot(): Snapshot {
     const state = ctx.get('storage')!.read()
     const plugins: PluginInfo[] = entries.map(entry => ({
-      id: entry.id, name: entry.name, version: '4.0.0', protected: entry.protected,
+      id: entry.id, name: entry.name, version, protected: entry.protected,
       enabled: entry.protected || state.enabled[entry.id] !== false,
       status: entry.fiber ? statuses[entry.fiber.state] : 'disabled',
     }))
@@ -74,8 +83,8 @@ export async function createRuntime(path: string, desktop: DesktopService, every
       if (entry.id === 'storage') {
         const storage = ctx.get('storage')!
         const state = storage.read()
-        if (state.enabled['builtin-search'] === undefined || ['everything-provider', 'everything', 'applications'].some(id => Object.hasOwn(state.enabled, id))) {
-          const enabled: Record<string, boolean> = { ...state.enabled, 'builtin-search': state.enabled['builtin-search'] ?? (state.enabled.everything !== false || state.enabled.applications !== false) }
+        if (state.enabled['builtin-search'] !== true || ['everything-provider', 'everything', 'applications'].some(id => Object.hasOwn(state.enabled, id))) {
+          const enabled: Record<string, boolean> = { ...state.enabled, 'builtin-search': true }
           delete enabled['everything-provider']
           delete enabled.everything
           delete enabled.applications
@@ -92,6 +101,9 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     ctx,
     getSnapshot: snapshot,
     listCommands: () => ctx.get('commands')!.list(),
+    invokePlugin(pluginId: string, method: string, args: unknown) {
+      return serialize(() => ctx.get('pluginEndpoints')!.invoke(pluginId, method, args))
+    },
     searchLauncher(request: LauncherSearchRequest) {
       const validated = launcherSearchRequest(request)
       return serialize(() => ctx.get('search')!.search(validated))
