@@ -171,7 +171,7 @@ test('actions use only host-owned IDs and recheck existence', async () => {
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('reveal actions await native launch and propagate asynchronous launch errors', async () => {
+test('reveal actions await native selection and propagate asynchronous HRESULT errors', async () => {
   const h = harness()
   try {
     h.output([row('Unicode 中文,逗号.txt')]); const item = (await h.service.search(request)).items[0]
@@ -187,10 +187,31 @@ test('reveal actions await native launch and propagate asynchronous launch error
     const action = h.service.performAction(item.id, 'reveal').then(() => { completed = true })
     await launched
     assert.equal(completed, false)
-    const rejected = assert.rejects(action, /Explorer launch failed/)
-    rejectLaunch(new Error('Explorer launch failed'))
+    const rejected = assert.rejects(action, /SHOpenFolderAndSelectItems failed \(0x80004005\)/)
+    rejectLaunch(new Error('SHOpenFolderAndSelectItems failed (0x80004005)'))
     await rejected
     assert.equal(completed, false)
+  } finally { await h.ctx.fiber.dispose() }
+})
+
+test('reveal actions do not complete before native selection succeeds', async () => {
+  const h = harness()
+  try {
+    h.output([row()]); const item = (await h.service.search(request)).items[0]
+    let finish!: () => void
+    let started!: () => void
+    const selecting = new Promise<void>(resolve => { started = resolve })
+    h.environment.revealPath = () => {
+      started()
+      return new Promise<void>(resolve => { finish = resolve })
+    }
+    let completed = false
+    const action = h.service.performAction(item.id, 'reveal').then(() => { completed = true })
+    await selecting
+    assert.equal(completed, false)
+    finish()
+    await action
+    assert.equal(completed, true)
   } finally { await h.ctx.fiber.dispose() }
 })
 
