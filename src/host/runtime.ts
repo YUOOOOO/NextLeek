@@ -1,9 +1,10 @@
 import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
-import type { CommandResult, PluginInfo, Settings, Snapshot, EverythingSearchRequest, EverythingAction } from '../shared/contracts'
-import { settingsPatch, identifier, boolean } from '../shared/validation'
+import type { CommandResult, PluginInfo, Settings, Snapshot, LauncherSearchRequest } from '../shared/contracts'
+import { settingsPatch, identifier, boolean, launcherSearchRequest, searchItemId } from '../shared/validation'
 import type { DesktopService } from './services/contracts'
 import { storagePlugin } from './services/storage'
 import { commandsPlugin } from './services/commands'
+import { searchPlugin } from './services/search'
 import { quickLaunchPlugin, settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
 import { everythingPlugin, type EverythingEnvironment } from './services/everything'
 
@@ -21,6 +22,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
   const entries: PluginEntry[] = [
     { id: 'storage', name: 'LMDB 存储', protected: true, plugin: storagePlugin(path) },
     { id: 'commands', name: '命令注册表', protected: true, plugin: commandsPlugin },
+    { id: 'search', name: '搜索提供者注册表', protected: true, plugin: searchPlugin },
     { id: 'desktop', name: 'Electron 桌面宿主', protected: true, plugin: { name: 'desktop', apply(scope: Context) { scope.provide('desktop', desktop) } } },
     { id: 'everything-provider', name: 'Everything 搜索服务', protected: true, plugin: everythingPlugin(everythingEnvironment) },
     { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
@@ -69,17 +71,13 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     ctx,
     getSnapshot: snapshot,
     listCommands: () => ctx.get('commands')!.list(),
-    getEverythingStatus() {
-      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
-      return ctx.get('everything')!.getStatus()
+    searchLauncher(request: LauncherSearchRequest) {
+      const validated = launcherSearchRequest(request)
+      return serialize(() => ctx.get('search')!.search(validated))
     },
-    searchEverything(request: EverythingSearchRequest) {
-      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
-      return ctx.get('everything')!.search(request)
-    },
-    performEverythingAction(id: string, action: EverythingAction) {
-      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
-      return ctx.get('everything')!.performAction(id, action)
+    performSearchAction(providerId: string, itemId: string, action: string) {
+      identifier(providerId); searchItemId(itemId); identifier(action)
+      return serialize(() => ctx.get('search')!.performAction(providerId, itemId, action))
     },
     updateSettings(patch: Partial<Settings>) {
       const validated = settingsPatch(patch)

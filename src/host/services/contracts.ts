@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { Command, CommandResult, DesktopEvent, Settings, EverythingStatus, EverythingSearchRequest, EverythingSearchResult, EverythingAction } from '../../shared/contracts'
+import type { Command, CommandResult, DesktopEvent, Settings, LauncherSearchRequest, LauncherSearchGroup } from '../../shared/contracts'
 
 export interface PersistentState {
   settings: Settings
@@ -24,15 +24,47 @@ export interface DesktopService {
   quit(): void
   openDataDirectory(): Promise<void>
 }
+export interface SearchProvider {
+  id: string
+  title: string
+  search(request: LauncherSearchRequest): Promise<Omit<LauncherSearchGroup, 'providerId' | 'title' | 'offset' | 'hasMore'>>
+  performAction(itemId: string, action: string): Promise<void>
+}
+export interface SearchService {
+  register(ctx: Context, provider: SearchProvider): void
+  search(request: LauncherSearchRequest): Promise<LauncherSearchGroup[]>
+  performAction(providerId: string, itemId: string, action: string): Promise<void>
+}
+export interface EverythingStatus {
+  status: 'ready' | 'unavailable' | 'unsupported'
+  message: string
+  version?: string
+}
+export interface EverythingItem {
+  id: string
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number | null
+  modifiedAt: string | null
+}
+export interface EverythingSearchResult {
+  items: EverythingItem[]
+  total: number
+  hasMore: boolean
+  offset: number
+}
+export type EverythingAction = 'open' | 'reveal' | 'copy-path'
 export interface EverythingService {
   getStatus(): Promise<EverythingStatus>
-  search(request: EverythingSearchRequest): Promise<EverythingSearchResult>
+  search(request: LauncherSearchRequest): Promise<EverythingSearchResult>
   performAction(id: string, action: EverythingAction): Promise<void>
 }
 declare module '@deepseek-ai/cordis' {
   interface Context {
     storage: StorageService
     commands: CommandsService
+    search: SearchService
     desktop: DesktopService
     everything: EverythingService
   }

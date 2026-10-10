@@ -24,7 +24,7 @@
 - 发版：先提升 `package.json` 版本，推送 `v4` 后 Actions 验证并分别发布安装 EXE、便携 ZIP、blockmap、`latest.yml`；源码使用独立 GitHub Source code 下载，不上传混合构建 artifact，不嵌套安装包或源码到便携 ZIP；禁止覆盖已发布标签。
 - 启动器：首次无历史、无固定项且空查询时只显示输入栏；有历史或固定项时展开首页。按 ZTools 默认行为，返回搜索清空查询；不显示独立搜索清空按钮或页面关闭按钮，Esc 清空搜索。设置侧栏不提供退出操作。快捷键录制期间暂停已保存的全局快捷键，Windows 临时接收 Alt+Space 并传入录制框，结束后释放并恢复已保存快捷键。
 - 窗口恢复：搜索页重新唤起清空查询并重置选择；隐藏插件/设置后唤起保留页面、查询和结果并恢复焦点。搜索页非空查询第一次 Esc 清空、第二次隐藏；插件第一次 Esc 清空插件查询，空查询时默认退出到空搜索页。ESC 隐藏默认关闭，开启后插件 Esc/原生关闭隐藏并返回空搜索；原生关闭搜索页只隐藏。录制框 Esc 只取消录制内容。最近使用持久化执行过的指令，不持久化搜索词。
-- Everything：Windows 文件搜索复用已安装并运行的 Everything 索引，通过随包 ES CLI 查询；必须等待索引就绪并显式覆盖 ES 保存的匹配、count 和输出配置，不能只检测进程。只打包经过固定 SHA256 校验的官方 ES 和许可证，不分发 Everything 主程序。提供者通过 Cordis 服务注入，查询进程绑定 effect，文件操作只接受宿主签发的结果 ID；缺少引擎或非 Windows 必须明确显示不可用状态。
+- Everything：仅 Windows x64 支持原生索引搜索，随包分发经过固定 SHA256 校验的 ZTools Everything addon 与 Everything.exe，并保留 MIT 及第三方许可证说明；不再使用 ES CLI、独立 Everything 页面或下载入口。宿主复用已运行的引擎，否则以 `-startup` 启动随包引擎，等待数据库就绪后调用同步 `everythingSearch(query, 1, limit, offset)`。内置 Cordis 插件注入 `search`、`everything`，通过 effect 注册到主启动器的通用搜索提供者注册表；禁用插件移除贡献，主界面不得硬编码 Everything。文件操作只接受宿主结果能力表中登记的不透明 ID（capability ID，不是密码学签名）；未知、篡改或过期 ID 必须拒绝。引擎未就绪、组件缺失或非 Windows 平台必须明确显示不可用或不支持状态。
 
 ---
 

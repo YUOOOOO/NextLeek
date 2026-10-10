@@ -19,7 +19,7 @@ artifactName: 'NextLeek-${version}-${os}-${arch}.${ext}'
 extraResources:
   - from: resources/icons
     to: icons
-    filter: ['*.png', '*.ico']
+    filter: ['*.png', '*.ico', 'ZTools-LICENSE']
 win:
   icon: resources/icons/icon.ico
   target:
@@ -31,7 +31,7 @@ win:
   extraResources:
     - from: resources/everything
       to: everything
-      filter: ['es.exe', 'LICENSE']
+      filter: ['addon-x64.node', 'Everything.exe', 'Everything.ini', 'LICENSE-*']
   publish:
     provider: github
     owner: YUOOOOO

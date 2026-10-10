@@ -3,14 +3,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDesktopStore } from './store'
 import AppIcon from './components/AppIcon.vue'
 import CommandTile from './components/CommandTile.vue'
-import EverythingPage from './components/EverythingPage.vue'
+import SearchProviderResults from './components/SearchProviderResults.vue'
 import type { DesktopEvent, Settings } from '../shared/contracts'
 
 const desktop = useDesktopStore()
 const search = ref<HTMLInputElement | null>(null)
 const themeControl = ref<HTMLSelectElement | null>(null)
 const selected = ref(0)
-const composing = ref(false)
 const hotkeyInput = ref<HTMLInputElement | null>(null)
 const capturingHotkey = ref(false)
 const hotkey = ref('')
@@ -28,6 +27,12 @@ const commandSections = computed(() => {
   return desktop.launcherRevealed ? [{ id: 'commands', title: '全部指令', commands: desktop.results, offset: 0 }] : []
 })
 const visibleCommands = computed(() => commandSections.value.flatMap(section => section.commands))
+const providerSections = computed(() => {
+  let offset = visibleCommands.value.length
+  return desktop.searchGroups.map(group => { const section = { group, offset }; offset += group.items.length; return section })
+})
+const providerItems = computed(() => desktop.searchGroups.flatMap(group => group.items.map(item => ({ providerId: group.providerId, item }))))
+const resultCount = computed(() => visibleCommands.value.length + providerItems.value.length)
 const launcherExpanded = computed(() => desktop.page !== 'launcher' || searchMode.value || hasHomeHistory.value || desktop.launcherRevealed || Boolean(desktop.error) || desktop.loading || !desktop.snapshot)
 const settings = computed(() => desktop.snapshot?.settings)
 const dark = computed(() => settings.value?.theme === 'dark' || (settings.value?.theme === 'system' && systemDark.value))
@@ -51,7 +56,7 @@ const navigation = [
 
 watch(() => settings.value?.hotkey, value => { hotkey.value = value ?? '' })
 watch(() => desktop.query, () => { selected.value = 0; if (searchMode.value) desktop.page = 'launcher' })
-watch(visibleCommands, commands => { selected.value = Math.min(selected.value, Math.max(0, commands.length - 1)) })
+watch(resultCount, count => { selected.value = Math.min(selected.value, Math.max(0, count - 1)) })
 watch(launcherExpanded, expanded => { void desktop.setLauncherExpanded(expanded) }, { immediate: true })
 watch(() => desktop.page, async page => {
   selected.value = 0
@@ -64,7 +69,7 @@ watch(() => desktop.focusRequest, async () => {
   selected.value = 0
   await nextTick()
   if (desktop.page === 'launcher') search.value?.focus()
-  else if (desktop.page !== 'everything' && !document.activeElement?.closest('.settings-layout')) {
+  else if (!document.activeElement?.closest('.settings-layout')) {
     if (desktop.page === 'theme') themeControl.value?.focus()
     else search.value?.focus()
   }
@@ -104,7 +109,7 @@ function captureHotkey(event: KeyboardEvent) {
   hotkey.value = [...(event.ctrlKey ? ['Control'] : []), ...(event.altKey ? ['Alt'] : []), ...(event.shiftKey ? ['Shift'] : []), ...(event.metaKey ? ['Super'] : []), key].join('+')
 }
 function keydown(event: KeyboardEvent) {
-  if (event.isComposing || composing.value || event.keyCode === 229 || event.defaultPrevented) return
+  if (event.isComposing || desktop.searchComposing || event.keyCode === 229 || event.defaultPrevented) return
   const target = event.target as HTMLElement
   if (target.closest('[data-hotkey]')) return
   if (event.key === 'Escape') {
@@ -116,24 +121,32 @@ function keydown(event: KeyboardEvent) {
     } else void desktop.hide()
     return
   }
-  if (desktop.page !== 'launcher' || !visibleCommands.value.length || desktop.busy) return
+  if (desktop.page !== 'launcher' || !resultCount.value || desktop.busy || desktop.searchActionBusy) return
   if (target.closest('.pin-action') || target.closest('.brand-button')) return
-  if (event.key === 'Enter' && (target === search.value || target.closest('.command-launch'))) {
+  const resultTarget = target.closest('.command-launch, .search-result-open')
+  if (event.key === 'Enter' && (target === search.value || resultTarget)) {
     event.preventDefault()
     const command = visibleCommands.value[selected.value]
     if (command) void desktop.run(command)
+    else {
+      const result = providerItems.value[selected.value - visibleCommands.value.length]
+      const action = result?.item.actions.find(action => action.id === 'open') ?? result?.item.actions[0]
+      if (result && action) void desktop.performSearchAction(result.providerId, result.item, action.id)
+    }
     return
   }
   const movement = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(event.key)
-  if (movement === -1 || (target !== search.value && !target.closest('.command-launch'))) return
+  if (movement === -1 || (target !== search.value && !resultTarget)) return
   event.preventDefault()
   const tile = document.querySelector<HTMLElement>('.command-tile')
   const grid = tile?.parentElement
   const columns = grid && tile ? Math.max(1, Math.round(grid.clientWidth / tile.getBoundingClientRect().width)) : 1
-  const offsets = [-1, 1, -columns, columns]
-  selected.value = Math.max(0, Math.min(visibleCommands.value.length - 1, selected.value + (offsets[movement] ?? 0)))
-  if (target !== search.value) document.querySelector<HTMLButtonElement>(`[data-command-index="${selected.value}"]`)?.focus()
-  else document.querySelector<HTMLElement>(`[data-command-index="${selected.value}"]`)?.scrollIntoView({ block: 'nearest' })
+  const inCommands = selected.value < visibleCommands.value.length
+  const offsets = [-1, 1, inCommands ? -columns : -1, inCommands ? columns : 1]
+  selected.value = Math.max(0, Math.min(resultCount.value - 1, selected.value + (offsets[movement] ?? 0)))
+  const selectedResult = document.querySelector<HTMLButtonElement>(`[data-command-index="${selected.value}"], [data-search-index="${selected.value}"]`)
+  if (target !== search.value) selectedResult?.focus()
+  selectedResult?.scrollIntoView({ block: 'nearest' })
 }
 let media: MediaQueryList | undefined
 let unsubscribeHotkey: (() => void) | undefined
@@ -164,9 +177,9 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell" :class="{ dark, compact: settings?.compact, collapsed: !launcherExpanded }" :data-accent="settings?.accent ?? 'green'">
-    <header v-if="desktop.page !== 'everything'" class="search-header">
+    <header class="search-header">
       <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
-      <input ref="search" v-model="desktop.query" class="search-input" type="search" aria-label="搜索应用和指令" placeholder="搜索应用和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="composing = true" @compositionend="composing = false" />
+      <input ref="search" v-model="desktop.query" class="search-input" data-testid="launcher-query" type="search" aria-label="搜索应用、文件和指令" placeholder="搜索应用、文件和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="desktop.setSearchComposing(true)" @compositionend="desktop.setSearchComposing(false)" />
       <button class="brand-button" aria-label="打开设置" title="NextLeek · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
     </header>
 
@@ -178,9 +191,15 @@ onUnmounted(() => {
         <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><span>{{ section.commands.length }} 项指令</span></div>
         <div v-if="section.commands.length" class="command-grid"><CommandTile v-for="(command, index) in section.commands" :key="command.id" :command="command" :index="section.offset + index" :selected="selected === section.offset + index" :pinned="desktop.snapshot.pinned.includes(command.id)" :disabled="desktop.busy" @select="selected = section.offset + index" @run="desktop.run(command)" @pin="desktop.pin(command)" /></div>
       </section>
-      <div v-if="!visibleCommands.length" class="empty-state"><h2>{{ searchMode ? '没有匹配的指令' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试指令名称、用途或关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="searchMode" class="text-button" @click="desktop.query = ''">清除搜索</button><button v-else class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
+      <template v-if="searchMode">
+        <p v-if="desktop.searchLoading" class="search-provider-progress" data-testid="search-loading" role="status">正在搜索…</p>
+        <div v-if="desktop.searchError" class="error-strip" data-testid="search-error" role="alert"><span>{{ desktop.searchError }}</span><button class="text-button" data-testid="search-provider-retry" :disabled="desktop.searchLoading" @click="desktop.searchLauncher()">重试</button></div>
+        <SearchProviderResults v-for="section in providerSections" :key="section.group.providerId" :group="section.group" :offset="section.offset" :selected="selected" :loading="desktop.searchLoading" :disabled="desktop.busy || desktop.searchActionBusy" @select="selected = $event" @action="desktop.performSearchAction" @retry="desktop.searchLauncher()" @load-more="desktop.searchLauncher" />
+        <p v-if="desktop.searchFeedback" class="search-feedback" data-testid="search-feedback" role="status">{{ desktop.searchFeedback }}</p>
+      </template>
+      <div v-if="!resultCount && !desktop.searchLoading && !desktop.searchError && !desktop.searchGroups.some(group => group.status !== 'ready')" class="empty-state"><h2>{{ searchMode ? '没有匹配的结果' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试应用名称、文件名、路径或指令关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="!searchMode" class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
     </main>
-    <div v-else-if="desktop.page !== 'launcher' && desktop.page !== 'everything'" class="settings-layout">
+    <div v-else-if="desktop.page !== 'launcher'" class="settings-layout">
       <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
       <main class="settings-content" :aria-busy="desktop.busy">
         <template v-if="desktop.page === 'settings' && settings">
@@ -224,7 +243,6 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
-    <EverythingPage v-if="desktop.snapshot" v-show="desktop.page === 'everything'" :active="desktop.page === 'everything'" :focus-request="desktop.focusRequest" @back="desktop.navigate('launcher')" />
     <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

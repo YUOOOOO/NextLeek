@@ -15,7 +15,7 @@ export interface Command {
   icon: string
   keywords: string[]
 }
-export type Page = 'launcher' | 'settings' | 'plugins' | 'theme' | 'everything'
+export type Page = 'launcher' | 'settings' | 'plugins' | 'theme'
 export interface CommandResult { navigate?: Page }
 export interface PluginInfo {
   id: string
@@ -31,33 +31,28 @@ export interface Snapshot {
   recent: string[]
   pinned: string[]
 }
-export interface EverythingStatus {
-  status: 'ready' | 'unavailable' | 'unsupported'
-  message: string
-  version?: string
-}
-export interface EverythingSearchRequest {
-  query: string
-  filter: 'all' | 'files' | 'folders'
-  sort: 'name' | 'path' | 'size' | 'modified'
-  descending: boolean
-  offset: number
-  limit: number
-}
-export interface EverythingItem {
+export interface LauncherSearchRequest { query: string; offset: number; limit: number }
+export interface LauncherSearchAction { id: string; label: string }
+export interface LauncherSearchItem {
   id: string
   name: string
   path: string
   isDirectory: boolean
   size: number | null
   modifiedAt: string | null
+  icon?: string
+  actions: LauncherSearchAction[]
 }
-export interface EverythingSearchResult {
-  items: EverythingItem[]
-  hasMore: boolean
+export interface LauncherSearchGroup {
+  providerId: string
+  title: string
+  status: 'ready' | 'unavailable' | 'unsupported' | 'error'
+  message?: string
+  items: LauncherSearchItem[]
+  total: number
   offset: number
+  hasMore: boolean
 }
-export type EverythingAction = 'open' | 'reveal' | 'copy-path'
 export interface UpdateState {
   status: 'unsupported' | 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'installing' | 'error'
   currentVersion: string
@@ -88,10 +83,8 @@ export interface DesktopAPI {
   checkForUpdates(): Promise<UpdateState>
   downloadUpdate(): Promise<UpdateState>
   installUpdate(): Promise<UpdateState>
-  getEverythingStatus(): Promise<EverythingStatus>
-  searchEverything(request: EverythingSearchRequest): Promise<EverythingSearchResult>
-  performEverythingAction(id: string, action: EverythingAction): Promise<void>
-  openEverythingDownload(): Promise<void>
+  searchLauncher(request: LauncherSearchRequest): Promise<LauncherSearchGroup[]>
+  performSearchAction(providerId: string, itemId: string, action: string): Promise<void>
   subscribe(callback: (event: DesktopEvent) => void): () => void
 }
 export const channels = {
@@ -101,6 +94,5 @@ export const channels = {
   hotkeyCapture: 'desktop:hotkey-capture', layout: 'desktop:layout',
   updateState: 'desktop:update-state', updateCheck: 'desktop:update-check',
   updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
-  everythingStatus: 'desktop:everything-status', everythingSearch: 'desktop:everything-search',
-  everythingAction: 'desktop:everything-action', everythingDownload: 'desktop:everything-download',
+  searchLauncher: 'desktop:search-launcher', searchAction: 'desktop:search-action',
 } as const

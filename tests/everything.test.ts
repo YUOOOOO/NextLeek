@@ -1,269 +1,165 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import { createEverythingService, type EverythingEnvironment, type EverythingPorts } from '../src/host/services/everything'
-import type { EverythingSearchRequest } from '../src/shared/contracts'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { createRuntime } from '../src/host/runtime'
+import { createEverythingService, type EverythingEnvironment, type EverythingPorts, type NativeEverythingAddon, type NativeEverythingResult } from '../src/host/services/everything'
+import type { LauncherSearchRequest } from '../src/shared/contracts'
 
-const request: EverythingSearchRequest = { query: 'ext:txt', filter: 'all', sort: 'name', descending: false, offset: 0, limit: 2 }
-function row(name = '报告.txt', attributes: number | null = 0) {
-  return { name, path: 'C:\\资料', filename: `C:\\资料\\${name}`, size: 123, date_modified: '2026-10-10T12:34:56Z', attributes }
+const request: LauncherSearchRequest = { query: 'ext:txt', offset: 0, limit: 2 }
+function row(filename = '报告.txt', isFolder = false) {
+  return { filename, path: 'C:\\资料', isFolder, size: 123, dateModified: '2026-10-10 12:34:56', ext: 'txt', hfilename: filename }
 }
 function harness() {
   const ctx = new Context()
-  const calls: Array<{ executable: string; args: string[]; options: Parameters<EverythingPorts['execute']>[2] }> = []
+  const calls: Array<[string, number, number, number]> = []
+  const starts: string[] = []
+  const loads: string[] = []
   const actions: Array<[string, string]> = []
-  let output = ''
-  let error: Error | null = null
-  let missing = false
-  let directory = false
-  let openError = ''
-  let hold = false
-  let killed = 0
-  const completions: Array<(error: Error | null, stdout: string) => void> = []
+  let output: NativeEverythingResult = { list: [], total: 0 }
+  let running = true, ready = true, missing = false, now = 0, openError = ''
+  let afterSleep: (() => void) | undefined
+  let loadError: Error | undefined, startError: Error | undefined
+  const addon: NativeEverythingAddon = {
+    everythingIsRuning: () => running, everythingIsDBLoaded: () => ready,
+    getEverythingVersion: () => '1.4.1',
+    everythingSearch(query, sort, limit, offset) { calls.push([query, sort, limit, offset]); return output },
+  }
   const environment: EverythingEnvironment = {
-    executable: 'C:\\NextLeek\\everything\\es.exe', platform: 'win32',
+    addonPath: 'C:\\NextLeek\\everything\\addon-x64.node', executable: 'C:\\NextLeek\\everything\\Everything.exe', platform: 'win32',
     async openPath(path) { actions.push(['open', path]); return openError },
-    revealPath(path) { actions.push(['reveal', path]) },
-    copyPath(path) { actions.push(['copy-path', path]) },
+    revealPath(path) { actions.push(['reveal', path]) }, copyPath(path) { actions.push(['copy-path', path]) },
   }
   const ports: EverythingPorts = {
-    execute(executable, args, options, done) {
-      calls.push({ executable, args, options })
-      if (hold) completions.push(done)
-      else queueMicrotask(() => done(error, output))
-      return { kill() { killed++; return true } }
-    },
-    async stat() {
-      if (missing) throw Object.assign(new Error('gone'), { code: 'ENOENT' })
-      return { isDirectory: () => directory }
-    },
+    loadAddon(path) { loads.push(path); if (loadError) throw loadError; return addon },
+    startEngine(path, failed) { starts.push(path); if (startError) failed(startError) },
+    async stat() { if (missing) throw Object.assign(new Error('gone'), { code: 'ENOENT' }); return { isDirectory: () => false } },
+    async sleep(milliseconds) { now += milliseconds; afterSleep?.() }, now: () => now,
   }
-  const service = createEverythingService(ctx, environment, ports)
-  return { ctx, calls, actions, environment, ports, service, completions, output(value: unknown) { output = typeof value === 'string' ? value : JSON.stringify(value) }, error(value: Error | null) { error = value }, missing(value: boolean) { missing = value }, directory(value: boolean) { directory = value }, openError(value: string) { openError = value }, hold(value: boolean) { hold = value }, killed: () => killed }
+  return {
+    ctx, calls, starts, loads, actions, addon, environment, ports, service: createEverythingService(ctx, environment, ports),
+    output(value: NativeEverythingResult) { output = value }, running(value: boolean) { running = value }, ready(value: boolean) { ready = value },
+    missing(value: boolean) { missing = value }, openError(value: string) { openError = value },
+    loadError(value: Error) { loadError = value }, startError(value: Error) { startError = value },
+    afterSleep(value: () => void) { afterSleep = value }, elapsed: () => now,
+  }
 }
 
-// ES-1.1.0.38.src.zip, src/es.c:10955-11043: _es_get_command_argv.
-// -search calls this decoder regardless of -argv; it does NOT use CRT escapes.
-function decodeEsSearchParameter(commandLine: string) {
-  let query = ''
-  let inQuote = false
-  let index = 0
-  for (; index < commandLine.length; index++) {
-    const character = commandLine[index]
-    if (!inQuote && /[ \t\r\n]/.test(character)) break
-    if (character === '"') {
-      if (commandLine.slice(index, index + 3) === '"""') { query += '"'; index += 2 }
-      else inQuote = !inQuote
-    } else query += character
-  }
-  return { query, remaining: commandLine.slice(index) }
-}
-
-test('ES protocol preserves a whole Everything query without exposing command options', async () => {
+test('native search passes raw Unicode, quoted and switch-like queries with exact sort/limit/offset positions', async () => {
   const h = harness()
   try {
-    const query = '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"'
-    const result = await h.service.search({ ...request, query, filter: 'files', sort: 'modified', descending: true, offset: 25 })
-    assert.deepEqual(result, { items: [], hasMore: false, offset: 25 })
-    assert.deepEqual(h.calls[0].args, ['-no-argv', '-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf', '-count', '18446744073709551615', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', '3', '-offset', '25', '/a-d', '-sort', 'date-modified', '-sort-descending', '-search', '"-export-txt """C:\\报告 2026.txt""" | <ext:txt !file:> & regex:"""测试.*""""'])
-    await h.service.search({ ...request, filter: 'folders', sort: 'path' })
-    assert(h.calls[1].args.includes('/ad') && h.calls[1].args.includes('-sort-ascending'))
-    await h.service.search({ ...request, sort: 'size' })
-    assert(!h.calls[2].args.includes('/ad') && !h.calls[2].args.includes('/a-d'))
-    await assert.rejects(h.service.search({ ...request, query: '\u0000' }), /query/)
-    assert.equal(h.calls.length, 3)
-  } finally { await h.ctx.fiber.dispose() }
-})
-
-test('native ES parameter transport preserves quoted paths, backslashes, Unicode and switch-like queries', async () => {
-  const h = harness()
-  h.environment.executable = 'C:\\Program Files\\NextLeek\\everything\\es.exe'
-  const queries = [
-    '', 'ext:txt', '报告', 'NextLeek', 'C:\\Users\\测试 用户\\Documents', '  leading and trailing spaces  ',
-    '"C:\\Users\\测试 用户\\NextLeek\\fixtures\\"',
-    '"\\\\server\\共享 空间\\fixtures\\"',
-    'regex:"C:\\\\资料\\\\[^\\\\]+\\.txt$"',
-    '-export-txt "C:\\报告 2026.txt" | <ext:txt !file:> & regex:"测试.*"',
-    '" -exit -export-txt C:\\results.txt "', '"', '""', '"""', '""""',
-    '  ""quoted"" """ Unicode 文档😀 & | <>  ', 'C:\\trailing\\',
-  ]
-  try {
-    for (const query of queries) {
-      await h.service.search({ ...request, query })
-      const call = h.calls.at(-1)!
-      assert.equal(call.options.shell, false)
-      assert.equal(call.options.windowsVerbatimArguments, true)
-      assert.equal(call.executable, h.environment.executable)
-      assert.equal(call.options.argv0, '"C:\\Program Files\\NextLeek\\everything\\es.exe"')
-      assert.equal(call.args.at(-2), '-search')
-      // A following switch must remain outside the consumed query argument.
-      assert.deepEqual(decodeEsSearchParameter(`${call.args.at(-1)} -sentinel`), { query, remaining: ' -sentinel' })
-      assert.equal(call.args.includes('-max-results'), true)
-      assert.equal(call.args.includes('-n'), false)
+    for (const query of ['ext:txt "中文, 文件" | folder:', 'C:\\资料\\', '"C:\\Program Files\\"', '-exit', 'report']) {
+      await h.service.search({ query, offset: 15, limit: 30 })
+      assert.deepEqual(h.calls.at(-1), [query, 1, 30, 15])
     }
+    assert.deepEqual(h.loads, [h.environment.addonPath]); assert.deepEqual(h.starts, [])
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('Unicode JSON results preserve metadata, normalize folders, and keep lookahead pagination', async () => {
+test('native metadata maps full paths, folders, display dates and total-based pagination', async () => {
   const h = harness()
   try {
-    h.output([
-      row(),
-      { ...row('子目录', 16), filename: 'C:\\资料\\子目录\\' },
-      row('lookahead.txt'),
-    ])
+    h.output({ list: [row(), row('子目录', true)], total: 42 })
     const result = await h.service.search(request)
-    assert.equal(result.hasMore, true); assert.equal(result.items.length, 2)
+    assert.equal(result.total, 42); assert.equal(result.hasMore, true)
     assert.equal(result.items[0].path, 'C:\\资料\\报告.txt'); assert.equal(result.items[0].name, '报告.txt')
-    assert.equal(result.items[1].path, 'C:\\资料\\子目录'); assert.equal(result.items[1].name, '子目录')
+    assert.equal(result.items[0].size, 123); assert.equal(result.items[0].modifiedAt, '2026-10-10 12:34:56')
     assert.equal(result.items[1].isDirectory, true); assert.equal(result.items[1].size, null)
     assert.match(result.items[0].id, /^[a-f0-9-]{36}$/); assert.notEqual(result.items[0].id, result.items[1].id)
-    h.output([{ ...row('未知大小.txt'), size: null, date_modified: null }])
+    h.output({ list: [{ ...row(), size: -1, dateModified: '' }], total: 1 })
     const nullable = await h.service.search(request)
-    assert.equal(nullable.items[0].size, null); assert.equal(nullable.items[0].modifiedAt, null)
-    h.output([{ ...row('C:', 16), path: '', filename: 'C:\\' }])
-    const root = await h.service.search(request)
-    assert.equal(root.items[0].name, 'C:'); assert.equal(root.items[0].path, 'C:\\')
-    await assert.rejects(h.service.performAction('unknown', 'open'), /失效/)
+    assert.equal(nullable.items[0].size, null); assert.equal(nullable.items[0].modifiedAt, null); assert.equal(nullable.hasMore, false)
+    h.output({ list: [{ ...row('C:', true), path: '' }], total: 1 })
+    assert.equal((await h.service.search(request)).items[0].path, 'C:\\')
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('missing engine, missing bundled ES and unsupported hosts report genuine states', async () => {
+test('absent engine starts once and awaits database readiness before queries', async () => {
   const h = harness()
   try {
-    h.output('1.4.1.1026\r\n'); assert.equal((await h.service.getStatus()).status, 'ready'); assert.deepEqual(h.calls[0].args, ['-no-argv', '-timeout', '5000', '-get-everything-version'])
-    h.error(Object.assign(new Error('IPC not found or database still loading'), { code: 8 }))
-    const unavailable = await h.service.getStatus()
-    assert.equal(unavailable.status, 'unavailable'); assert.match(unavailable.message, /安装并启动 Everything/); assert.match(unavailable.message, /等待索引完成/)
-    await assert.rejects(h.service.search(request), /安装并启动 Everything/)
-    h.error(Object.assign(new Error('missing'), { code: 'ENOENT' })); assert.match((await h.service.getStatus()).message, /ES.exe.*重新安装/)
-    h.error(Object.assign(new Error('timeout'), { killed: true })); await assert.rejects(h.service.search(request), /超时/)
+    h.running(false); h.ready(false); h.afterSleep(() => { h.running(true); h.ready(true) })
+    const results = await Promise.all([h.service.search(request), h.service.getStatus()])
+    assert.deepEqual(h.starts, [h.environment.executable]); assert.equal(h.elapsed(), 200)
+    assert.equal(results[1].status, 'ready'); assert.equal(results[1].version, '1.4.1')
+    await h.service.search(request); assert.equal(h.starts.length, 1)
+  } finally { await h.ctx.fiber.dispose() }
+})
+
+test('running engine is not ready until database loads and wait has a bounded timeout', async () => {
+  const h = harness()
+  try {
+    h.ready(false)
+    const status = await h.service.getStatus()
+    assert.equal(status.status, 'unavailable'); assert.match(status.message, /索引尚未就绪.*超时/)
+    assert.equal(h.elapsed(), 8000); assert.deepEqual(h.starts, []); assert.deepEqual(h.calls, [])
+    h.ready(true); assert.equal((await h.service.getStatus()).status, 'ready')
+  } finally { await h.ctx.fiber.dispose() }
+})
+
+test('missing addon, bad exports, relative paths, launch errors and unsupported hosts report real errors', async () => {
+  const h = harness()
+  try {
+    h.loadError(new Error('missing addon')); assert.match((await h.service.getStatus()).message, /原生模块.*重新安装/)
     for (const environment of [undefined, { ...h.environment, platform: 'darwin' as const }]) {
-      const unsupported = createEverythingService(h.ctx, environment, h.ports)
-      assert.equal((await unsupported.getStatus()).status, 'unsupported'); await assert.rejects(unsupported.search(request), /仅支持 Windows/)
+      const service = createEverythingService(h.ctx, environment, h.ports)
+      assert.equal((await service.getStatus()).status, 'unsupported'); await assert.rejects(service.search(request), /仅支持 Windows/)
     }
+    const bad = createEverythingService(h.ctx, h.environment, { ...h.ports, loadAddon: () => ({}) as NativeEverythingAddon })
+    await assert.rejects(bad.search(request), /缺少原生接口/)
+    const relative = createEverythingService(h.ctx, { ...h.environment, addonPath: './addon-x64.node' }, h.ports)
+    await assert.rejects(relative.search(request), /绝对路径/)
+    const startup = harness()
+    try {
+      startup.running(false); startup.startError(new Error('engine missing'))
+      await assert.rejects(startup.service.search(request), /无法启动.*engine missing/)
+    } finally { await startup.ctx.fiber.dispose() }
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('malformed output and stale filesystem entries never become fabricated results', async () => {
+test('native query errors and malformed metadata never become fabricated results', async () => {
   const h = harness()
   try {
-    h.output('{"name":'); await assert.rejects(h.service.search(request), /无效的 JSON 结果/)
-    for (const output of ['not-json', '{}', JSON.stringify([{ ...row(), filename: 'relative.txt' }]), JSON.stringify([{ ...row(), filename: '' }]), JSON.stringify([{ ...row(), date_modified: 123 }])]) { h.output(output); await assert.rejects(h.service.search(request)) }
-    h.output([row(), row(), row(), row()]); await assert.rejects(h.service.search(request), /超出请求范围/)
-    h.output([row('类型未知', null)]); h.directory(true); assert.equal((await h.service.search(request)).items[0].isDirectory, true)
-    h.missing(true); assert.deepEqual((await h.service.search(request)).items, [])
+    h.output({ error: 'IPC failed', list: [], total: 0 }); await assert.rejects(h.service.search(request), /IPC failed/)
+    const invalid = [
+      { list: {}, total: 0 }, { list: [], total: -1 }, { list: [], total: 0.5 }, { list: [row(), row(), row()], total: 3 },
+      { list: [{ ...row(), path: 'relative' }], total: 1 }, { list: [{ ...row(), filename: '..' }], total: 1 },
+      { list: [{ ...row(), filename: 'evil\\path' }], total: 1 }, { list: [{ ...row(), isFolder: 1 }], total: 1 },
+      { list: [{ ...row(), size: Number.NaN }], total: 1 }, { list: [{ ...row(), dateModified: 123 }], total: 1 },
+    ]
+    for (const result of invalid) { h.output(result as NativeEverythingResult); await assert.rejects(h.service.search(request)) }
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('ES queries override saved matching and count settings without rewriting Everything syntax', async () => {
+test('actions accept host-authorized result IDs only, recheck existence, and await reveal errors', async () => {
   const h = harness()
   try {
-    // ES es.c:11407-11421 loads these settings; 8702-8715 turns a saved
-    // count into an extra filter, even when -max-results is explicitly set.
-    const query = 'case:NextLeek | path:"C:\\资料" count:2'
-    await h.service.search({ ...request, query })
-    const { args } = h.calls[0]
-    assert.equal(args[args.indexOf('-count') + 1], '18446744073709551615')
-    for (const option of ['-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf']) assert(args.includes(option))
-    assert.deepEqual(decodeEsSearchParameter(args.at(-1)!), { query, remaining: '' })
-  } finally { await h.ctx.fiber.dispose() }
-})
-
-test('actions use only host-owned IDs and recheck existence', async () => {
-  const h = harness()
-  try {
-    h.output([row()]); const item = (await h.service.search(request)).items[0]
-    await assert.rejects(h.service.performAction(item.path, 'open'), /result ID/); await assert.rejects(h.service.performAction('unknown', 'copy-path'), /失效/)
-    await assert.rejects(h.service.performAction(item.id, 'delete' as never), /action/); assert.deepEqual(h.actions, [])
+    h.output({ list: [row()], total: 1 }); const item = (await h.service.search(request)).items[0]
+    await assert.rejects(h.service.performAction(item.path, 'open'), /result ID/)
+    await assert.rejects(h.service.performAction('unknown', 'copy-path'), /失效/)
+    await assert.rejects(h.service.performAction(item.id, 'delete' as never), /action/)
     for (const action of ['open', 'reveal', 'copy-path'] as const) await h.service.performAction(item.id, action)
     assert.deepEqual(h.actions, [['open', item.path], ['reveal', item.path], ['copy-path', item.path]])
+    h.environment.revealPath = async () => { await Promise.resolve(); throw new Error('SHOpenFolderAndSelectItems failed (0x80004005)') }
+    await assert.rejects(h.service.performAction(item.id, 'reveal'), /SHOpenFolderAndSelectItems/)
     h.openError('No associated application'); await assert.rejects(h.service.performAction(item.id, 'open'), /No associated application/)
     h.missing(true); await assert.rejects(h.service.performAction(item.id, 'copy-path'), /已不存在/)
     h.missing(false); await assert.rejects(h.service.performAction(item.id, 'open'), /失效/)
   } finally { await h.ctx.fiber.dispose() }
 })
 
-test('reveal actions await native selection and propagate asynchronous HRESULT errors', async () => {
+test('Cordis disposal cancels readiness and revokes IDs without terminating an engine', async () => {
   const h = harness()
-  try {
-    h.output([row('Unicode 中文,逗号.txt')]); const item = (await h.service.search(request)).items[0]
-    let rejectLaunch!: (error: Error) => void
-    let started!: () => void
-    const launched = new Promise<void>(resolve => { started = resolve })
-    h.environment.revealPath = path => {
-      assert.equal(path, item.path)
-      started()
-      return new Promise<void>((_resolve, reject) => { rejectLaunch = reject })
-    }
-    let completed = false
-    const action = h.service.performAction(item.id, 'reveal').then(() => { completed = true })
-    await launched
-    assert.equal(completed, false)
-    const rejected = assert.rejects(action, /SHOpenFolderAndSelectItems failed \(0x80004005\)/)
-    rejectLaunch(new Error('SHOpenFolderAndSelectItems failed (0x80004005)'))
-    await rejected
-    assert.equal(completed, false)
-  } finally { await h.ctx.fiber.dispose() }
+  h.output({ list: [row()], total: 1 }); const item = (await h.service.search(request)).items[0]
+  h.ready(false); h.ports.sleep = () => new Promise(() => {})
+  const rejected = assert.rejects(h.service.search(request), /已关闭/)
+  await h.ctx.fiber.dispose(); await rejected
+  assert.deepEqual(h.starts, []); await assert.rejects(h.service.performAction(item.id, 'open'), /已关闭/)
 })
 
-test('reveal actions do not complete before native selection succeeds', async () => {
+test('old IDs expire at the authorization cache bound', async () => {
   const h = harness()
   try {
-    h.output([row()]); const item = (await h.service.search(request)).items[0]
-    let finish!: () => void
-    let started!: () => void
-    const selecting = new Promise<void>(resolve => { started = resolve })
-    h.environment.revealPath = () => {
-      started()
-      return new Promise<void>(resolve => { finish = resolve })
-    }
-    let completed = false
-    const action = h.service.performAction(item.id, 'reveal').then(() => { completed = true })
-    await selecting
-    assert.equal(completed, false)
-    finish()
-    await action
-    assert.equal(completed, true)
-  } finally { await h.ctx.fiber.dispose() }
-})
-
-test('Cordis disposal kills active ES children and cancels queries', async () => {
-  const h = harness(); h.output([row()]); const item = (await h.service.search(request)).items[0]; h.hold(true)
-  const searches = Array.from({ length: 4 }, () => h.service.search(request)); const rejected = searches.map(search => assert.rejects(search, /查询已取消/))
-  await assert.rejects(h.service.search(request), /繁忙/); await h.ctx.fiber.dispose(); await Promise.all(rejected); assert.equal(h.killed(), 4)
-  for (const done of h.completions) done(null, JSON.stringify([row()]))
-  await assert.rejects(h.service.performAction(item.id, 'open'), /已关闭/)
-})
-
-test('old result IDs expire when the bounded authorization cache is full', async () => {
-  const h = harness()
-  try {
-    h.output([row()]); const oldest = (await h.service.search(request)).items[0].id
-    h.output(Array.from({ length: 100 }, (_, index) => row(`${index}.txt`)))
+    h.output({ list: [row()], total: 1 }); const oldest = (await h.service.search(request)).items[0].id
+    h.output({ list: Array.from({ length: 100 }, (_, index) => row(`${index}.txt`)), total: 100 })
     for (let page = 0; page < 10; page++) await h.service.search({ ...request, limit: 100 })
     await assert.rejects(h.service.performAction(oldest, 'open'), /失效/)
   } finally { await h.ctx.fiber.dispose() }
-})
-
-test('runtime keeps the protected provider active when Everything navigation is disabled', async () => {
-  const path = await mkdtemp(join(tmpdir(), 'nextleek-everything-'))
-  const runtime = await createRuntime(join(path, 'lmdb'), { emit() {}, async applySettings() {}, hide() {}, quit() {}, async openDataDirectory() {} })
-  try {
-    assert.equal((await runtime.getEverythingStatus()).status, 'unsupported')
-    assert.deepEqual(await runtime.runCommand('everything.open'), { navigate: 'everything' })
-    const command = runtime.listCommands().find(command => command.id === 'everything.open')!
-    assert.equal(command.title, 'Everything 文件搜索')
-    assert.deepEqual(command.keywords, ['Everything', 'find', '本地搜索', '文件搜索'])
-    await runtime.setPluginEnabled('everything', false)
-    assert(!runtime.listCommands().some(command => command.id === 'everything.open'))
-    assert.equal((await runtime.getEverythingStatus()).status, 'unsupported')
-    await assert.rejects(runtime.setPluginEnabled('everything-provider', false), /Core plugins/)
-    await runtime.setPluginEnabled('everything', true)
-    assert.deepEqual(await runtime.runCommand('everything.open'), { navigate: 'everything' })
-  } finally { await runtime.dispose(); await rm(path, { recursive: true, force: true }) }
 })

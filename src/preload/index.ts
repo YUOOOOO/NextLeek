@@ -16,10 +16,8 @@ const api: DesktopAPI = {
   checkForUpdates: () => ipcRenderer.invoke(channels.updateCheck),
   downloadUpdate: () => ipcRenderer.invoke(channels.updateDownload),
   installUpdate: () => ipcRenderer.invoke(channels.updateInstall),
-  getEverythingStatus: () => ipcRenderer.invoke(channels.everythingStatus),
-  searchEverything: request => ipcRenderer.invoke(channels.everythingSearch, request),
-  performEverythingAction: (id, action) => ipcRenderer.invoke(channels.everythingAction, id, action),
-  openEverythingDownload: () => ipcRenderer.invoke(channels.everythingDownload),
+  searchLauncher: request => ipcRenderer.invoke(channels.searchLauncher, request),
+  performSearchAction: (providerId, itemId, action) => ipcRenderer.invoke(channels.searchAction, providerId, itemId, action),
   subscribe(callback) {
     const listener = (_event: Electron.IpcRendererEvent, event: DesktopEvent) => callback(event)
     ipcRenderer.on(channels.event, listener)

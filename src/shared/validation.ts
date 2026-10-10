@@ -1,4 +1,4 @@
-import { accents, themes, type Settings, type EverythingSearchRequest, type EverythingAction } from './contracts'
+import { accents, themes, type Settings, type LauncherSearchRequest } from './contracts'
 
 export const defaultSettings: Readonly<Settings> = Object.freeze({
   hotkey: 'Alt+Z', autostart: false, theme: 'system', accent: 'blue', compact: false, escHide: false,
@@ -38,19 +38,20 @@ export function argumentsCount(args: unknown[], count: number): void {
   if (args.length !== count) throw new TypeError(`Expected ${count} arguments`)
 }
 
-export function everythingSearchRequest(value: unknown): EverythingSearchRequest {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Invalid Everything search request')
+export function launcherSearchRequest(value: unknown): LauncherSearchRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Invalid launcher search request')
   const request = value as Record<string, unknown>
-  const keys = ['query', 'filter', 'sort', 'descending', 'offset', 'limit']
-  if (Object.keys(request).some(key => !keys.includes(key))) throw new TypeError('Unknown Everything search option')
-  if (typeof request.query !== 'string' || request.query.length > 2048 || /[\u0000-\u001f]/.test(request.query)) throw new TypeError('Invalid Everything query')
-  if (!['all', 'files', 'folders'].includes(request.filter as string)) throw new TypeError('Invalid Everything filter')
-  if (!['name', 'path', 'size', 'modified'].includes(request.sort as string)) throw new TypeError('Invalid Everything sort')
-  if (!Number.isInteger(request.offset) || (request.offset as number) < 0 || (request.offset as number) > 1000000) throw new TypeError('Invalid Everything offset')
-  if (!Number.isInteger(request.limit) || (request.limit as number) < 1 || (request.limit as number) > 100) throw new TypeError('Invalid Everything limit')
-  return { query: request.query, filter: request.filter as EverythingSearchRequest['filter'], sort: request.sort as EverythingSearchRequest['sort'], descending: boolean(request.descending), offset: request.offset as number, limit: request.limit as number }
+  if (Object.keys(request).some(key => !['query', 'offset', 'limit'].includes(key))) throw new TypeError('Unknown launcher search option')
+  if (typeof request.query !== 'string' || request.query.length > 2048 || /[\u0000-\u001f]/.test(request.query)) throw new TypeError('Invalid launcher query')
+  if (!Number.isInteger(request.offset) || (request.offset as number) < 0 || (request.offset as number) > 1000000) throw new TypeError('Invalid launcher offset')
+  if (!Number.isInteger(request.limit) || (request.limit as number) < 1 || (request.limit as number) > 100) throw new TypeError('Invalid launcher limit')
+  return { query: request.query, offset: request.offset as number, limit: request.limit as number }
 }
-export function everythingAction(value: unknown): EverythingAction {
+export function searchItemId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,256}$/.test(value)) throw new TypeError('Invalid search result ID')
+  return value
+}
+export function everythingAction(value: unknown): 'open' | 'reveal' | 'copy-path' {
   if (value !== 'open' && value !== 'reveal' && value !== 'copy-path') throw new TypeError('Invalid Everything action')
   return value
 }

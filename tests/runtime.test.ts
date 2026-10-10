@@ -7,6 +7,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { createRuntime } from '../src/host/runtime'
 import type { DesktopService } from '../src/host/services/contracts'
 import type { DesktopEvent } from '../src/shared/contracts'
+import { searchPlugin } from '../src/host/services/search'
+import { everythingSearchPlugin } from '../src/host/plugins/builtins'
 
 function desktop(events: DesktopEvent[]): DesktopService {
   return { emit: event => events.push(event), applySettings: async () => {}, hide() {}, quit() {}, openDataDirectory: async () => {} }
@@ -77,4 +79,51 @@ test('Cordis inject waits for provider and command effects roll back on plugin d
   assert.equal(active, false)
   assert.equal(disposed, true)
   await consumer.dispose(); await ctx.fiber.dispose()
+})
+
+test('main search contributions dispatch host-authorized result actions and disappear when the consumer is disabled', async () => {
+  const ctx = new Context()
+  const calls: string[][] = []
+  const registry = ctx.plugin(searchPlugin)
+  await registry.await()
+  const backend = ctx.plugin({ name: 'fake-everything', apply(scope: Context) {
+    scope.provide('everything', {
+      getStatus: async () => ({ status: 'ready' as const, message: 'ready' }),
+      search: async () => ({ items: [{ id: 'capability-result', name: 'note.txt', path: 'C:\\note.txt', isDirectory: false, size: 10, modifiedAt: null }], total: 2, offset: 0, hasMore: true }),
+      performAction: async (id: string, action: string) => { calls.push([id, action]) },
+    })
+  } })
+  await backend.await()
+  const consumer = ctx.plugin(everythingSearchPlugin)
+  await consumer.await()
+  try {
+    const groups = await ctx.search.search({ query: 'note', offset: 0, limit: 1 })
+    assert.equal(groups[0]?.providerId, 'everything')
+    assert.equal(groups[0]?.total, 2)
+    assert.equal(groups[0]?.hasMore, true)
+    assert.deepEqual(groups[0]?.items[0]?.actions.map(action => action.id), ['open', 'reveal', 'copy-path'])
+    await ctx.search.performAction('everything', 'capability-result', 'copy-path')
+    assert.deepEqual(calls, [['capability-result', 'copy-path']])
+    await consumer.dispose()
+    assert.deepEqual(await ctx.search.search({ query: 'note', offset: 0, limit: 1 }), [])
+    await assert.rejects(ctx.search.performAction('everything', 'capability-result', 'open'), /provider unavailable/)
+  } finally { await ctx.fiber.dispose() }
+})
+
+test('search provider IDs are unique and stale in-flight contributions do not leak after disposal', async () => {
+  const ctx = new Context()
+  await ctx.plugin(searchPlugin).await()
+  let resolve!: (value: { status: 'ready'; items: []; total: number }) => void
+  const result = new Promise<{ status: 'ready'; items: []; total: number }>(done => { resolve = done })
+  const owner = ctx.plugin({ name: 'search-owner', inject: ['search'], apply(scope: Context) {
+    scope.search.register(scope, { id: 'sample', title: 'Sample', search: () => result, performAction: async () => {} })
+  } })
+  await owner.await()
+  try {
+    assert.throws(() => ctx.search.register(ctx, { id: 'sample', title: 'Duplicate', search: () => result, performAction: async () => {} }), /Duplicate search provider/)
+    const searching = ctx.search.search({ query: 'test', offset: 0, limit: 30 })
+    await owner.dispose()
+    resolve({ status: 'ready', items: [], total: 0 })
+    assert.deepEqual(await searching, [])
+  } finally { await ctx.fiber.dispose() }
 })

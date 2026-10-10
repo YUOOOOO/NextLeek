@@ -5,7 +5,7 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
-import { argumentsCount, boolean, identifier, settingsPatch, everythingSearchRequest, everythingAction, everythingResultId } from '../shared/validation'
+import { argumentsCount, boolean, identifier, settingsPatch, launcherSearchRequest, searchItemId } from '../shared/validation'
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
@@ -35,7 +35,7 @@ async function start() {
   const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
   const window = new BrowserWindow({
     width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
-    title: 'NextLeek', frame: false, backgroundColor: '#f4f6fa', autoHideMenuBar: true,
+    title: 'NextLeek', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
     icon: join(iconDirectory, 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
   })
@@ -113,6 +113,7 @@ async function start() {
           if (app.getLoginItemSettings().openAtLogin !== next.autostart) throw new Error('Operating system did not apply autostart preference')
         }
         nativeTheme.themeSource = next.theme
+        window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4')
       } catch (error) {
         if (previous && currentHotkey !== previous.hotkey) {
           globalShortcut.unregister(currentHotkey!)
@@ -125,7 +126,8 @@ async function start() {
   }
   try {
     runtime = await createRuntime(join(app.getPath('userData'), 'lmdb'), desktop, {
-      executable: app.isPackaged ? join(process.resourcesPath, 'everything', 'es.exe') : join(app.getAppPath(), 'resources', 'everything', 'es.exe'),
+      addonPath: app.isPackaged ? join(process.resourcesPath, 'everything', 'addon-x64.node') : join(app.getAppPath(), 'resources', 'everything', 'addon-x64.node'),
+      executable: app.isPackaged ? join(process.resourcesPath, 'everything', 'Everything.exe') : join(app.getAppPath(), 'resources', 'everything', 'Everything.exe'),
       platform: process.platform,
       openPath: path => shell.openPath(path),
       async revealPath(path) {
@@ -292,10 +294,8 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
   bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
   bind(channels.layout, 1, expanded => setLauncherExpanded(boolean(expanded)))
-  bind(channels.everythingStatus, 0, () => runtime.getEverythingStatus())
-  bind(channels.everythingSearch, 1, request => runtime.searchEverything(everythingSearchRequest(request)))
-  bind(channels.everythingAction, 2, (id, action) => runtime.performEverythingAction(everythingResultId(id), everythingAction(action)))
-  bind(channels.everythingDownload, 0, () => shell.openExternal('https://www.voidtools.com/downloads/'))
+  bind(channels.searchLauncher, 1, request => runtime.searchLauncher(launcherSearchRequest(request)))
+  bind(channels.searchAction, 3, (providerId, itemId, action) => runtime.performSearchAction(identifier(providerId), searchItemId(itemId), identifier(action)))
   bind(channels.updateState, 0, () => updater.getState())
   bind(channels.updateCheck, 0, () => updater.check())
   bind(channels.updateDownload, 0, () => updater.download())

@@ -1,6 +1,6 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import type { Command, DesktopAPI, DesktopEvent, Page, Settings, Snapshot, UpdateState } from '../shared/contracts'
+import type { Command, DesktopAPI, DesktopEvent, LauncherSearchGroup, LauncherSearchItem, Page, Settings, Snapshot, UpdateState } from '../shared/contracts'
 
 declare global {
   interface Window { desktop: DesktopAPI }
@@ -19,6 +19,16 @@ export const useDesktopStore = defineStore('desktop', () => {
   const updateState = ref<UpdateState | null>(null)
   const updateBusy = ref(false)
   const updateError = ref('')
+  const searchGroups = ref<LauncherSearchGroup[]>([])
+  const searchLoading = ref(false)
+  const searchError = ref('')
+  const searchFeedback = ref('')
+  const searchActionBusy = ref(false)
+  const searchComposing = ref(false)
+  const searchPageSize = 30
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  let searchRevision = 0
+  let searchActionRevision = 0
   let updateRevision = 0
   let unsubscribe: (() => void) | undefined
   let disposed = false
@@ -39,6 +49,70 @@ export const useDesktopStore = defineStore('desktop', () => {
     return [...ids].map(id => byId.get(id)).filter((command): command is Command => Boolean(command))
   })
 
+  function cancelSearch() {
+    clearTimeout(searchTimer)
+    searchTimer = undefined
+    searchRevision++
+    searchActionRevision++
+    searchLoading.value = false
+    searchActionBusy.value = false
+  }
+  function scheduleSearch() {
+    cancelSearch()
+    searchGroups.value = []
+    searchError.value = ''
+    searchFeedback.value = ''
+    if (disposed || loading.value || !snapshot.value || page.value !== 'launcher' || !query.value.trim() || searchComposing.value) return
+    searchLoading.value = true
+    searchTimer = setTimeout(() => { searchTimer = undefined; void searchLauncher() }, 150)
+  }
+  async function searchLauncher(providerId?: string) {
+    if (disposed || loading.value || !snapshot.value || page.value !== 'launcher' || !query.value.trim() || searchComposing.value) return
+    const previous = providerId ? searchGroups.value.find(group => group.providerId === providerId) : undefined
+    if (providerId && (!previous?.hasMore || searchLoading.value)) return
+    clearTimeout(searchTimer)
+    searchTimer = undefined
+    const current = ++searchRevision
+    const searchedQuery = query.value
+    const offset = previous ? previous.offset + previous.items.length : 0
+    searchLoading.value = true
+    searchError.value = ''
+    try {
+      const groups = await window.desktop.searchLauncher({ query: searchedQuery, offset, limit: searchPageSize })
+      if (disposed || current !== searchRevision || query.value !== searchedQuery || page.value !== 'launcher') return
+      if (!previous) searchGroups.value = groups
+      else {
+        const next = groups.find(group => group.providerId === providerId)
+        if (next) {
+          const ids = new Set(previous.items.map(item => item.id))
+          searchGroups.value = searchGroups.value.map(group => group.providerId === providerId
+            ? { ...next, offset: previous.offset, items: next.status === 'ready' ? [...previous.items, ...next.items.filter(item => !ids.has(item.id))] : next.items }
+            : group)
+        }
+      }
+    } catch (cause) {
+      if (!disposed && current === searchRevision) searchError.value = cause instanceof Error ? cause.message : String(cause)
+    } finally { if (!disposed && current === searchRevision) searchLoading.value = false }
+  }
+  function setSearchComposing(active: boolean) { searchComposing.value = active }
+  async function performSearchAction(providerId: string, item: LauncherSearchItem, action: string) {
+    if (disposed || searchActionBusy.value || page.value !== 'launcher') return
+    const currentItem = searchGroups.value.find(group => group.providerId === providerId)?.items.find(result => result.id === item.id)
+    const availableAction = currentItem?.actions.find(candidate => candidate.id === action)
+    if (!currentItem || !availableAction) return
+    const current = ++searchActionRevision
+    searchActionBusy.value = true
+    searchError.value = ''
+    searchFeedback.value = ''
+    try {
+      await window.desktop.performSearchAction(providerId, currentItem.id, action)
+      if (!disposed && current === searchActionRevision) searchFeedback.value = `已${availableAction.label}：${currentItem.name}`
+    } catch (cause) {
+      if (!disposed && current === searchActionRevision) searchError.value = cause instanceof Error ? cause.message : String(cause)
+    } finally { if (!disposed && current === searchActionRevision) searchActionBusy.value = false }
+  }
+  const stopSearchWatch = watch([query, page, loading, searchComposing], scheduleSearch, { flush: 'sync' })
+
   function message(cause: unknown) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
@@ -58,7 +132,7 @@ export const useDesktopStore = defineStore('desktop', () => {
       )
       revision++
       snapshot.value = event.snapshot
-      if (pluginsChanged) void refreshCommands()
+      if (pluginsChanged) { void refreshCommands(); scheduleSearch() }
     }
     if (event.type === 'navigate') navigate(event.page)
     if (event.type === 'shown') {
@@ -157,6 +231,6 @@ export const useDesktopStore = defineStore('desktop', () => {
     await perform(async () => { await window.desktop.hide(); hidden = true })
     return hidden
   }
-  function dispose() { disposed = true; unsubscribe?.(); unsubscribe = undefined }
-  return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
+  function dispose() { disposed = true; cancelSearch(); stopSearchWatch(); unsubscribe?.(); unsubscribe = undefined }
+  return { snapshot, commands, page, loading, busy, error, query, focusRequest, launcherRevealed, results, homeCommands, searchGroups, searchLoading, searchError, searchFeedback, searchActionBusy, searchComposing, searchLauncher, setSearchComposing, performSearchAction, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherExpanded, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
 })

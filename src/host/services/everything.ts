@@ -1,155 +1,171 @@
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import { win32 } from 'node:path'
+import { createRequire } from 'node:module'
+import { isAbsolute, win32 } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type { EverythingAction, EverythingItem, EverythingSearchRequest } from '../../shared/contracts'
-import { everythingAction, everythingResultId, everythingSearchRequest } from '../../shared/validation'
-import type { EverythingService } from './contracts'
+import type { LauncherSearchRequest } from '../../shared/contracts'
+import { launcherSearchRequest, everythingAction, everythingResultId } from '../../shared/validation'
+import type { EverythingAction, EverythingItem, EverythingService } from './contracts'
 
 export interface EverythingEnvironment {
+  addonPath: string
   executable: string
   platform?: NodeJS.Platform
   openPath(path: string): Promise<string>
   revealPath(path: string): void | Promise<void>
   copyPath(path: string): void
 }
-interface ProcessOptions {
-  encoding: 'utf8'
-  windowsHide: boolean
-  shell: false
-  windowsVerbatimArguments: true
-  argv0: string
-  timeout: number
-  maxBuffer: number
+export interface NativeEverythingItem {
+  filename: string
+  path: string
+  isFolder: boolean
+  size?: number | null
+  dateModified?: string | null
+  ext?: string
+  hfilename?: string
+}
+export interface NativeEverythingResult {
+  error?: string | number
+  list: NativeEverythingItem[]
+  total: number
+}
+export interface NativeEverythingAddon {
+  everythingIsRuning(): boolean
+  everythingIsDBLoaded(): boolean
+  getEverythingVersion(): string
+  everythingSearch(query: string, sort: number, limit: number, offset: number): NativeEverythingResult
 }
 export interface EverythingPorts {
-  execute(executable: string, args: string[], options: ProcessOptions, done: (error: Error | null, stdout: string) => void): { kill(): boolean }
+  loadAddon(path: string): NativeEverythingAddon
+  startEngine(executable: string, failed: (error: Error) => void, ctx: Context): void
   stat(path: string): Promise<{ isDirectory(): boolean }>
+  sleep(milliseconds: number, ctx: Context): Promise<void>
+  now(): number
 }
 
-function failure(error: Error): Error {
-  const code = (error as Error & { code?: string | number }).code
-  if (code === 'ENOENT') return new Error('未找到随 NextLeek 安装的 ES.exe，请重新安装 NextLeek。')
-  if (code === 8 || code === '8') return new Error('未连接到就绪的 Everything 索引。请安装并启动 Everything；如果已经启动，请等待索引完成后重试。')
-  if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return new Error('Everything 返回的数据过大，请缩小搜索范围。')
-  if ((error as Error & { killed?: boolean }).killed) return new Error('Everything 查询超时，请确认 Everything 已启动并完成索引。')
-  return new Error(`Everything 查询失败：${error.message}`)
+const requireNative = createRequire(import.meta.url)
+const defaultPorts: EverythingPorts = {
+  loadAddon: path => requireNative(path) as NativeEverythingAddon,
+  startEngine(executable, failed, ctx) {
+    // The engine owns its index and may already be running. Never terminate it,
+    // including when Cordis disposes this provider or a readiness wait times out.
+    const child = spawn(executable, ['-startup'], { windowsHide: true, detached: true, stdio: 'ignore', shell: false })
+    const onExit = (code: number | null) => { if (code !== null && code !== 0) failed(new Error(`Everything 启动退出码：${code}`)) }
+    ctx.effect(() => {
+      child.once('error', failed)
+      child.once('exit', onExit)
+      return () => { child.off('error', failed); child.off('exit', onExit) }
+    }, 'Everything engine startup listeners')
+    child.unref()
+  },
+  stat,
+  async sleep(milliseconds, ctx) {
+    let resolve!: () => void
+    const promise = new Promise<void>(done => { resolve = done })
+    const cleanup = ctx.effect(() => {
+      const timer = setTimeout(resolve, milliseconds)
+      return () => { clearTimeout(timer); resolve() }
+    }, 'Everything readiness timer')
+    try { await promise }
+    finally { await cleanup() }
+  },
+  now: Date.now,
 }
 
-export function everythingArguments(request: EverythingSearchRequest): string[] {
-  // ES 1.1.0.38's -search uses its own decoder even in -argv mode:
-  // triple quotes become a literal quote; backslashes are always literal.
-  // Supply native ES quoting verbatim, never through a shell or Node's CRT quoting.
-  // ES loads the user's shared es.ini before flags. Inherited count:0 or
-  // whole-word/case matching can hide every ordinary filename result.
-  const args = ['-no-argv', '-no-case', '-no-whole-word', '-no-diacritics', '-no-match-path', '-no-highlight', '-no-pause', '-crlf', '-count', '18446744073709551615', '-json', '-code-page', '65001', '-date-format', '3', '-columns', 'name;path;filename;size;date-modified;attributes', '-timeout', '5000', '-max-results', String(request.limit + 1), '-offset', String(request.offset)]
-  if (request.filter !== 'all') args.push(request.filter === 'folders' ? '/ad' : '/a-d')
-  args.push('-sort', request.sort === 'modified' ? 'date-modified' : request.sort, request.descending ? '-sort-descending' : '-sort-ascending', '-search', `"${request.query.replace(/"/g, '"""')}"`)
-  return args
-}
-
-function parseResults(stdout: string): Array<Omit<EverythingItem, 'id'> & { attributes: number | null }> {
-  // ES emits no JSON bytes at all for an empty result set.
-  const text = stdout.replace(/^\uFEFF/, '').trim()
-  let records: unknown
-  try { records = text ? JSON.parse(text) : [] }
-  catch { throw new Error('Everything 返回了无效的 JSON 结果，请重试连接。') }
-  if (!Array.isArray(records)) throw new Error('Everything 返回了无效的结果数据。')
-  return records.map((record: unknown) => {
+function parseResults(result: NativeEverythingResult, request: LauncherSearchRequest): EverythingItem[] {
+  if (!result || typeof result !== 'object') throw new Error('Everything 返回了无效的结果数据。')
+  if (result.error) throw new Error(`Everything 查询失败：${result.error}`)
+  if (!Array.isArray(result.list) || !Number.isSafeInteger(result.total) || result.total < 0) throw new Error('Everything 返回了无效的结果数据。')
+  if (result.list.length > request.limit) throw new Error('Everything 返回了超出请求范围的结果。')
+  return result.list.map(record => {
     if (!record || typeof record !== 'object') throw new Error('Everything 返回了无效的结果数据。')
-    const row = record as Record<string, unknown>
-    const rawPath = typeof row.path === 'string' ? row.path.replaceAll('/', '\\') : ''
-    const rawFilename = typeof row.filename === 'string' ? row.filename.replaceAll('/', '\\') : ''
-    const rawName = typeof row.name === 'string' ? row.name : ''
-    const normalizedFilename = win32.isAbsolute(rawFilename) ? win32.normalize(rawFilename) : ''
-    const root = normalizedFilename ? win32.parse(normalizedFilename).root : ''
-    const path = normalizedFilename === root ? root : normalizedFilename.replace(/[\\]+$/, '')
-    const name = rawName || (path ? path.slice(path.lastIndexOf('\\') + 1) : '')
-    if (!win32.isAbsolute(path) || /[\u0000-\u001f]/.test(path) || !name) throw new Error(`Everything 返回了无效的文件路径：${JSON.stringify({ path: rawPath, filename: rawFilename, name: rawName })}`)
-    const attributes = row.attributes
-    if (attributes !== null && (!Number.isInteger(attributes) || (attributes as number) < 0)) throw new Error('Everything 返回了无效的文件属性。')
-    const size = row.size
-    if (size !== null && (typeof size !== 'number' || !Number.isFinite(size) || size < 0)) throw new Error('Everything 返回了无效的文件大小。')
-    const modifiedAt = row.date_modified
-    if (modifiedAt !== null && (typeof modifiedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(modifiedAt) || !Number.isFinite(Date.parse(modifiedAt)))) throw new Error('Everything 返回了无效的修改时间。')
-    return { name, path, isDirectory: attributes !== null && ((attributes as number) & 0x10) !== 0, size: size as number | null, modifiedAt: modifiedAt as string | null, attributes: attributes as number | null }
+    const { filename, path: directory, isFolder, size, dateModified } = record
+    const driveRoot = isFolder === true && directory === '' && typeof filename === 'string' && /^[a-z]:$/i.test(filename)
+    if (typeof filename !== 'string' || !filename || filename === '.' || filename === '..' || /[\\/\u0000-\u001f]/.test(filename) || typeof directory !== 'string' || (!driveRoot && !win32.isAbsolute(directory)) || /[\u0000-\u001f]/.test(directory)) throw new Error('Everything 返回了无效的文件路径。')
+    if (typeof isFolder !== 'boolean') throw new Error('Everything 返回了无效的文件类型。')
+    if (size != null && (typeof size !== 'number' || !Number.isFinite(size) || size < -1)) throw new Error('Everything 返回了无效的文件大小。')
+    if (dateModified != null && typeof dateModified !== 'string') throw new Error('Everything 返回了无效的修改时间。')
+    return {
+      id: randomUUID(), name: filename, path: driveRoot ? `${filename}\\` : win32.join(directory, filename), isDirectory: isFolder,
+      size: isFolder || size == null || size < 0 ? null : size,
+      // The native addon returns a formatted display string, not an ISO date.
+      modifiedAt: dateModified || null,
+    }
   })
 }
 
-export function createEverythingService(ctx: Context, environment?: EverythingEnvironment, ports: EverythingPorts = {
-  execute: (executable, args, options, done) => execFile(executable, args, options, (error, stdout) => done(error, stdout)),
-  stat,
-}): EverythingService {
+export function createEverythingService(ctx: Context, environment?: EverythingEnvironment, ports: EverythingPorts = defaultPorts): EverythingService {
   const authorized = new Map<string, string>()
   let disposed = false
-  let active = 0
-  ctx.effect(() => () => { disposed = true; authorized.clear() }, 'Everything authorization')
+  let addon: NativeEverythingAddon | undefined
+  let preparing: Promise<NativeEverythingAddon> | undefined
+  let cancel!: () => void
+  const cancelled = new Promise<void>(resolve => { cancel = resolve })
+  ctx.effect(() => () => { disposed = true; authorized.clear(); cancel() }, 'Everything native provider')
   function supported() {
     if (disposed) throw new Error('Everything 服务已关闭。')
     if (!environment || (environment.platform ?? process.platform) !== 'win32') throw new Error('Everything 文件搜索仅支持 Windows。')
     return environment
   }
-  async function execute(args: string[]): Promise<string> {
+  function load(): NativeEverythingAddon {
     const env = supported()
-    if (active >= 4) throw new Error('Everything 搜索繁忙，请稍后重试。')
-    let cleanup: (() => unknown) | undefined
-    let settled = false
-    active++
+    if (addon) return addon
+    if (!(isAbsolute(env.addonPath) || win32.isAbsolute(env.addonPath))) throw new Error('Everything 原生模块路径必须是绝对路径。')
     try {
-      return await new Promise<string>((resolve, reject) => {
-        cleanup = ctx.effect(() => {
-          // Verbatim mode also disables argv[0] quoting; ES skips it before switches.
-          const child = ports.execute(env.executable, args, { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true, argv0: `"${env.executable}"`, shell: false, timeout: 8000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-            if (settled) return
-            settled = true
-            if (error) reject(failure(error))
-            else resolve(stdout)
-          })
-          return () => {
-            if (settled) return
-            settled = true
-            child.kill()
-            reject(new Error('Everything 服务已关闭，查询已取消。'))
-          }
-        }, 'Everything ES subprocess')
-      })
-    } finally {
-      active--
-      await cleanup?.()
-    }
+      const loaded = ports.loadAddon(env.addonPath)
+      for (const method of ['everythingSearch', 'everythingIsRuning', 'everythingIsDBLoaded', 'getEverythingVersion'] as const) {
+        if (!loaded || typeof loaded[method] !== 'function') throw new Error(`缺少原生接口 ${method}`)
+      }
+      addon = loaded
+      return loaded
+    } catch (error) { throw new Error(`无法加载随 NextLeek 安装的 Everything 原生模块，请重新安装 NextLeek：${error instanceof Error ? error.message : String(error)}`) }
+  }
+  async function prepare(): Promise<NativeEverythingAddon> {
+    const env = supported()
+    const native = load()
+    if (native.everythingIsRuning() && native.everythingIsDBLoaded()) return native
+    if (preparing) return preparing
+    preparing = (async () => {
+      let startupError: Error | undefined
+      if (!native.everythingIsRuning()) {
+        if (!(isAbsolute(env.executable) || win32.isAbsolute(env.executable))) throw new Error('Everything 引擎路径必须是绝对路径。')
+        try { ports.startEngine(env.executable, error => { startupError = error }, ctx) }
+        catch (error) { startupError = error instanceof Error ? error : new Error(String(error)) }
+      }
+      const deadline = ports.now() + 8000
+      while (true) {
+        supported()
+        if (startupError) throw new Error(`无法启动随 NextLeek 安装的 Everything 引擎：${startupError.message}`)
+        if (native.everythingIsRuning() && native.everythingIsDBLoaded()) return native
+        if (ports.now() >= deadline) throw new Error('Everything 索引尚未就绪，等待超时。请确认服务正常运行并等待索引完成后重试。')
+        await Promise.race([ports.sleep(Math.min(200, deadline - ports.now()), ctx), cancelled])
+      }
+    })()
+    try { return await preparing }
+    finally { preparing = undefined }
   }
   return {
     async getStatus() {
       if (!environment || (environment.platform ?? process.platform) !== 'win32') return { status: 'unsupported', message: 'Everything 文件搜索仅支持 Windows。' }
       try {
-        // With a nonzero timeout ES checks IS_DB_LOADED before returning a
-        // version; finding the IPC window alone does not mean queries are ready.
-        const version = (await execute(['-no-argv', '-timeout', '5000', '-get-everything-version'])).trim()
-        if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version)) throw new Error('未能读取 Everything 版本，请启动 Everything 后重试。')
-        return { status: 'ready', message: '已连接正在运行的 Everything 索引。', version }
+        const native = await prepare()
+        const version = native.getEverythingVersion()
+        return { status: 'ready', message: '已连接正在运行的 Everything 索引。', ...(typeof version === 'string' && version ? { version } : {}) }
       } catch (error) { return { status: 'unavailable', message: error instanceof Error ? error.message : String(error) } }
     },
     async search(request) {
-      const validated = everythingSearchRequest(request)
-      const rows = parseResults(await execute(everythingArguments(validated)))
-      if (rows.length > validated.limit + 1) throw new Error('Everything 返回了超出请求范围的结果。')
-      const items: EverythingItem[] = []
-      for (const row of rows.slice(0, validated.limit)) {
-        if (row.attributes === null) {
-          try { row.isDirectory = (await ports.stat(row.path)).isDirectory() }
-          catch (error) {
-            if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue
-            throw new Error(`无法确定 Everything 结果的文件类型：${row.path}`)
-          }
-        }
-        if (disposed) throw new Error('Everything 服务已关闭。')
-        const id = randomUUID()
-        authorized.set(id, row.path)
+      const validated = launcherSearchRequest(request)
+      const native = await prepare()
+      supported()
+      // ZTools' positional contract is SORT, LIMIT, OFFSET; launcher uses name ascending (1).
+      const result = native.everythingSearch(validated.query, 1, validated.limit, validated.offset)
+      const items = parseResults(result, validated)
+      for (const item of items) {
+        authorized.set(item.id, item.path)
         while (authorized.size > 1000) authorized.delete(authorized.keys().next().value!)
-        items.push({ id, name: row.name, path: row.path, isDirectory: row.isDirectory, size: row.isDirectory ? null : row.size, modifiedAt: row.modifiedAt })
       }
-      return { items, hasMore: rows.length > validated.limit, offset: validated.offset }
+      return { items, total: result.total, hasMore: result.total > validated.offset + items.length, offset: validated.offset }
     },
     async performAction(id: string, action: EverythingAction) {
       const env = supported()
@@ -163,7 +179,7 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
         if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new Error('文件已不存在，请刷新 Everything 搜索结果。')
         throw new Error(`无法访问文件：${error instanceof Error ? error.message : String(error)}`)
       }
-      if (disposed) throw new Error('Everything 服务已关闭。')
+      supported()
       if (action === 'open') {
         const message = await env.openPath(path)
         if (message) throw new Error(`无法打开文件：${message}`)
@@ -176,8 +192,6 @@ export function createEverythingService(ctx: Context, environment?: EverythingEn
 export function everythingPlugin(environment?: EverythingEnvironment) {
   return {
     name: 'everything-provider',
-    apply(ctx: Context) {
-      ctx.provide('everything', createEverythingService(ctx, environment))
-    },
+    apply(ctx: Context) { ctx.provide('everything', createEverythingService(ctx, environment)) },
   }
 }
