@@ -32,6 +32,18 @@ const configuration = join(temporary, 'Everything.ini')
 const profile = join(temporary, 'profile')
 const query = `"${fixtureDirectory}\\"`
 const pause = milliseconds => new Promise(resolvePause => setTimeout(resolvePause, milliseconds))
+function stage(message) {
+  logs.push(`Stage: ${message}`)
+  console.log(`[native-smoke] ${message}`)
+}
+async function bounded(description, operation) {
+  let timer
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${description} timed out after 15s`)), 15000)
+    })])
+  } finally { clearTimeout(timer) }
+}
 async function eventually(description, operation) {
   const deadline = Date.now() + 45000
   let error
@@ -59,6 +71,7 @@ async function enginePresent() {
   return (await powershell(`Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeSearchSmoke { [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string className, string windowName); }'; [NativeSearchSmoke]::FindWindowW('EVERYTHING_TASKBAR_NOTIFICATION', $null).ToInt64()`)) !== '0'
 }
 async function startEngine() {
+  stage('Starting owned real-folder Everything index')
   assert.equal(await enginePresent(), false, 'Default Everything IPC instance exists; refusing to replace it')
   engine = spawn(engineExecutable, ['-config', configuration, '-no-db', '-startup'], { cwd: temporary, stdio: ['ignore', 'pipe', 'pipe'] })
   recordChild(engine, 'Everything')
@@ -68,6 +81,7 @@ async function startEngine() {
   })
 }
 async function stopEngine() {
+  stage('Stopping owned Everything index')
   if (!engine || engine.exitCode !== null || engine.signalCode !== null) return
   await exec(engineExecutable, ['-config', configuration, '-exit', '-wait'], { timeout: 15000 }).catch(error => logs.push(String(error)))
   await stopChild(engine)
@@ -82,26 +96,33 @@ async function rawNativeSearch(request = { query, offset: 0, limit: fixtures.len
   return result
 }
 async function launchApp() {
+  stage('Launching NextLeek against owned index')
   // Start the controlled index first: production auto-start must not launch a
   // different engine or scan the runner's disks before the fixture is ready.
   assert.equal(await enginePresent(), true)
   app = spawn(executable, ['--remote-debugging-port=9335', `--profile-dir=${profile}`], { stdio: ['ignore', 'pipe', 'pipe'] })
   recordChild(app, 'NextLeek')
-  await eventually('Packaged Electron CDP unavailable', async () => (await fetch('http://127.0.0.1:9335/json/version')).ok)
-  browser = await chromium.connectOverCDP('http://127.0.0.1:9335')
+  await eventually('Packaged Electron CDP unavailable', async () => (await fetch('http://127.0.0.1:9335/json/version', { signal: AbortSignal.timeout(2000) })).ok)
+  stage('Connecting native-smoke CDP')
+  browser = await chromium.connectOverCDP('http://127.0.0.1:9335', { timeout: 15000 })
+  for (const context of browser.contexts()) context.setDefaultTimeout(15000)
   page = await eventually('Main search preload unavailable', async () => {
     for (const context of browser.contexts()) for (const candidate of context.pages()) {
-      if (await candidate.evaluate(() => typeof window.desktop?.searchLauncher === 'function')) return candidate
+      if (await bounded('Native search preload readiness', () => candidate.evaluate(() => typeof window.desktop?.searchLauncher === 'function'))) return candidate
     }
   })
   assert.match(await page.evaluate(() => navigator.userAgent), /Electron\/41\./, 'Smoke must exercise the addon inside shipped Electron 41')
 }
 async function quitApp() {
-  await page?.evaluate(() => window.desktop.quit()).catch(() => {})
-  if (app) await eventually('Resident NextLeek did not quit', () => app.exitCode !== null || app.signalCode !== null)
-  await browser?.close().catch(() => {})
-  browser = undefined
-  page = undefined
+  stage('Quitting native-smoke NextLeek')
+  try {
+    await bounded('Native smoke quit IPC', () => page?.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
+    if (app) await eventually('Resident NextLeek did not quit', () => app.exitCode !== null || app.signalCode !== null)
+  } finally {
+    await bounded('Native smoke CDP disconnect', () => browser?.close()).catch(error => logs.push(String(error)))
+    browser = undefined
+    page = undefined
+  }
 }
 async function search(overrides = {}) {
   const request = { query, offset: 0, limit: 17, ...overrides }
@@ -149,6 +170,7 @@ async function editorsOpening(path) {
   return JSON.parse(result)
 }
 try {
+  stage('Verifying packaged binaries and creating actual file fixtures')
   assert.equal(await enginePresent(), false, 'Default Everything IPC instance exists; refusing to commandeer it')
   assert.equal(sha256(await readFile(addon)), nativeAssets.addon.sha256)
   assert.equal(sha256(await readFile(engineExecutable)), nativeAssets.engine.sha256)
@@ -230,6 +252,7 @@ try {
   samePaths(ordinary.items, [fixtures.at(-1)])
   const unicode = await search({ query: 'Unicode 中文,逗号' })
   samePaths(unicode.items, [fixtures.at(-1)])
+  stage('Capturing raw broad-path native records and verifying API pagination')
   const broadNativePages = []
   for (let offset = 0; ; offset += 100) {
     const snapshot = await rawNativeSearch({ query: 'vscode', offset, limit: 100 })
@@ -264,6 +287,7 @@ try {
   await assert.rejects(page.evaluate(id => window.desktop.performSearchAction('unknown-provider', id, 'open'), id))
   await assert.rejects(page.evaluate(id => window.desktop.performSearchAction('everything', id, 'delete'), id))
   await writeFile(join(evidence, 'indexed-folder-results.json'), JSON.stringify({ all, sorted, ordinary, unicode, path: indexedPath, filename: indexedFilename, empty, raw }, null, 2))
+  stage('Exercising main top-field filename/path searches and real row actions')
   checks.push('Electron 41 loads the shipped native addon: real folder index preserves exact paths, types, sizes/display dates, Unicode, case-insensitive basename/path queries, name sort, offset pagination, empty results, and host-issued result authorization')
   const mainQuery = page.locator('.app-shell > .search-header .search-input')
   const group = page.locator('[data-testid="search-provider"][data-provider-id="everything"]')
@@ -311,6 +335,7 @@ try {
   checks.push('Actual main top field searches 1.txt and directory-only vscode/Code.exe; main rows paginate and perform real text-file open, folder open, Explorer file reveal, and system clipboard copy')
   // Auto-start is the production recovery contract. Do not query while our
   // fixture is stopped: that would deliberately start an uncontrolled index.
+  stage('Verifying owned engine stop/restart recovery')
   await quitApp()
   await stopEngine()
   const stopped = await rawNativeSearch()
@@ -329,11 +354,11 @@ try {
 } catch (error) {
   console.error(`::error title=Packaged native main-search smoke failed::${String(error.stack ?? error).concat('\n', checks.join('\n'), '\n', logs.join('').slice(-5000)).replaceAll('%', '%25').replaceAll('\n', '%0A').replaceAll('\r', '%0D')}`)
   logs.push(error.stack ?? String(error))
-  await page?.screenshot({ path: join(evidence, 'failure.png') }).catch(() => {})
+  await bounded('Native failure screenshot', () => page?.screenshot({ path: join(evidence, 'failure.png') })).catch(() => {})
   process.exitCode = 1
 } finally {
   await quitApp().catch(error => { logs.push(String(error)); process.exitCode = 1 })
-  await stopChild(app).catch(error => logs.push(String(error)))
+  await stopChild(app).catch(error => { logs.push(String(error)); process.exitCode = 1 })
   await stopEngine().catch(error => { logs.push(String(error)); process.exitCode = 1 })
   const encodedFixture = Buffer.from(fixtureDirectory, 'utf16le').toString('base64')
   await powershell(`$root=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedFixture}')); $shell=New-Object -ComObject Shell.Application; @($shell.Windows()) | ForEach-Object { try { if ($_.Document.Folder.Self.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $_.Quit() } } catch {} }`).catch(error => logs.push(String(error)))

@@ -20,6 +20,29 @@ let child
 let browser
 const checks = []
 let nativeWindow
+function stage(message) {
+  logs.push(`Stage: ${message}`)
+  console.log(`[desktop-smoke] ${message}`)
+}
+async function bounded(description, operation) {
+  let timer
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${description} timed out after 15s`)), 15000)
+    })])
+  } finally { clearTimeout(timer) }
+}
+const powershell = source => promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })
+async function stopOwnedChild() {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  stage(`Stopping owned process ${child.pid}`)
+  if (process.platform === 'win32') {
+    await promisify(execFile)('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { timeout: 15000 }).catch(error => {
+      if (child.exitCode === null && child.signalCode === null) throw error
+    })
+  } else child.kill()
+  await eventually('Owned desktop smoke process survived cleanup', () => child.exitCode !== null || child.signalCode !== null)
+}
 async function eventually(description, operation) {
   const deadline = Date.now() + 45000
   let error
@@ -30,6 +53,7 @@ async function eventually(description, operation) {
   throw new Error(description, { cause: error })
 }
 async function launch() {
+  stage('Allocating debugging port and launching NextLeek')
   debugPort = await new Promise((resolvePort, rejectPort) => {
     const server = createServer()
     server.once('error', rejectPort)
@@ -42,24 +66,27 @@ async function launch() {
   child.stdout.on('data', chunk => logs.push(String(chunk)))
   child.stderr.on('data', chunk => logs.push(String(chunk)))
   child.on('error', error => logs.push(error.stack))
-  await eventually('Electron debugging endpoint unavailable', async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok)
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`)
+  await eventually('Electron debugging endpoint unavailable', async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2000) })).ok)
+  stage(`Connecting CDP on ${debugPort}`)
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, { timeout: 15000 })
+  for (const context of browser.contexts()) context.setDefaultTimeout(15000)
   return eventually('Desktop preload unavailable', async () => {
     for (const context of browser.contexts()) for (const page of context.pages()) {
-      if (await page.evaluate(() => typeof window.desktop?.getSnapshot === 'function')) return page
+      if (await bounded('Desktop preload readiness', () => page.evaluate(() => typeof window.desktop?.getSnapshot === 'function'))) return page
     }
   })
 }
 async function quit(page) {
+  stage(`Quitting NextLeek ${child.pid}`)
   try {
-    await page.evaluate(() => window.desktop.quit()).catch(() => {})
+    await bounded('Desktop quit IPC', () => page.evaluate(() => window.desktop.quit())).catch(error => logs.push(String(error)))
     await eventually('Resident app did not exit', () => child.exitCode !== null || child.signalCode !== null)
     await eventually('Desktop debugging endpoint was not released after quit', async () => {
       try { return !(await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(2000) })).ok }
       catch { return true }
     })
   } finally {
-    await browser?.close().catch(() => {})
+    await bounded('Desktop CDP disconnect', () => browser?.close()).catch(error => logs.push(String(error)))
     browser = undefined
   }
 }
@@ -111,8 +138,9 @@ try {
   await page.locator('button.brand-button').click()
   await page.locator('#hotkey').focus()
   await page.keyboard.press('Alt+c')
+  stage('Recording native shortcut and exercising hide/show/WM_CLOSE')
   if (process.platform === 'win32') {
-    await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('%z')"])
+    await powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('%z')")
     await eventually('Active global shortcut intercepted recording', async () => (await page.locator('#hotkey').inputValue()) === 'Alt+Z')
   } else await page.keyboard.press('Alt+z')
   assert.equal(await page.locator('#hotkey').inputValue(), 'Alt+Z')
@@ -123,16 +151,16 @@ try {
   checks.push('Unsaved shortcut capture and cancellation preserve saved shortcut and settings page')
   if (process.platform === 'win32') {
     await page.locator('#hotkey').focus()
-    await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ')"])
+    await powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ')")
     await eventually('Physical Alt+Space did not reach shortcut recording', async () => (await page.locator('#hotkey').inputValue()) === 'Alt+Space')
     await page.locator('.hotkey-control button[type="submit"]').click()
     await eventually('Alt+Space not saved', async () => (await page.evaluate(() => window.desktop.getSnapshot())).settings.hotkey === 'Alt+Space')
-    const sendAltSpace = () => promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ') "])
+    const sendAltSpace = () => powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ') ")
     const waitVisibility = visible => eventually(`Native host visibility did not become ${visible}`, async () => {
-      const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${child.pid}).MainWindowHandle`])
+      const { stdout } = await powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`)
       return (stdout.trim() !== '0') === visible
     })
-    const nativeClose = () => promisify(execFile)('powershell.exe', ['-NoProfile', '-Command', `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeSmoke { [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam); }'; $handle = (Get-Process -Id ${child.pid}).MainWindowHandle; if ($handle -eq 0) { throw 'Native window is hidden' }; if (-not [NativeSmoke]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) { throw 'WM_CLOSE failed' }`])
+    const nativeClose = () => powershell(`Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeSmoke { [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam); }'; $handle = (Get-Process -Id ${child.pid}).MainWindowHandle; if ($handle -eq 0) { throw 'Native window is hidden' }; if (-not [NativeSmoke]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) { throw 'WM_CLOSE failed' }`)
     const show = async () => { await sendAltSpace(); await waitVisibility(true) }
     const emptyLauncher = async () => {
       await page.locator('.app-shell.collapsed').waitFor()
@@ -196,6 +224,7 @@ try {
     await eventually('ESC hide setting not restored', async () => !(await page.evaluate(() => window.desktop.getSnapshot())).settings.escHide)
     checks.push('ESC hide enabled makes native settings close and Escape hide and reset launcher; native Windows Alt+Space restores without system menu')
   }
+  stage('Exercising updater settings and persistent history')
   await page.getByRole('heading', { name: '在线更新', exact: true }).scrollIntoViewIfNeeded()
   assert.equal(await page.getByRole('button', { name: '检查更新', exact: true }).isEnabled(), expectUpdateSupported)
   await page.screenshot({ path: resolve(evidence, 'updates.png') })
@@ -212,6 +241,7 @@ try {
   await page.evaluate(id => window.desktop.runCommand(id), commands[1].id)
   await page.evaluate(id => window.desktop.setPinned(id, true), commands[0].id)
   await quit(page)
+  stage('Relaunching NextLeek to verify persistent history and pins')
   page = await launch()
   const reopened = await page.evaluate(() => window.desktop.getSnapshot())
   assert.equal(reopened.settings.theme, 'dark')
@@ -251,6 +281,7 @@ try {
     await eventually('Native launcher show did not reset selection', async () => page.locator('.command-tile').first().evaluate(tile => tile.classList.contains('selected')))
     checks.push('Native launcher show resets moved selection to first command and keeps history expanded')
   }
+  stage('Exercising main file-search status and native window reset')
   assert.ok(commands.every(command => !command.title.includes('Everything')), 'File search must not register a standalone launcher command')
   await searchFiles()
   const fileStatus = await everythingGroup.getAttribute('data-status')
@@ -315,11 +346,14 @@ try {
   await writeFile(resolve(evidence, 'result.json'), JSON.stringify({ passed: true, checks }, null, 2))
   console.log(checks.join('\n'))
 } catch (error) {
-  if (process.env.GITHUB_ACTIONS) console.error(`::error title=Desktop smoke failed::${String(error.stack + '\n' + logs.join('').slice(-5000)).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
+  console.error(`::error title=Desktop smoke failed::${String(error.stack + '\n' + checks.join('\n') + '\n' + logs.join('').slice(-8000)).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
   await writeFile(resolve(evidence, 'result.json'), JSON.stringify({ passed: false, checks, error: error.stack }, null, 2))
   throw error
 } finally {
-  if (browser) await browser.close().catch(() => {})
-  if (child?.exitCode === null) child.kill()
-  await writeFile(resolve(evidence, 'host.log'), logs.join(''))
+  try {
+    if (browser) await bounded('Final desktop CDP disconnect', () => browser.close()).catch(error => logs.push(String(error)))
+    await stopOwnedChild()
+  } finally {
+    await writeFile(resolve(evidence, 'host.log'), logs.join('\n'))
+  }
 }
