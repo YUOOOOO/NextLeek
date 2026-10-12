@@ -221,7 +221,13 @@ try {
     await page.locator('.app-shell > .search-header .search-input').fill(applicationName)
     const applications = page.locator('[data-command-section="results"]')
     const application = applications.getByTestId('search-result-row').filter({ has: page.locator('.command-title', { hasText: applicationName }) })
-    await application.waitFor()
+    try { await application.waitFor() }
+    catch (error) {
+      await writeFile(resolve(evidence, 'application-search-dom.html'), await page.content())
+      await writeFile(resolve(evidence, 'application-search-provider.json'), JSON.stringify(await page.evaluate(query => window.desktop.searchLauncher({ query, offset: 0, limit: 30 }), applicationName), null, 2))
+      await page.screenshot({ path: resolve(evidence, 'application-search-failure.png'), timeout: 5000 }).catch(cause => logs.push(String(cause)))
+      throw error
+    }
     assert.equal(await application.count(), 1)
     const icon = application.locator('img.application-icon')
     await icon.waitFor()
