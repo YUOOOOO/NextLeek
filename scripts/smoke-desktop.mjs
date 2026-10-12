@@ -38,6 +38,12 @@ async function bounded(description, operation) {
   } finally { clearTimeout(timer) }
 }
 const powershell = source => promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })
+async function waitNativeVisibility(visible) {
+  await eventually(`Native host visibility did not become ${visible}`, async () => {
+    const { stdout } = await powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`)
+    return (stdout.trim() !== '0') === visible
+  })
+}
 const psLiteral = value => `'${value.replaceAll("'", "''")}'`
 async function createApplicationFixture() {
   if (process.platform === 'darwin') {
@@ -236,6 +242,17 @@ try {
     await page.locator('.app-shell > .search-header .search-input').focus()
     await page.keyboard.press('Enter')
     await eventually('Native application launch did not execute fixture', async () => await readFile(launchMarker, 'utf8') === 'launched')
+    if (process.platform === 'win32') {
+      const query = await page.getByTestId('launcher-query').inputValue()
+      const count = await applications.getByTestId('search-result-row').count()
+      assert.equal(initial.settings.hotkey, 'Alt+Z')
+      await waitNativeVisibility(false)
+      await powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('%z')")
+      await waitNativeVisibility(true)
+      assert.equal(await page.getByTestId('launcher-query').inputValue(), query)
+      assert.equal(await applications.getByTestId('search-result-row').count(), count)
+      checks.push('External application blur hides launcher; physical saved shortcut restores query and application results')
+    }
     assert.equal(await page.getByTestId('search-error').count(), 0)
     checks.push('Real installed application search displays decoded native PNG icon and native launch executes owned marker fixture')
     await page.locator('.app-shell > .search-header .search-input').focus()
@@ -300,10 +317,7 @@ try {
     await page.locator('.hotkey-control button[type="submit"]').click()
     await eventually('Alt+Space not saved', async () => (await page.evaluate(() => window.desktop.getSnapshot())).settings.hotkey === 'Alt+Space')
     const sendAltSpace = () => powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ') ")
-    const waitVisibility = visible => eventually(`Native host visibility did not become ${visible}`, async () => {
-      const { stdout } = await powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`)
-      return (stdout.trim() !== '0') === visible
-    })
+    const waitVisibility = waitNativeVisibility
     const nativeClose = () => powershell(`Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeSmoke { [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam); }'; $handle = (Get-Process -Id ${child.pid}).MainWindowHandle; if ($handle -eq 0) { throw 'Native window is hidden' }; if (-not [NativeSmoke]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) { throw 'WM_CLOSE failed' }`)
     const show = async () => { await sendAltSpace(); await waitVisibility(true) }
     const emptyLauncher = async () => {
