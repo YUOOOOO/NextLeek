@@ -267,15 +267,12 @@ try {
   checks.push('Secured bridge rejects an unknown endpoint and an unknown marketplace method')
 
   const installButton = page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"] [data-testid="plugin-market-install"]')
-  const installConfirmation = bounded('Install permission confirmation', async () => {
-    const dialog = await page.waitForEvent('dialog', { timeout: 15000 })
-    assert.equal(dialog.type(), 'confirm')
-    assert.match(dialog.message(), /权限：无/)
-    assert.match(dialog.message(), /独立沙箱/)
-    await dialog.accept()
-  })
+  const installConfirmation = page.getByTestId('plugin-market-confirmation')
   await installButton.click()
-  await installConfirmation
+  await installConfirmation.waitFor({ state: 'visible' })
+  assert.match(await installConfirmation.textContent(), /权限：无/)
+  assert.match(await installConfirmation.textContent(), /独立沙箱/)
+  await installConfirmation.getByTestId('plugin-market-confirm-accept').click()
   await eventually('Marketplace install did not finish', async () => {
     const row = page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]')
     return await row.getByTestId('plugin-market-install').count() === 0 && await row.getByTestId('plugin-market-open').isEnabled()
@@ -349,8 +346,8 @@ try {
   }
   await page.evaluate(() => window.desktop.updateSettings({ escHide: false }))
   checks.push('Header-focused and native-plugin-focused Escape destroy plugin viewer before market; market returns to settings, then launcher remains visible with either escHide value')
-  await openInstalledDetail()
-  const switchButton = row.getByTestId('plugin-market-enabled')
+  const detailRow = await openInstalledDetail()
+  const switchButton = detailRow.getByTestId('plugin-market-enabled')
   assert.equal(await switchButton.getAttribute('aria-checked'), 'true')
   const beforeDisable = new Set(browser.contexts().flatMap(context => context.pages()))
   const disabledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
@@ -359,7 +356,7 @@ try {
   await eventually('Disabling plugin did not destroy its native page', () => disabledPage.isClosed())
   assert.match(await invokeRejected('plugin-market', 'invokeCapability', { session: disabledSession.session, sourcePluginId: pluginId, sourceId: 'none', method: 'none', args: {} }), /closed|revoked/i)
   await eventually('Dashboard did not become disabled', () => switchButton.getAttribute('aria-checked').then(value => value === 'false'))
-  assert.equal(await row.getByTestId('plugin-market-open').isDisabled(), true)
+  assert.equal(await detailRow.getByTestId('plugin-market-open').isDisabled(), true)
   const disabledError = await invokeRejected('plugin-market', 'open', { id: pluginId })
   assert.match(disabledError, /disabled/i)
   checks.push('Disabling dashboard destroys its native page, revokes the session and blocks both UI and secured host reopen')
@@ -394,20 +391,14 @@ try {
   const beforeUninstall = new Set(browser.contexts().flatMap(context => context.pages()))
   const uninstalledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
   const uninstalledPage = await nativePluginPage(beforeUninstall)
-  let dialogSeen = false
-  const confirmation = bounded('Uninstall confirmation', async () => {
-    const dialog = await page.waitForEvent('dialog', { timeout: 15000 })
-    assert.equal(dialog.type(), 'confirm')
-    assert.match(dialog.message(), /卸载/)
-    dialogSeen = true
-    await dialog.accept()
-  })
+  const confirmation = page.getByTestId('plugin-market-confirmation')
   await finalRow.getByTestId('plugin-market-uninstall').click()
-  await confirmation
+  await confirmation.waitFor({ state: 'visible' })
+  assert.match(await confirmation.textContent(), /卸载/)
+  await confirmation.getByTestId('plugin-market-confirm-accept').click()
   await eventually('Marketplace uninstall did not remove dashboard row', async () => await page.locator(`[data-testid="plugin-market-installed-entry"][data-plugin-id="${pluginId}"]`).count() === 0)
   await eventually('Uninstall did not destroy its native plugin page', () => uninstalledPage.isClosed())
   assert.match(await invokeRejected('plugin-market', 'invokeCapability', { session: uninstalledSession.session, sourcePluginId: pluginId, sourceId: 'none', method: 'none', args: {} }), /closed|revoked/i)
-  assert.equal(dialogSeen, true)
   const finalState = JSON.parse(await readFile(statePath, 'utf8'))
   assert.equal(finalState.plugins.length, 0)
   await assert.rejects(stat(packagePath), error => error.code === 'ENOENT')

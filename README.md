@@ -15,6 +15,8 @@ Hiding and showing the window preserves the current page, search query, results,
 
 In the marketplace, Discover offers installation and available updates; Installed offers opening and package management. Back first closes an open plugin and returns to the list, then returns to the settings or installed-plugin menu used to enter the marketplace. The marketplace itself is part of the host UI; opened plugin content uses an independent view, not an iframe.
 
+Installation, uninstall, and dependency-disabling confirmations stay inside the marketplace page, retaining permission and dependency details without moving focus to a native dialog that can hide the launcher.
+
 ## Plugin contracts
 
 There are two separate deployment paths:

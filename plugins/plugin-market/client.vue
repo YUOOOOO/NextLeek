@@ -26,6 +26,26 @@ const sandbox = ref<HTMLElement | null>(null)
 const opened = ref<OpenPlugin | null>(null)
 const authentication = ref<{ pluginId: string; sourceId: string } | null>(null)
 const password = ref('')
+const confirmation = ref<HTMLDialogElement | null>(null)
+const confirmationText = ref('')
+let resolveConfirmation: ((accepted: boolean) => void) | undefined
+// 页面内确认不转移原生窗口焦点，避免失焦隐藏启动器。
+async function confirmAction(text: string): Promise<boolean> {
+  if (resolveConfirmation || disabled.value || !props.active) return false
+  confirmationText.value = text
+  const result = new Promise<boolean>(resolve => { resolveConfirmation = resolve })
+  await nextTick()
+  confirmation.value?.showModal()
+  return result
+}
+// 关闭、取消和页面卸载都结束同一确认，禁止遗留待执行操作。
+function settleConfirmation(accepted = false) {
+  confirmation.value?.close()
+  const resolve = resolveConfirmation
+  resolveConfirmation = undefined
+  confirmationText.value = ''
+  resolve?.(accepted)
+}
 let viewGeneration = 0
 let viewObserver: ResizeObserver | undefined
 let viewFrame: number | undefined
@@ -173,7 +193,7 @@ function installLabel(item: MarketEntry) {
 }
 // 用户确认权限后安装或更新，再刷新状态。
 async function install(item: MarketEntry) {
-  if (disabled.value || !props.active || !window.confirm(installPermissions(item))) return
+  if (!await confirmAction(installPermissions(item))) return
   await perform(item.id, installedById.value.has(item.id) ? '正在更新…' : '正在安装…', async () => {
     const result = await invoke<InstalledPlugin>('install', { id: item.id })
     await refreshInstalled()
@@ -183,7 +203,7 @@ async function install(item: MarketEntry) {
 }
 // 用户确认删除与依赖影响后卸载插件。
 async function uninstall(item: InstalledPlugin) {
-  if (disabled.value || !props.active || !window.confirm(`确定卸载“${item.name}”吗？已安装的插件文件将被删除。${dependencyWarning(item.id)}`)) return
+  if (!await confirmAction(`确定卸载“${item.name}”吗？已安装的插件文件将被删除。${dependencyWarning(item.id)}`)) return
   await perform(item.id, '正在卸载…', async () => {
     await invoke<void>('uninstall', { id: item.id })
     await refreshInstalled()
@@ -193,7 +213,7 @@ async function uninstall(item: InstalledPlugin) {
 }
 // 切换启用状态，停用消费者依赖前二次确认。
 async function toggle(item: InstalledPlugin) {
-  if (item.enabled && consumers(item.id).length && !window.confirm(`确定停用“${item.name}”吗？${dependencyWarning(item.id)}`)) return
+  if (item.enabled && consumers(item.id).length && !await confirmAction(`确定停用“${item.name}”吗？${dependencyWarning(item.id)}`)) return
   await perform(item.id, item.enabled ? '正在停用…' : '正在启用…', async () => {
     const result = await invoke<InstalledPlugin>('setEnabled', { id: item.id, enabled: !item.enabled })
     await refreshInstalled()
@@ -256,7 +276,8 @@ function closePlugin() {
 }
 // 运行页先返回插件详情，详情再返回保留搜索状态的市场列表。
 function back() {
-  if (opened.value) closePlugin()
+  if (resolveConfirmation) settleConfirmation()
+  else if (opened.value) closePlugin()
   else if (selectedId.value) { selectedId.value = null; clearAuthentication() }
   else emit('back')
 }
@@ -269,7 +290,7 @@ function onKey(event: KeyboardEvent) {
 }
 // 后台退出运行会话，首次激活时才读取市场数据。
 watch(() => props.active, value => {
-  if (!value) closePlugin()
+  if (!value) { settleConfirmation(); closePlugin() }
   else if (!loaded) void load()
 }, { immediate: true, flush: 'sync' })
 // 切换分类时清理详情和密码，保留搜索与列表数据。
@@ -290,7 +311,7 @@ onMounted(() => {
 })
 // 卸载释放会话、观察器和全局事件。
 onUnmounted(() => {
-  disposed = true; closePlugin(); stopNativeEvents?.()
+  disposed = true; settleConfirmation(); closePlugin(); stopNativeEvents?.()
   window.removeEventListener('resize', scheduleViewBounds)
   window.removeEventListener('scroll', scheduleViewBounds, true)
   document.removeEventListener('visibilitychange', syncViewVisibility)
@@ -299,6 +320,14 @@ onUnmounted(() => {
 
 <template>
   <section class="plugin-market" :class="{ 'is-detail': !!selected }" data-testid="plugin-market" aria-label="插件市场" @keydown="onKey">
+    <dialog ref="confirmation" class="plugin-market__confirmation" data-testid="plugin-market-confirmation" aria-labelledby="market-confirm-title" @cancel.prevent="settleConfirmation()">
+      <h2 id="market-confirm-title">确认操作</h2>
+      <p>{{ confirmationText }}</p>
+      <div class="plugin-market__confirmation-actions">
+        <button autofocus class="text-button" data-testid="plugin-market-confirm-cancel" @click="settleConfirmation()">取消</button>
+        <button class="text-button" data-testid="plugin-market-confirm-accept" @click="settleConfirmation(true)">确认</button>
+      </div>
+    </dialog>
     <header class="plugin-market__header">
       <button class="back-button" data-testid="plugin-market-back" :aria-label="opened ? '返回插件列表' : selected ? '返回市场列表' : '返回菜单列表'" @click="back"><AppIcon name="back" /></button>
       <div><h1>{{ opened ? opened.name : selected ? '插件详情' : '插件市场' }}</h1><p v-if="opened">插件在独立沙箱中运行</p></div>
@@ -437,6 +466,11 @@ onUnmounted(() => {
 .is-detail .plugin-market__info small { font-size: 12px; }
 .is-detail .plugin-market__capabilities { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .is-detail .plugin-market__actions { gap: 16px; padding-top: 12px; }
+.plugin-market__confirmation { width: min(460px, calc(100% - 48px)); max-height: calc(100% - 48px); padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); }
+.plugin-market__confirmation::backdrop { background: rgb(0 0 0 / 35%); }
+.plugin-market__confirmation h2 { margin: 0 0 16px; font-size: 16px; }
+.plugin-market__confirmation p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+.plugin-market__confirmation-actions { display: flex; justify-content: flex-end; gap: 16px; margin-top: 24px; }
 @media (max-width: 600px) {
   .plugin-market__controls { flex-wrap: wrap; gap: 10px; }
   .plugin-market__toolbar { flex: 1; }
