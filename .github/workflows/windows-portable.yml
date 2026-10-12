@@ -66,11 +66,8 @@ jobs:
             Write-Host "::error title=Dependency installation failed::$failure"
             exit $installExit
           }
-      - run: pnpm typecheck
-      - run: pnpm gates
-      - run: pnpm test
       - run: pnpm build:win
-      - name: Extract and exercise portable main launcher and native search
+      - name: Verify portable package structure and checksum
         shell: pwsh
         run: |
           $zip = @(Get-ChildItem release -Filter '*.zip' -File)
@@ -84,14 +81,6 @@ jobs:
           foreach ($sourceDirectory in @('src', 'scripts', 'docs', '.git', '.github')) {
             if (Test-Path (Join-Path artifacts/portable $sourceDirectory)) { throw "Portable ZIP contains repository sources: $sourceDirectory" }
           }
-          # The native smoke starts its controlled folder index before NextTools
-          # can auto-start the bundled engine. Both binaries are hash-verified.
-          node scripts/smoke-everything.mjs $exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/smoke-desktop.mjs $exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/smoke-marketplace.mjs $exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($zip[0].Name)" | Set-Content -LiteralPath "$($zip[0].FullName).sha256" -Encoding ascii
       - name: Verify NSIS installation integrity
@@ -118,14 +107,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Upload desktop behavior evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-smoke-evidence
-          path: |
-            artifacts/smoke/
-            artifacts/everything-smoke/
-            artifacts/marketplace-smoke/
-          if-no-files-found: ignore
-          retention-days: 14

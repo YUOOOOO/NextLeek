@@ -53,7 +53,7 @@ Use the NSIS installer for automatic in-app updates:
 - [Latest Windows installer](https://github.com/YUOOOOO/NextLeek/releases/latest)
 - Portable ZIP builds are available for manual use but do not install updates automatically.
 
-The Windows release workflow builds once, checks source contracts, exercises the portable launcher/native search/marketplace, and verifies NSIS installation integrity before publishing. Full installed upgrade regression is a separate `scripts/smoke-update.mjs` scenario, not part of every release build.
+The Windows release workflow builds once, verifies the portable package structure and checksum, and checks NSIS installation integrity before publishing. Interactive launcher, native-search, marketplace, and installed-upgrade smoke scenarios remain available as standalone scripts; they do not block release packaging.
 
 The application product name is **NextTools**. The stable Electron application ID remains `com.nextleek.desktop` so existing installation identity and user data remain compatible.
 
