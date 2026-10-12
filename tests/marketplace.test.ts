@@ -108,6 +108,16 @@ test('persistent packages are reverified before opening, not trusted by filename
   } finally { await runtime.dispose(); await rm(directory, { recursive: true, force: true }) }
 })
 
+test('catalog preserves absent optional commands and validates supplied declarations', () => {
+  const { entry } = fixture()
+  assert.deepEqual(parseCatalog(strToU8(index([entry]))), [entry])
+  const commands = [{ id: 'dashboard.open', title: 'Open dashboard', keywords: ['dashboard'] }]
+  assert.deepEqual(parseCatalog(strToU8(index([{ ...entry, commands }]))), [{ ...entry, commands }])
+  assert.deepEqual(parseCatalog(strToU8(index([{ ...entry, commands: [] }]))), [{ ...entry, commands: [] }])
+  assert.throws(() => parseCatalog(strToU8(index([{ ...entry, commands: [...commands, ...commands] }]))), /duplicate command id/)
+  assert.throws(() => parseCatalog(strToU8(JSON.stringify({ schemaVersion: 1, plugins: [{ ...entry, commands: null }] }))), /Invalid commands/)
+})
+
 test('catalog rejects duplicate ids, unsupported permissions and unpinned or credentialed URLs', () => {
   const value = fixture()
   assert.throws(() => parseCatalog(strToU8(index([value.entry, value.entry]))), /Duplicate/)

@@ -42,7 +42,7 @@ export function marketEntry(value: unknown): MarketEntry {
   const entry = object(value)
   const sha256 = text(entry.sha256, 'SHA-256', 64)
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new TypeError('Invalid SHA-256')
-  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), commands: commandDeclarations(entry.commands), }
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), ...(entry.commands === undefined ? {} : { commands: commandDeclarations(entry.commands) }), }
 }
 function commandDeclarations(value: unknown): MarketCommandDeclaration[] | undefined {
   if (value === undefined) return undefined
@@ -55,13 +55,13 @@ function commandDeclarations(value: unknown): MarketCommandDeclaration[] | undef
     ids.add(id)
     const keywords = command.keywords
     if (!Array.isArray(keywords) || keywords.length > 32 || keywords.some(keyword => typeof keyword !== 'string' || keyword.length > 80)) throw new TypeError('Invalid command keywords')
-    return { id, title: text(command.title, 'command title', 128), description: command.description === undefined ? undefined : text(command.description, 'command description'), keywords: [...keywords] }
+    return { id, title: text(command.title, 'command title', 128), ...(command.description === undefined ? {} : { description: text(command.description, 'command description') }), keywords: [...keywords] }
   })
 }
 function manifest(value: unknown): MarketManifest {
   const entry = object(value)
   if (entry.capabilities !== undefined && (!Array.isArray(entry.capabilities) || entry.capabilities.length)) throw new Error('Unsupported plugin capabilities')
-  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), commands: commandDeclarations(entry.commands), entry: text(entry.entry, 'entry', 512) }
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), ...(entry.commands === undefined ? {} : { commands: commandDeclarations(entry.commands) }), entry: text(entry.entry, 'entry', 512) }
 }
 export function parseCatalog(bytes: Uint8Array): MarketEntry[] {
   const data = object(JSON.parse(utf8.decode(bytes)))
