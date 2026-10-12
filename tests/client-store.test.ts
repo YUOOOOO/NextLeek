@@ -32,7 +32,7 @@ test('show and native close preserve page and query independently of escHide', a
     assert.equal(store.query, '设置')
     assert.equal(store.focusRequest, 1)
     store.navigate('launcher')
-    store.query = '设置'
+    assert.equal(store.query, '设置')
     receive!({ type: 'shown' })
     assert.equal(store.query, '设置')
     assert.equal(store.focusRequest, 2)
@@ -197,6 +197,23 @@ test('search clears obsolete query results, rejects stale replies and preserves 
   await settle()
   assert.equal(store.searchLoading, false)
   assert.ok(!store.searchGroups.some(group => group.items.some(item => item.name === 'inactive')))
+})
+
+test('returning from settings preserves query and resumes search without accepting inactive replies', async t => {
+  const { store, pending } = await searchHarness(t)
+  store.query = '设置'
+  store.navigate('settings')
+  pending[0]!.resolve([searchGroup('inactive result')])
+  await settle()
+  store.navigate('launcher')
+  assert.equal(store.query, '设置')
+  assert.equal(store.searchLoading, true)
+  pending[1]!.resolve([searchGroup('restored result')])
+  await settle()
+  assert.equal(store.searchGroups[0]!.items[0]!.name, 'restored result')
+  assert.equal(store.searchLoading, false)
+  store.query = ''
+  assert.deepEqual(store.searchGroups, [])
 })
 
 test('generic provider statuses, pagination, host-authorized result actions and feedback remain scoped to current query', async t => {

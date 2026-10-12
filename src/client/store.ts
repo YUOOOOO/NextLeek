@@ -114,10 +114,8 @@ export const useDesktopStore = defineStore('desktop', () => {
   function message(cause: unknown) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
+  // 页面导航保留查询；首页 Escape 的清空由界面显式处理。
   function navigate(target: typeof page.value) {
-    if (target === 'launcher') {
-      query.value = ''
-    }
     page.value = target
   }
   // 指令执行结果统一驱动插件页面，保留沙箱打开请求的独立版本号。
