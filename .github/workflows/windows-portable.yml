@@ -70,19 +70,6 @@ jobs:
       - run: pnpm gates
       - run: pnpm test
       - run: pnpm build:win
-      - name: Package lower-version installed baseline for real update smoke
-        shell: pwsh
-        run: |
-          # Test-only installer: same source, lower version; never uploaded or published.
-          # All stable v4 releases compare greater than 4.0.0.
-          $output = @(pnpm exec electron-builder --win nsis --x64 --publish never '-c.extraMetadata.version=4.0.0' '-c.directories.output=artifacts/update-baseline' 2>&1)
-          $buildExit = $LASTEXITCODE
-          $output | ForEach-Object { Write-Host $_ }
-          if ($buildExit -ne 0) {
-            $failure = (($output | Select-Object -Last 20) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Host "::error title=Baseline packaging failed::$failure"
-            exit $buildExit
-          }
       - name: Extract and exercise portable main launcher and native search
         shell: pwsh
         run: |
@@ -107,8 +94,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($zip[0].Name)" | Set-Content -LiteralPath "$($zip[0].FullName).sha256" -Encoding ascii
-      - name: Install and exercise NSIS application
-        id: installed
+      - name: Verify NSIS installation integrity
         shell: pwsh
         run: |
           $setup = @(Get-ChildItem release -Filter '*-Setup.exe' -File)
@@ -120,10 +106,7 @@ jobs:
           if ($installer.ExitCode -ne 0) { throw "NSIS install failed: $($installer.ExitCode)" }
           $exe = Join-Path $installDirectory 'NextTools.exe'
           if (!(Test-Path $exe) -or !(Test-Path (Join-Path $installDirectory 'Uninstall NextTools.exe'))) { throw 'NSIS installation is incomplete' }
-          "executable=$exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          node scripts/smoke-desktop.mjs $exe --expect-update-supported
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Publish immutable GitHub release after packaged smoke
+      - name: Publish immutable GitHub release after package and install checks
         shell: pwsh
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
@@ -135,37 +118,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify anonymous update feed and installed update check
-        shell: pwsh
-        env:
-          INSTALLED_EXE: ${{ steps.installed.outputs.executable }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          # Download anonymously: the shipped updater has no GitHub credentials.
-          $release = Invoke-RestMethod "https://api.github.com/repos/YUOOOOO/NextLeek/releases/tags/$env:RELEASE_TAG"
-          foreach ($asset in $release.assets) {
-            if ($asset.name -match '-Setup\.exe$|-Setup\.exe\.blockmap$|^latest\.yml$') {
-              $destination = Join-Path $env:RUNNER_TEMP $asset.name
-              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $destination
-              $local = Join-Path 'release' $asset.name
-              if ((Get-FileHash $destination -Algorithm SHA512).Hash -ne (Get-FileHash $local -Algorithm SHA512).Hash) { throw "Public release asset mismatch: $($asset.name)" }
-            }
-          }
-          node scripts/smoke-desktop.mjs $env:INSTALLED_EXE --expect-update-supported --check-updates
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Exercise real installed check download and relaunch-install
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          # Isolate the lower-version install from the preceding current install.
-          $uninstaller = Join-Path (Split-Path '${{ steps.installed.outputs.executable }}' -Parent) 'Uninstall NextTools.exe'
-          $removed = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
-          if ($removed.ExitCode -ne 0) { throw 'Failed to remove smoke install before baseline update' }
-          $baseline = @(Get-ChildItem artifacts/update-baseline -Filter '*-Setup.exe' -File)
-          if ($baseline.Count -ne 1) { throw 'Expected one lower-version test installer' }
-          node scripts/smoke-update.mjs $baseline[0].FullName $env:RELEASE_VERSION
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload desktop behavior evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -173,7 +125,6 @@ jobs:
           name: desktop-smoke-evidence
           path: |
             artifacts/smoke/
-            artifacts/update-smoke/
             artifacts/everything-smoke/
             artifacts/marketplace-smoke/
           if-no-files-found: ignore

@@ -51,6 +51,8 @@ Use the NSIS installer for automatic in-app updates:
 - [Latest Windows installer](https://github.com/YUOOOOO/NextLeek/releases/latest)
 - Portable ZIP builds are available for manual use but do not install updates automatically.
 
+The Windows release workflow builds once, checks source contracts, exercises the portable launcher/native search/marketplace, and verifies NSIS installation integrity before publishing. Full installed upgrade regression is a separate `scripts/smoke-update.mjs` scenario, not part of every release build.
+
 The application product name is **NextTools**. The stable Electron application ID remains `com.nextleek.desktop` so existing installation identity and user data remain compatible.
 
 Copied product components retain their upstream MIT copyright and permission notice in [the bundled attribution file](resources/icons/ZTools-LICENSE). `electron-builder.yml` includes this file in distributed `icons/` resources; retain it when redistributing those components. Windows Everything resources also include their own license notices through the `LICENSE-*` resource filter.

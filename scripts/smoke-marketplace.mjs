@@ -164,6 +164,13 @@ async function waitInstalledRow() {
   await row.waitFor({ state: 'visible', timeout: 60000 })
   return row
 }
+// 管理控件位于详情页；列表卡片只提供打开入口。
+async function openInstalledDetail() {
+  const row = await waitInstalledRow()
+  await row.click()
+  await row.getByTestId('plugin-market-enabled').waitFor({ state: 'visible' })
+  return row
+}
 // 通过真实 CDP target 识别插件视图，不再进入宿主 iframe。
 async function nativePluginPage(previous = new Set()) {
   return await eventually('Independent plugin WebContentsView page unavailable', async () => {
@@ -271,8 +278,7 @@ try {
   await installConfirmation
   await eventually('Marketplace install did not finish', async () => {
     const row = page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]')
-    const label = await row.locator('[data-testid="plugin-market-install"]').textContent().catch(() => '')
-    return label?.trim() === '已安装' && await installButton.isDisabled()
+    return await row.getByTestId('plugin-market-install').count() === 0 && await row.getByTestId('plugin-market-open').isEnabled()
   }, 90000)
   const statePath = join(profile, 'plugins', 'market-state.json')
   const saved = JSON.parse(await readFile(statePath, 'utf8'))
@@ -290,8 +296,7 @@ try {
 
   await page.getByTestId('plugin-market-tab-installed').click()
   const row = await waitInstalledRow()
-  const switchButton = row.getByTestId('plugin-market-enabled')
-  assert.equal(await switchButton.getAttribute('aria-checked'), 'true')
+  assert.equal(await row.getByTestId('plugin-market-open').isEnabled(), true)
   const initialSummary = await bounded('Initial runtime summary', () => page.evaluate(() => window.desktop.invokePlugin('plugin-market', 'runtimeSummary', null)))
   assert.equal(initialSummary.version, initialSnapshot.plugins.find(plugin => plugin.id === 'plugin-market').version)
   const firstPluginPage = await assertDashboard(initialSummary)
@@ -344,6 +349,9 @@ try {
   }
   await page.evaluate(() => window.desktop.updateSettings({ escHide: false }))
   checks.push('Header-focused and native-plugin-focused Escape destroy plugin viewer before market; market returns to settings, then launcher remains visible with either escHide value')
+  await openInstalledDetail()
+  const switchButton = row.getByTestId('plugin-market-enabled')
+  assert.equal(await switchButton.getAttribute('aria-checked'), 'true')
   const beforeDisable = new Set(browser.contexts().flatMap(context => context.pages()))
   const disabledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
   const disabledPage = await nativePluginPage(beforeDisable)
@@ -361,7 +369,7 @@ try {
   await launch()
   await openMarketplace()
   await page.getByTestId('plugin-market-tab-installed').click()
-  const restartedRow = await waitInstalledRow()
+  const restartedRow = await openInstalledDetail()
   assert.equal(await restartedRow.getByTestId('plugin-market-enabled').getAttribute('aria-checked'), 'false')
   assert.equal(createHash('sha256').update(await readFile(packagePath)).digest('hex'), packageHash)
   const restartedDisabledError = await invokeRejected('plugin-market', 'open', { id: pluginId })
@@ -370,6 +378,8 @@ try {
 
   await restartedRow.getByTestId('plugin-market-enabled').click()
   await eventually('Dashboard did not become enabled', () => restartedRow.getByTestId('plugin-market-enabled').getAttribute('aria-checked').then(value => value === 'true'))
+  await page.getByTestId('plugin-market-back').click()
+  await waitInstalledRow()
   const summary = await bounded('Restored runtime summary', () => page.evaluate(() => window.desktop.invokePlugin('plugin-market', 'runtimeSummary', null)))
   assert.equal(summary.mode, 'desktop')
   assert.equal(summary.status, 'ready')
@@ -380,7 +390,7 @@ try {
   await eventually('Closing restored plugin did not destroy native page', () => restoredPluginPage.isClosed())
   await page.getByTestId('plugin-market-tab-installed').click()
 
-  const finalRow = await waitInstalledRow()
+  const finalRow = await openInstalledDetail()
   const beforeUninstall = new Set(browser.contexts().flatMap(context => context.pages()))
   const uninstalledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
   const uninstalledPage = await nativePluginPage(beforeUninstall)
@@ -412,6 +422,15 @@ try {
   console.log(checks.join('\n'))
 } catch (error) {
   const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  // 截图失败也保留磁盘安装状态与包校验结果，不再丢失宿主侧证据。
+  try {
+    const state = JSON.parse(await readFile(join(profile, 'plugins', 'market-state.json'), 'utf8'))
+    const packages = await Promise.all(state.plugins.map(async record => {
+      const bytes = await readFile(join(profile, 'plugins', record.file))
+      return { id: record.catalog.id, file: record.file, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+    }))
+    await writeFile(join(evidence, 'failure-state.json'), JSON.stringify({ state, packages }, null, 2))
+  } catch (stateError) { logs.push(`Failure state capture: ${stateError.stack ?? stateError}`) }
   try { if (page) await page.screenshot({ path: join(evidence, 'failure.png'), fullPage: true, timeout: 15000 }) } catch (screenshotError) { logs.push(`Failure screenshot: ${screenshotError.stack ?? screenshotError}`) }
   console.error(`::error title=Marketplace smoke failed::${String(`${message}\n${checks.join('\n')}\n${logs.join('')}`.slice(-16000)).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')}`)
   await writeFile(join(evidence, 'result.json'), JSON.stringify({ passed: false, checks, error: message, screenshot: join(evidence, 'failure.png') }, null, 2))
