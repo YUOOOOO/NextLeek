@@ -128,17 +128,26 @@ async function openMarketplace() {
   await page.getByRole('button', { name: '已安装插件', exact: true }).click()
   await page.getByRole('button', { name: '打开市场', exact: true }).click()
   await page.getByTestId('plugin-market').waitFor({ state: 'visible', timeout: 30000 })
-  await page.getByTestId('plugin-market-back').click()
+  await page.getByTestId('launcher-query').focus()
+  await page.keyboard.press('Escape')
+  await page.locator('.settings-sidebar').waitFor()
   assert.equal(await page.locator('.settings-sidebar .active').textContent(), '已安装插件')
+  await page.getByTestId('launcher-query').focus()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('plugin-market').waitFor({ state: 'hidden' })
+  assert.equal(await page.locator('.settings-layout').count(), 0)
+  assert.equal(await page.getByTestId('launcher-query').isVisible(), true)
   await page.getByRole('button', { name: '打开设置', exact: true }).click()
   await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
   await page.locator('[data-testid="plugin-market"]').waitFor({ state: 'visible', timeout: 30000 })
   await page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]').waitFor({ state: 'visible', timeout: 60000 })
-  await page.getByTestId('plugin-market-back').click()
+  await page.getByTestId('launcher-query').focus()
+  await page.keyboard.press('Escape')
+  await page.locator('.settings-sidebar').waitFor()
   assert.equal(await page.locator('.settings-sidebar .active').textContent(), '通用设置')
   await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
   await page.getByTestId('plugin-market').waitFor({ state: 'visible', timeout: 30000 })
-  checks.push('Opened marketplace from both the built-in plugin row and the settings navigation menu')
+  checks.push('Marketplace Escape returns to its actual prior settings/plugins page, then plugins Escape returns to the visible launcher')
 }
 async function invokeRejected(plugin, method, args) {
   return await bounded('Secure endpoint rejection', () => page.evaluate(async ({ plugin, method, args }) => {
@@ -155,24 +164,32 @@ async function waitInstalledRow() {
   await row.waitFor({ state: 'visible', timeout: 60000 })
   return row
 }
+// 通过真实 CDP target 识别插件视图，不再进入宿主 iframe。
+async function nativePluginPage(previous = new Set()) {
+  return await eventually('Independent plugin WebContentsView page unavailable', async () => {
+    for (const context of browser.contexts()) {
+      for (const candidate of context.pages()) {
+        if (previous.has(candidate) || candidate === page || candidate.isClosed()) continue
+        if (await candidate.evaluate(() => window.top === window && typeof window.nextleek?.runtimeSummary === 'function' && typeof window.desktop === 'undefined').catch(() => false)) return candidate
+      }
+    }
+    return false
+  }, 30000)
+}
 async function openInstalledPlugin() {
+  const previous = new Set(browser.contexts().flatMap(context => context.pages()))
   const row = await waitInstalledRow()
   await row.getByTestId('plugin-market-open').click()
-  await page.locator('[data-testid="plugin-market-frame"]').waitFor({ state: 'visible', timeout: 30000 })
-  const frameElement = page.locator('[data-testid="plugin-market-frame"]')
-  const frame = await eventually('Dashboard iframe content unavailable', async () => {
-    const handle = await frameElement.elementHandle()
-    return handle ? await handle.contentFrame() : false
-  }, 30000)
+  await page.getByTestId('plugin-sandbox').waitFor({ state: 'visible', timeout: 30000 })
+  const frame = await nativePluginPage(previous)
   await frame.locator('#date').waitFor({ state: 'visible', timeout: 30000 })
   await frame.locator('#version').waitFor({ state: 'visible', timeout: 30000 })
   await frame.locator('#status').waitFor({ state: 'visible', timeout: 30000 })
-  return { frame, frameElement }
+  return { frame }
 }
 async function assertDashboard(summary) {
-  const { frame, frameElement } = await openInstalledPlugin()
-  assert.equal(await frameElement.getAttribute('sandbox'), 'allow-scripts')
-  assert.equal(await frameElement.getAttribute('src'), null)
+  const { frame } = await openInstalledPlugin()
+  assert.equal(await page.locator('iframe').count(), 0)
   const bridged = await bounded('Sandbox runtime summary', () => frame.evaluate(async () => await window.nextleek.runtimeSummary()))
   assert.deepEqual(bridged, summary)
   await eventually('Dashboard did not render the actual runtime summary', async () => await frame.locator('#version').textContent() === `v${summary.version}` && await frame.locator('#status').textContent() === `运行正常 · ${summary.mode}`, 15000)
@@ -209,14 +226,14 @@ async function assertDashboard(summary) {
   assert.equal(values.status, `运行正常 · ${summary.mode}`)
   assert.equal(values.requireType, 'undefined')
   assert.equal(values.processType, 'undefined')
-  assert.equal(values.parentDom, 'denied')
-  assert.equal(values.parentIsSelf, false)
-  assert.equal(values.topIsSelf, false)
+  assert.equal(values.parentDom, 'allowed')
+  assert.equal(values.parentIsSelf, true)
+  assert.equal(values.topIsSelf, true)
   assert.equal(values.runtimeType, 'function')
-  checks.push(`Real dashboard iframe rendered date ${values.date}, runtime version ${values.version}, and ${values.status}`)
+  checks.push(`Independent sandbox WebContentsView rendered date ${values.date}, runtime version ${values.version}, and ${values.status}`)
   await page.screenshot({ path: join(evidence, 'dashboard.png'), timeout: 15000 })
   await writeFile(join(evidence, 'dashboard-runtime.json'), JSON.stringify({ summary, bridged, values }, null, 2))
-  return values
+  return frame
 }
 try {
   assert.ok(executable && executable !== resolve('.'), 'Usage: node scripts/smoke-marketplace.mjs <executable> [app-root]')
@@ -277,14 +294,67 @@ try {
   assert.equal(await switchButton.getAttribute('aria-checked'), 'true')
   const initialSummary = await bounded('Initial runtime summary', () => page.evaluate(() => window.desktop.invokePlugin('plugin-market', 'runtimeSummary', null)))
   assert.equal(initialSummary.version, initialSnapshot.plugins.find(plugin => plugin.id === 'plugin-market').version)
-  await assertDashboard(initialSummary)
-  await page.getByTestId('plugin-market-close').click()
+  const firstPluginPage = await assertDashboard(initialSummary)
+  const identitySession = await firstPluginPage.context().newCDPSession(firstPluginPage)
+  const beforeIdentity = (await identitySession.send('Target.getTargetInfo')).targetInfo.targetId
+  await firstPluginPage.evaluate(() => { document.body.dataset.preserved = 'native-view-kept' })
+  if (process.platform === 'win32') {
+    const powershell = source => promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', source], { timeout: 15000 })
+    await page.evaluate(() => window.desktop.updateSettings({ hotkey: 'Alt+Space' }))
+    await page.evaluate(() => window.desktop.hide())
+    await eventually('Native launcher did not hide', async () => (await powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`)).stdout.trim() === '0')
+    assert.equal(firstPluginPage.isClosed(), false)
+    await powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ')")
+    await eventually('Native shortcut did not restore launcher', async () => (await powershell(`(Get-Process -Id ${child.pid}).MainWindowHandle`)).stdout.trim() !== '0')
+    await page.getByTestId('plugin-sandbox').waitFor({ state: 'visible' })
+    assert.equal((await identitySession.send('Target.getTargetInfo')).targetInfo.targetId, beforeIdentity)
+    assert.equal(await firstPluginPage.evaluate(() => document.body.dataset.preserved), 'native-view-kept')
+    await page.evaluate(hotkey => window.desktop.updateSettings({ hotkey }), initialSnapshot.settings.hotkey)
+    checks.push('Native hide/show preserved plugin CDP target id and modified document state')
+  } else logs.push('Native hide/show identity check requires Windows physical hotkey automation; not exercised on this platform')
+  for (const escHide of [false, true]) {
+    await page.evaluate(value => window.desktop.updateSettings({ escHide: value }), escHide)
+    // The dashboard remains open from assertDashboard on the first iteration.
+    if (escHide) await openInstalledPlugin()
+    await page.getByTestId('launcher-query').focus()
+    await page.keyboard.press('Escape')
+    await page.getByTestId('plugin-sandbox').waitFor({ state: 'detached' })
+    if (!escHide) await eventually('Header Escape did not destroy native plugin page', () => firstPluginPage.isClosed())
+    assert.equal(await page.getByTestId('plugin-market').isVisible(), true)
+    const { frame } = await openInstalledPlugin()
+    await frame.getByRole('button', { name: '刷新概览', exact: true }).focus()
+    await frame.keyboard.press('Escape')
+    await page.getByTestId('plugin-sandbox').waitFor({ state: 'detached' })
+    await eventually('Plugin Escape did not destroy native plugin page', () => frame.isClosed())
+    assert.equal(await page.getByTestId('plugin-market').isVisible(), true)
+    await page.getByTestId('launcher-query').focus()
+    await page.keyboard.press('Escape')
+    await page.locator('.settings-sidebar').waitFor()
+    assert.equal(await page.locator('.settings-sidebar .active').textContent(), '通用设置')
+    await page.getByTestId('launcher-query').focus()
+    await page.keyboard.press('Escape')
+    assert.equal(await page.locator('.settings-layout').count(), 0)
+    assert.equal(await page.getByTestId('launcher-query').isVisible(), true)
+    await page.keyboard.press('Escape')
+    assert.equal(await page.getByTestId('launcher-query').isVisible(), true)
+    await page.getByRole('button', { name: '打开设置', exact: true }).click()
+    await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
+    await page.getByTestId('plugin-market-tab-installed').click()
+    await waitInstalledRow()
+  }
+  await page.evaluate(() => window.desktop.updateSettings({ escHide: false }))
+  checks.push('Header-focused and native-plugin-focused Escape destroy plugin viewer before market; market returns to settings, then launcher remains visible with either escHide value')
+  const beforeDisable = new Set(browser.contexts().flatMap(context => context.pages()))
+  const disabledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
+  const disabledPage = await nativePluginPage(beforeDisable)
   await switchButton.click()
+  await eventually('Disabling plugin did not destroy its native page', () => disabledPage.isClosed())
+  assert.match(await invokeRejected('plugin-market', 'invokeCapability', { session: disabledSession.session, sourcePluginId: pluginId, sourceId: 'none', method: 'none', args: {} }), /closed|revoked/i)
   await eventually('Dashboard did not become disabled', () => switchButton.getAttribute('aria-checked').then(value => value === 'false'))
   assert.equal(await row.getByTestId('plugin-market-open').isDisabled(), true)
   const disabledError = await invokeRejected('plugin-market', 'open', { id: pluginId })
   assert.match(disabledError, /disabled/i)
-  checks.push('Disabled dashboard cannot open through either UI or the secured host bridge')
+  checks.push('Disabling dashboard destroys its native page, revokes the session and blocks both UI and secured host reopen')
   await page.screenshot({ path: join(evidence, 'disabled.png'), timeout: 15000 })
 
   await quitProcess()
@@ -305,11 +375,15 @@ try {
   assert.equal(summary.status, 'ready')
   assert.equal(typeof summary.version, 'string')
   assert.deepEqual(summary, initialSummary)
-  await assertDashboard(summary)
+  const restoredPluginPage = await assertDashboard(summary)
   await page.getByTestId('plugin-market-close').click()
+  await eventually('Closing restored plugin did not destroy native page', () => restoredPluginPage.isClosed())
   await page.getByTestId('plugin-market-tab-installed').click()
 
   const finalRow = await waitInstalledRow()
+  const beforeUninstall = new Set(browser.contexts().flatMap(context => context.pages()))
+  const uninstalledSession = await page.evaluate(id => window.desktop.invokePlugin('plugin-market', 'open', { id }), pluginId)
+  const uninstalledPage = await nativePluginPage(beforeUninstall)
   let dialogSeen = false
   const confirmation = bounded('Uninstall confirmation', async () => {
     const dialog = await page.waitForEvent('dialog', { timeout: 15000 })
@@ -321,6 +395,8 @@ try {
   await finalRow.getByTestId('plugin-market-uninstall').click()
   await confirmation
   await eventually('Marketplace uninstall did not remove dashboard row', async () => await page.locator(`[data-testid="plugin-market-installed-entry"][data-plugin-id="${pluginId}"]`).count() === 0)
+  await eventually('Uninstall did not destroy its native plugin page', () => uninstalledPage.isClosed())
+  assert.match(await invokeRejected('plugin-market', 'invokeCapability', { session: uninstalledSession.session, sourcePluginId: pluginId, sourceId: 'none', method: 'none', args: {} }), /closed|revoked/i)
   assert.equal(dialogSeen, true)
   const finalState = JSON.parse(await readFile(statePath, 'utf8'))
   assert.equal(finalState.plugins.length, 0)
@@ -329,7 +405,7 @@ try {
   assert.match(await invokeRejected('plugin-market', 'open', { id: pluginId }), /not installed/i)
   await writeFile(join(evidence, 'uninstalled-state.json'), JSON.stringify(finalState, null, 2))
   await page.screenshot({ path: join(evidence, 'uninstalled.png'), timeout: 15000 })
-  checks.push('Uninstalled through the real confirm UI and removed the persisted package')
+  checks.push('Confirmed uninstall destroys the native page, revokes its session and removes the persisted package')
 
   await quitProcess()
   await writeFile(join(evidence, 'result.json'), JSON.stringify({ passed: true, checks }, null, 2))

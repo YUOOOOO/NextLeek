@@ -1,11 +1,12 @@
-import type { Context } from '@deepseek-ai/cordis'
-import { randomUUID } from 'node:crypto'
+import type { Context, Fiber } from '@deepseek-ai/cordis'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { authenticateSource, dependencyErrors, executeSource } from './capabilities'
 import { CATALOG_URL, MAX_PACKAGE_BYTES, marketEntry, object, parseCatalog, pluginId, renderPackage, verifyPackage } from './package'
 import type { VerifiedPackage } from './package'
 import type { InstalledPlugin, MarketEntry, MarketManifest, MarketRuntimeSummary, OpenPlugin, SourceAuthentication } from './shared'
+import type { PluginViewHandle, PluginViewBounds } from '../../src/host/services/contracts'
 
 export interface MarketOptions {
   directory: string
@@ -15,23 +16,24 @@ export interface MarketOptions {
 }
 interface StoredPlugin { catalog: MarketEntry; enabled: boolean; file: string }
 interface StoredState { schemaVersion: 1; plugins: StoredPlugin[] }
-function installed(record: StoredPlugin, declarations: Pick<MarketManifest, 'dataSources' | 'requires'>, errors: string[], authenticatedSources: string[]): InstalledPlugin {
+function installed(record: StoredPlugin, declarations: Pick<MarketManifest, 'dataSources' | 'requires' | 'commands'>, errors: string[], authenticatedSources: string[]): InstalledPlugin {
   const { id, name, version, description, author } = record.catalog
-  return { id, name, version, description, author, enabled: record.enabled, dataSources: declarations.dataSources, requires: declarations.requires, dependencyErrors: errors, authenticatedSources }
+  return { id, name, version, description, author, enabled: record.enabled, commands: declarations.commands, dataSources: declarations.dataSources, requires: declarations.requires, dependencyErrors: errors, authenticatedSources }
 }
 function notFound(error: unknown): boolean { return (error as NodeJS.ErrnoException).code === 'ENOENT' }
 
 export function marketPlugin(options: MarketOptions) {
   return {
     name: 'plugin-market', inject: ['pluginEndpoints', 'commands'],
-    apply(ctx: Context) {
+    async apply(ctx: Context) {
       // All lifecycle and mutable state belong to this Cordis plugin instance.
       const lifetime = new AbortController()
       let queue: Promise<unknown> = Promise.resolve()
       let state: StoredState | undefined
       const controllers = new Map<string, AbortController>()
       const cookies = new Map<string, Map<string, SourceAuthentication>>()
-      const sessions = new Map<string, { consumerId: string; providers: Set<string>; controller: AbortController }>()
+      const sessions = new Map<string, { consumerId: string; providers: Set<string>; controller: AbortController; fiber: Fiber; view?: PluginViewHandle }>()
+      const commandOwners = new Map<string, { file: string; fiber: Fiber }>()
       const statePath = join(options.directory, 'market-state.json')
       const network = options.fetch ?? globalThis.fetch
       ctx.effect(() => () => {
@@ -52,15 +54,15 @@ export function marketPlugin(options: MarketOptions) {
         if (!current) { current = new AbortController(); controllers.set(id, current) }
         return current
       }
-      function revoke(id: string): void {
+      async function revoke(id: string): Promise<void> {
         const reason = new Error(`Plugin capability access revoked: ${id}`)
         controllers.get(id)?.abort(reason)
         controllers.delete(id)
         cookies.delete(id)
-        for (const [token, session] of sessions) {
+        for (const session of sessions.values()) {
           if (session.consumerId !== id && !session.providers.has(id)) continue
           session.controller.abort(reason)
-          sessions.delete(token)
+          await session.fiber.dispose()
         }
       }
       async function load(): Promise<StoredState> {
@@ -134,6 +136,42 @@ export function marketPlugin(options: MarketOptions) {
         const bytes = await readFile(join(options.directory, record.file))
         active()
         return verifyPackage(bytes, record.catalog, options.version)
+      }
+      // 超长插件编码使用稳定摘要，保持宿主命令标识符的长度约束。
+      function commandId(id: string, localId: string): string {
+        const full = `market.${id}..${localId}`
+        return full.length <= 80 ? full : `market.${createHash('sha256').update(full).digest('hex')}`
+      }
+      // 每个安装包单独持有 Cordis 子作用域，更新/禁用时释放全部命令效果。
+      async function syncCommands(current: StoredState): Promise<void> {
+        for (const [id, owner] of commandOwners) {
+          if (current.plugins.some(record => record.enabled && record.catalog.id === id && record.file === owner.file)) continue
+          await owner.fiber.dispose()
+          commandOwners.delete(id)
+        }
+        for (const record of current.plugins) {
+          if (!record.enabled || commandOwners.has(record.catalog.id)) continue
+          let verified: VerifiedPackage
+          try { verified = await verifyInstalled(record) } catch { continue }
+          const declaration = verified.manifest
+          const fiber = ctx.plugin({
+            name: `market-commands-${record.catalog.id}`, inject: ['commands'],
+            apply(owner: Context) {
+              const declared = declaration.commands?.length ? declaration.commands : [{ id: 'open', title: declaration.name, description: declaration.description, keywords: [declaration.id, declaration.name, '插件'] }]
+              for (const command of declared) {
+                const id = commandId(declaration.id, command.id)
+                owner.commands.register(owner, { id, title: command.title, description: command.description ?? declaration.description, keywords: command.keywords, icon: 'blocks', pluginId: declaration.id }, async () => {
+                  active()
+                  if (!state?.plugins.some(item => item.enabled && item.catalog.id === declaration.id && item.file === record.file)) throw new Error(`Plugin command unavailable: ${id}`)
+                  await verifyInstalled(record)
+                  return { pluginId: declaration.id, commandId: id }
+                })
+              }
+            },
+          })
+          try { await fiber.await() } catch (error) { await fiber.dispose(); throw error }
+          commandOwners.set(declaration.id, { file: record.file, fiber })
+        }
       }
       function sourceAuthentication(id: string, sourceId: string): SourceAuthentication | undefined {
         const authenticated = cookies.get(id)
@@ -211,8 +249,20 @@ export function marketPlugin(options: MarketOptions) {
         if (method === 'close') {
           const token = sessionToken(object(args).session)
           const session = sessions.get(token)
-          session?.controller.abort(new Error('Plugin capability session closed'))
-          sessions.delete(token)
+          await session?.fiber.dispose()
+          return
+        }
+        if (method === 'viewBounds' || method === 'viewVisible') {
+          const input = object(args)
+          const session = sessions.get(sessionToken(input.session))
+          if (!session) throw new Error('Plugin session is closed or revoked')
+          if (method === 'viewVisible') {
+            if (typeof input.visible !== 'boolean') throw new TypeError('visible must be a boolean')
+            session.view?.visible(input.visible)
+          } else {
+            for (const key of ['x', 'y', 'width', 'height'] as const) if (typeof input[key] !== 'number' || !Number.isFinite(input[key]) || Math.abs(input[key] as number) > 100000 || ((key === 'width' || key === 'height') && (input[key] as number) < 0)) throw new TypeError('Invalid plugin view bounds')
+            session.view?.bounds(input as unknown as PluginViewBounds)
+          }
           return
         }
         if (method === 'invokeCapability') {
@@ -296,9 +346,10 @@ export function marketPlugin(options: MarketOptions) {
             const replacement = { catalog: entry, enabled: old?.enabled ?? true, file }
             try {
               await atomicFile(path, bytes)
-              if (old) revoke(id)
+              if (old) await revoke(id)
               await save([...current.plugins.filter(record => record.catalog.id !== id), replacement])
             } catch (error) { await rm(path, { force: true }); throw error }
+            await syncCommands(await load())
             if (old) await rm(join(options.directory, old.file), { force: true })
             return (await listInstalled(await load())).find(record => record.id === id)
           })
@@ -308,33 +359,62 @@ export function marketPlugin(options: MarketOptions) {
           const old = current.plugins.find(record => record.catalog.id === id)
           if (!old) throw new Error(`Plugin is not installed: ${id}`)
           if (method === 'uninstall') {
-            revoke(id)
+            await revoke(id)
             await save(current.plugins.filter(record => record.catalog.id !== id))
+            await syncCommands(await load())
             await rm(join(options.directory, old.file), { force: true })
             return
           }
           if (method === 'setEnabled') {
             if (typeof input.enabled !== 'boolean') throw new TypeError('enabled must be a boolean')
-            if (!input.enabled) revoke(id)
+            if (!input.enabled) await revoke(id)
             const replacement = { ...old, enabled: input.enabled }
             await save(current.plugins.map(record => record.catalog.id === id ? replacement : record))
+            await syncCommands(await load())
             return (await listInstalled(await load())).find(record => record.id === id)
           }
           if (!old.enabled) throw new Error(`Plugin is disabled: ${id}`)
           const verified = await verifyInstalled(old)
           const providers = await requiredProviders(verified.manifest, current)
-          const html = renderPackage(verified)
+          const requestedCommand = input.commandId
+          if (requestedCommand !== undefined && (typeof requestedCommand !== 'string' || !(verified.manifest.commands?.length ? verified.manifest.commands : [{ id: 'open' }]).some(command => commandId(id, command.id) === requestedCommand))) throw new Error('Plugin command is not declared by this package')
+          const session = randomUUID()
+          const html = renderPackage(verified, { session, commandId: requestedCommand as string | undefined })
           active()
           const errors = authenticationErrors(verified.manifest, providers)
           if (errors.length) throw new Error(`Plugin dependencies are unavailable: ${errors.join('; ')}`)
-          const session = randomUUID()
-          sessions.set(session, { consumerId: id, providers: new Set(providers.map(provider => provider.id)), controller: new AbortController() })
-          return { id, name: old.catalog.name, html, session } satisfies OpenPlugin
+          const controller = new AbortController()
+          const fiber = ctx.plugin({
+            name: `market-session-${session}`,
+            async apply(owner: Context) {
+              owner.effect(() => () => {
+                controller.abort(new Error('Plugin capability session closed'))
+                sessions.delete(session)
+              }, 'plugin capability session')
+              const view = await ctx.get('desktop')?.openPluginView?.(owner, {
+                session, html,
+                // 能力会话由宿主绑定，包内参数不能覆盖 session 或选择任意端点。
+                invoke: async (method, args) => {
+                  if (controller.signal.aborted) throw new Error('Plugin capability session closed')
+                  const result = await run(method, method === 'runtimeSummary' ? null : { ...object(args), session })
+                  controller.signal.throwIfAborted()
+                  return result
+                },
+                closed: () => { void fiber.dispose() },
+              })
+              const current = sessions.get(session)
+              if (current) current.view = view
+            },
+          })
+          sessions.set(session, { consumerId: id, providers: new Set(providers.map(provider => provider.id)), controller, fiber })
+          try { await fiber.await() } catch (error) { await fiber.dispose(); throw error }
+          return { id, name: old.catalog.name, html, session, commandId: requestedCommand as string | undefined } satisfies OpenPlugin
         })
       }
       ctx.pluginEndpoints.register(ctx, 'plugin-market', run)
+      await syncCommands(await load())
       ctx.commands.register(ctx, {
-        id: 'plugin-market.open', title: '插件市场', description: '发现、安装和管理 NextTools 插件', icon: 'store', keywords: ['plugins', 'market', '插件', '市场', 'chajian'],
+        id: 'plugin-market.open', pluginId: 'plugin-market', title: '插件市场', description: '发现、安装和管理 NextTools 插件', icon: 'store', keywords: ['plugins', 'market', '插件', '市场', 'chajian'],
       }, () => ({ navigate: 'plugin-market' }))
     },
   }

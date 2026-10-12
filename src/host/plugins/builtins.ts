@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Page } from '../../shared/contracts'
 
 function navigation(ctx: Context, id: string, title: string, description: string, icon: string, page: Page, keywords: string[]) {
-  ctx.commands.register(ctx, { id, title, description, icon, keywords }, () => ({ navigate: page }))
+  ctx.commands.register(ctx, { id, title, description, icon, keywords, pluginId: id.split('.')[0] }, () => ({ navigate: page }))
 }
 export const settingsPlugin = {
   name: 'settings', inject: ['commands'],

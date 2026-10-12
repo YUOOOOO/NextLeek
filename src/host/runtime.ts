@@ -1,54 +1,23 @@
-import { Context, type Fiber, type Plugin } from '@deepseek-ai/cordis'
-import { dirname, join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import packageMetadata from '../../package.json'
 import type { CommandResult, PluginInfo, Settings, Snapshot, LauncherSearchRequest } from '../shared/contracts'
 import { settingsPatch, identifier, boolean, launcherSearchRequest, searchItemId } from '../shared/validation'
 import type { DesktopService } from './services/contracts'
-import { storagePlugin } from './services/storage'
-import { commandsPlugin } from './services/commands'
-import { searchPlugin } from './services/search'
-import { settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
-import { everythingPlugin, type EverythingEnvironment } from './services/everything'
-import { applicationsPlugin, type ApplicationsEnvironment } from './services/applications'
-import { pluginEndpointsPlugin } from './services/plugin-endpoints'
-import { marketPlugin } from '../../plugins/plugin-market/host'
+import type { EverythingEnvironment } from './services/everything'
+import type { ApplicationsEnvironment } from './services/applications'
+import { commandAccelerator } from './plugins/command-shortcuts'
+import { composePlugins } from './composition'
+import type { InstalledPlugin } from '../../plugins/plugin-market/shared'
 
-interface PluginEntry {
-  id: string
-  name: string
-  protected: boolean
-  plugin: Plugin
-  fiber?: Fiber
-}
 const statuses = ['pending', 'loading', 'active', 'failed', 'disposed', 'unloading'] as const
 
-function builtInSearchPlugin(environment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment) {
-  return {
-    name: 'builtin-search', inject: ['search'],
-    async apply(ctx: Context) {
-      await ctx.plugin(everythingPlugin(environment)).await()
-      await ctx.plugin(everythingSearchPlugin).await()
-      if (applicationsEnvironment) await ctx.plugin(applicationsPlugin(applicationsEnvironment)).await()
-    },
-  }
-}
 export interface RuntimeOptions { version?: string }
 
 
 export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment, options: RuntimeOptions = {}) {
   const ctx = new Context()
   const version = options.version ?? packageMetadata.version
-  const entries: PluginEntry[] = [
-    { id: 'storage', name: 'LMDB 存储', protected: true, plugin: storagePlugin(path) },
-    { id: 'commands', name: '命令注册表', protected: true, plugin: commandsPlugin },
-    { id: 'plugin-endpoints', name: '插件端点注册表', protected: true, plugin: pluginEndpointsPlugin },
-    { id: 'search', name: '搜索提供者注册表', protected: true, plugin: searchPlugin },
-    { id: 'desktop', name: 'Electron 桌面宿主', protected: true, plugin: { name: 'desktop', apply(scope: Context) { scope.provide('desktop', desktop) } } },
-    { id: 'settings', name: '设置', protected: true, plugin: settingsPlugin },
-    { id: 'theme', name: '主题', protected: true, plugin: themePlugin },
-    { id: 'builtin-search', name: '搜索', protected: true, plugin: builtInSearchPlugin(everythingEnvironment, applicationsEnvironment) },
-    { id: 'plugin-market', name: '插件市场', protected: true, plugin: marketPlugin({ directory: join(dirname(path), 'plugins'), version }) },
-  ]
+  const entries = await composePlugins({ path, version, desktop, everything: everythingEnvironment, applications: applicationsEnvironment, executeCommand })
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
   async function release() {
@@ -60,6 +29,17 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     const next = pending.then(task)
     pending = next.catch(() => {})
     return next
+  }
+  // 市场包与可信部署插件共用界面入口，不共享能力权限或安装方式。
+  async function invokeEndpoint(pluginId: string, method: string, args: unknown): Promise<unknown> {
+    const clients = ctx.get('clientModules')
+    if (pluginId === 'plugin-market' && clients && args && typeof args === 'object') {
+      const input = args as Record<string, unknown>
+      if ((method === 'open' && typeof input.id === 'string' && clients.has(input.id)) || (typeof input.session === 'string' && clients.ownsSession(input.session))) return clients.invoke(method, input)
+    }
+    const result = await ctx.get('pluginEndpoints')!.invoke(pluginId, method, args)
+    if (pluginId === 'plugin-market' && method === 'installed' && clients) return [...result as InstalledPlugin[], ...clients.list()]
+    return result
   }
   function snapshot(): Snapshot {
     const state = ctx.get('storage')!.read()
@@ -75,10 +55,21 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     desktop.emit({ type: 'snapshot', snapshot: value })
     return value
   }
+  // 所有执行入口共享最近使用记录；端点内部调用不能再次进入运行时串行队列。
+  async function executeCommand(id: string): Promise<CommandResult> {
+    identifier(id)
+    const result = await ctx.get('commands')!.run(id)
+    const storage = ctx.get('storage')!
+    const state = storage.read()
+    storage.write({ ...state, recent: [id, ...state.recent.filter(item => item !== id)].slice(0, 50) })
+    notify()
+    if (result.navigate) desktop.emit({ type: 'navigate', page: result.navigate })
+    return result
+  }
   try {
     for (const entry of entries) {
       if (!entry.protected && ctx.get('storage')!.read().enabled[entry.id] === false) continue
-      entry.fiber = ctx.plugin(entry.plugin, undefined)
+      entry.fiber = ctx.plugin(entry.plugin, entry.config)
       await entry.fiber.await()
       if (entry.id === 'storage') {
         const storage = ctx.get('storage')!
@@ -92,6 +83,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
         }
       }
     }
+    ctx.get('commands')!.subscribe(ctx, () => { if (!disposed) desktop.emit({ type: 'commands-changed' }) })
     await desktop.applySettings(ctx.get('storage')!.read().settings)
   } catch (error) {
     await release()
@@ -104,11 +96,11 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     invokePlugin(pluginId: string, method: string, args: unknown) {
       // Data requests must not hold the mutation queue: disabling their provider
       // needs to reach the market immediately so it can abort in-flight work.
-      if (pluginId === 'plugin-market' && (method === 'invokeCapability' || method === 'configureSource' || method === 'close')) {
+      if (pluginId === 'plugin-market' && ['invokeCapability', 'configureSource', 'close', 'viewBounds', 'viewVisible'].includes(method)) {
         if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
-        return ctx.get('pluginEndpoints')!.invoke(pluginId, method, args)
+        return invokeEndpoint(pluginId, method, args)
       }
-      return serialize(() => ctx.get('pluginEndpoints')!.invoke(pluginId, method, args))
+      return serialize(() => invokeEndpoint(pluginId, method, args))
     },
     searchLauncher(request: LauncherSearchRequest) {
       const validated = launcherSearchRequest(request)
@@ -124,6 +116,11 @@ export async function createRuntime(path: string, desktop: DesktopService, every
         const storage = ctx.get('storage')!
         const state = storage.read()
         const next = { ...state.settings, ...validated }
+        if (validated.hotkey !== undefined) {
+          const wake = commandAccelerator(next.hotkey)
+          const conflict = storage.readShortcuts().find(item => commandAccelerator(item.global) === wake || commandAccelerator(item.application) === wake)
+          if (conflict) throw new Error(`唤醒快捷键已绑定命令 ${conflict.commandId}，请先清除命令快捷键`)
+        }
         await desktop.applySettings(next, state.settings)
         try { storage.write({ ...state, settings: next }) }
         catch (error) { await desktop.applySettings(state.settings, next); throw error }
@@ -132,15 +129,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     },
     runCommand(id: string): Promise<CommandResult> {
       identifier(id)
-      return serialize(async () => {
-        const result = await ctx.get('commands')!.run(id)
-        const storage = ctx.get('storage')!
-        const state = storage.read()
-        storage.write({ ...state, recent: [id, ...state.recent.filter(item => item !== id)].slice(0, 50) })
-        notify()
-        if (result.navigate) desktop.emit({ type: 'navigate', page: result.navigate })
-        return result
-      })
+      return serialize(() => executeCommand(id))
     },
     setPinned(id: string, pinned: boolean) {
       identifier(id); boolean(pinned)
@@ -163,7 +152,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
         const storage = ctx.get('storage')!
         const state = storage.read()
         if (enabled && !entry.fiber) {
-          const fiber = ctx.plugin(entry.plugin, undefined)
+          const fiber = ctx.plugin(entry.plugin, entry.config)
           try { await fiber.await() } catch (error) { await fiber.dispose(); throw error }
           entry.fiber = fiber
         } else if (!enabled && entry.fiber) {
@@ -173,7 +162,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
         try { storage.write({ ...state, enabled: { ...state.enabled, [id]: enabled } }) }
         catch (error) {
           if (enabled && entry.fiber) { await entry.fiber.dispose(); entry.fiber = undefined }
-          if (!enabled && !entry.fiber) { entry.fiber = ctx.plugin(entry.plugin, undefined); await entry.fiber.await() }
+          if (!enabled && !entry.fiber) { entry.fiber = ctx.plugin(entry.plugin, entry.config); await entry.fiber.await() }
           throw error
         }
         return notify()

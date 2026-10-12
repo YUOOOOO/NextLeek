@@ -1,11 +1,20 @@
 {
   "name": "nexttools",
-  "version": "4.0.19",
+  "version": "4.0.20",
   "description": "Cordis-powered desktop command launcher",
   "author": "NextTools Contributors",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "exports": {
+    ".": "./out/main/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  },
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=24 <25"
@@ -27,10 +36,13 @@
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.4",
     "electron-updater": "6.8.9",
+    "esbuild": "0.25.12",
     "fflate": "^0.8.3",
     "lmdb": "3.4.2",
     "pinia": "3.0.3",
-    "vue": "3.5.43"
+    "semver": "7.7.3",
+    "vue": "3.5.43",
+    "yaml": "2.8.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

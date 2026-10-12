@@ -5,7 +5,7 @@ import { useDesktopStore } from '../src/client/store'
 import { defaultSettings } from '../src/shared/validation'
 import type { DesktopAPI, DesktopEvent, LauncherSearchGroup, LauncherSearchItem, LauncherSearchRequest, Snapshot } from '../src/shared/contracts'
 
-test('show clears launcher query while settings hide and escHide native close retain page and query', async () => {
+test('show and native close preserve page and query independently of escHide', async () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   let receive: ((event: DesktopEvent) => void) | undefined
   let hideFails = false
@@ -34,7 +34,7 @@ test('show clears launcher query while settings hide and escHide native close re
     store.navigate('launcher')
     store.query = '设置'
     receive!({ type: 'shown' })
-    assert.equal(store.query, '')
+    assert.equal(store.query, '设置')
     assert.equal(store.focusRequest, 2)
     store.navigate('settings')
     store.query = '设置'
@@ -46,11 +46,14 @@ test('show clears launcher query while settings hide and escHide native close re
     await store.hide()
     assert.equal(store.page, 'settings')
     assert.equal(store.query, '设置')
+    const closeHides = hides
     receive!({ type: 'close-request' })
-    assert.equal(store.page, 'launcher')
-    assert.equal(store.query, '')
+    await settle()
+    assert.equal(hides, closeHides + 1)
+    assert.equal(store.page, 'settings')
+    assert.equal(store.query, '设置')
     receive!({ type: 'shown' })
-    assert.equal(store.page, 'launcher')
+    assert.equal(store.page, 'settings')
     assert.deepEqual(store.recentCommands.map(command => command.id), ['settings.open'])
     assert.deepEqual(store.pinnedCommands.map(command => command.id), ['settings.open'])
     await store.setLauncherHeight(81)
@@ -68,6 +71,22 @@ test('show clears launcher query while settings hide and escHide native close re
     receive!({ type: 'shown' })
     assert.equal(store.page, 'settings')
     assert.equal(store.query, '保留设置查询')
+    for (const escHide of [false, true]) {
+      snapshot.settings.escHide = escHide
+      for (const page of ['launcher', 'settings', 'plugins', 'plugin-market'] as const) {
+        store.navigate(page)
+        store.query = `保留-${page}`
+        const priorHides = hides
+        receive!({ type: 'close-request' })
+        await settle()
+        assert.equal(hides, priorHides + 1)
+        assert.equal(store.page, page)
+        assert.equal(store.query, `保留-${page}`)
+        receive!({ type: 'shown' })
+        assert.equal(store.page, page)
+        assert.equal(store.query, `保留-${page}`)
+      }
+    }
   } finally {
     store.dispose()
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
@@ -80,7 +99,6 @@ function searchGroup(name: string, offset = 0, hasMore = false): LauncherSearchG
   return { providerId: 'files', title: '本地文件', status: 'ready', items: [item], total: 2, offset, hasMore }
 }
 async function searchHarness(t: TestContext, overrides: Partial<DesktopAPI> = {}) {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   const calls: LauncherSearchRequest[] = []
   const pending: Array<{ resolve: (groups: LauncherSearchGroup[]) => void; reject: (cause: Error) => void }> = []
@@ -106,62 +124,79 @@ async function searchHarness(t: TestContext, overrides: Partial<DesktopAPI> = {}
 }
 async function settle() { await Promise.resolve(); await Promise.resolve() }
 
-test('launcher search debounces exact queries and excludes empty, composing, and disposed requests', async t => {
+test('committed incremental input searches immediately while IME waits for composition end', async t => {
   const { store, calls, pending } = await searchHarness(t)
-  t.mock.timers.tick(500)
   assert.equal(calls.length, 0)
   store.query = '  '
-  t.mock.timers.tick(500)
   assert.equal(calls.length, 0)
+  store.query = 'f'
+  assert.deepEqual(calls, [{ query: 'f', offset: 0, limit: 30 }])
   store.query = 'first'
-  t.mock.timers.tick(100)
   store.query = 'ext:txt "报告 2026"'
-  t.mock.timers.tick(149)
-  assert.equal(calls.length, 0)
-  t.mock.timers.tick(1)
-  assert.deepEqual(calls, [{ query: 'ext:txt "报告 2026"', offset: 0, limit: 30 }])
+  assert.deepEqual(calls.map(call => call.query), ['f', 'first', 'ext:txt "报告 2026"'])
+  pending[2]!.resolve([searchGroup('committed')])
+  await settle()
   store.setSearchComposing(true)
+  store.query = '中'
   store.query = '中文'
-  pending[0]!.resolve([searchGroup('stale')])
   await settle()
-  t.mock.timers.tick(500)
-  assert.equal(calls.length, 1)
-  assert.deepEqual(store.searchGroups, [])
+  assert.equal(calls.length, 3)
+  assert.equal(store.searchGroups[0]!.items[0]!.name, 'committed')
   store.setSearchComposing(false)
-  t.mock.timers.tick(150)
-  assert.equal(calls[1]!.query, '中文')
+  assert.equal(calls[3]!.query, '中文')
   store.query = ''
-  pending[1]!.resolve([searchGroup('cleared')])
+  pending[3]!.resolve([searchGroup('cleared')])
   await settle()
   assert.deepEqual(store.searchGroups, [])
-  store.query = 'disposed'
   store.dispose()
-  t.mock.timers.tick(500)
-  assert.equal(calls.length, 2)
+  store.query = 'disposed'
+  assert.equal(calls.length, 4)
 })
 
-test('launcher search ignores superseded replies and resets on show and navigation', async t => {
-  const { store, pending, receive } = await searchHarness(t)
+test('search clears obsolete query results, rejects stale replies and preserves current results on show and native close', async t => {
+  let hides = 0
+  const { store, calls, pending, receive } = await searchHarness(t, { async hide() { hides++ } })
   store.query = 'first'
-  t.mock.timers.tick(150)
-  store.query = 'second'
-  t.mock.timers.tick(150)
-  pending[1]!.resolve([searchGroup('current')])
+  pending[0]!.resolve([searchGroup('first result')])
   await settle()
-  pending[0]!.reject(new Error('obsolete failure'))
+  store.query = 'second'
+  assert.equal(store.searchLoading, true)
+  assert.equal(store.searchGroups.length, 0)
+  receive({ type: 'shown' })
+  assert.equal(store.query, 'second')
+  assert.equal(store.searchLoading, true)
+  assert.equal(calls.length, 2)
+  assert.equal(store.searchGroups.length, 0)
+  store.query = 'third'
+  pending[2]!.resolve([searchGroup('current')])
+  await settle()
+  pending[1]!.reject(new Error('obsolete failure'))
   await settle()
   assert.equal(store.searchGroups[0]!.items[0]!.name, 'current')
   assert.equal(store.searchError, '')
-  receive({ type: 'shown' })
-  assert.equal(store.query, '')
-  assert.deepEqual(store.searchGroups, [])
-  store.query = 'third'
-  t.mock.timers.tick(150)
-  store.navigate('settings')
-  pending[2]!.resolve([searchGroup('inactive')])
+  receive({ type: 'close-request' })
   await settle()
-  assert.deepEqual(store.searchGroups, [])
+  assert.equal(hides, 1)
+  assert.equal(store.page, 'launcher')
+  assert.equal(store.query, 'third')
+  assert.equal(store.searchGroups[0]!.items[0]!.name, 'current')
+  receive({ type: 'shown' })
+  assert.equal(store.query, 'third')
+  assert.equal(store.searchGroups[0]!.items[0]!.name, 'current')
+  assert.equal(calls.length, 3)
+  store.query = 'fourth'
+  store.setSearchComposing(true)
+  store.query = '未提交'
+  pending[3]!.resolve([searchGroup('obsolete composition result')])
+  await settle()
+  assert.equal(store.searchGroups.length, 0)
+  store.setSearchComposing(false)
+  assert.equal(calls[4]!.query, '未提交')
+  store.navigate('settings')
+  pending[4]!.resolve([searchGroup('inactive')])
+  await settle()
   assert.equal(store.searchLoading, false)
+  assert.ok(!store.searchGroups.some(group => group.items.some(item => item.name === 'inactive')))
 })
 
 test('generic provider statuses, pagination, host-authorized result actions and feedback remain scoped to current query', async t => {
@@ -171,7 +206,7 @@ test('generic provider statuses, pagination, host-authorized result actions and 
     performSearchAction(providerId, itemId, action) { actions.push([providerId, itemId, action]); return new Promise(resolve => { completeAction = resolve }) },
   })
   store.query = 'report'
-  t.mock.timers.tick(150)
+  assert.equal(calls[0]!.query, 'report')
   pending[0]!.resolve([{ providerId: 'offline', title: '其他搜索', status: 'unavailable', message: '提供者尚未就绪', items: [], total: 0, offset: 0, hasMore: false }, searchGroup('one', 0, true)])
   await settle()
   assert.equal(store.searchGroups[0]!.message, '提供者尚未就绪')

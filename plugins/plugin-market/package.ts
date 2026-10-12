@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { posix } from 'node:path'
 import { unzipSync } from 'fflate'
-import type { MarketEntry, MarketManifest } from './shared'
+import type { MarketCommandDeclaration, MarketEntry, MarketManifest } from './shared'
 import { compareVersions, validateDeclarations, validateVersion } from './capabilities'
 
 export const CATALOG_URL = 'https://raw.githubusercontent.com/YUOOOOO/NextLeek-Plugins/main/index.json'
@@ -42,12 +42,26 @@ export function marketEntry(value: unknown): MarketEntry {
   const entry = object(value)
   const sha256 = text(entry.sha256, 'SHA-256', 64)
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new TypeError('Invalid SHA-256')
-  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry) }
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), commands: commandDeclarations(entry.commands), }
+}
+function commandDeclarations(value: unknown): MarketCommandDeclaration[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > 64) throw new TypeError('Invalid commands')
+  const ids = new Set<string>()
+  return value.map(item => {
+    const command = object(item)
+    const id = text(command.id, 'command id', 80)
+    if (!/^[a-z][a-z0-9.-]{0,79}$/.test(id) || ids.has(id)) throw new TypeError('Invalid or duplicate command id')
+    ids.add(id)
+    const keywords = command.keywords
+    if (!Array.isArray(keywords) || keywords.length > 32 || keywords.some(keyword => typeof keyword !== 'string' || keyword.length > 80)) throw new TypeError('Invalid command keywords')
+    return { id, title: text(command.title, 'command title', 128), description: command.description === undefined ? undefined : text(command.description, 'command description'), keywords: [...keywords] }
+  })
 }
 function manifest(value: unknown): MarketManifest {
   const entry = object(value)
   if (entry.capabilities !== undefined && (!Array.isArray(entry.capabilities) || entry.capabilities.length)) throw new Error('Unsupported plugin capabilities')
-  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), entry: text(entry.entry, 'entry', 512) }
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), commands: commandDeclarations(entry.commands), entry: text(entry.entry, 'entry', 512) }
 }
 export function parseCatalog(bytes: Uint8Array): MarketEntry[] {
   const data = object(JSON.parse(utf8.decode(bytes)))
@@ -117,14 +131,15 @@ export function verifyPackage(bytes: Uint8Array, catalog: MarketEntry, creatorVe
   for (const key of ['id', 'name', 'version', 'description', 'author', 'minCreatorVersion'] as const) if (parsedManifest[key] !== catalog[key]) throw new Error(`Plugin manifest ${key} does not match marketplace index`)
   const catalogDeclarations = validateDeclarations(catalog)
   if (declarationFingerprint(parsedManifest.dataSources ?? []) !== declarationFingerprint(catalogDeclarations.dataSources ?? []) || declarationFingerprint(parsedManifest.requires ?? []) !== declarationFingerprint(catalogDeclarations.requires ?? [])) throw new Error('Plugin manifest declarations do not match marketplace index')
+  if (catalog.commands !== undefined && declarationFingerprint(parsedManifest.commands ?? []) !== declarationFingerprint(commandDeclarations(catalog.commands) ?? [])) throw new Error('Plugin commands do not match marketplace index')
   const entry = parsedManifest.entry; safePath(entry)
   if (!entry.endsWith('.html') || !files[entry]) throw new Error('Only existing static HTML plugin entries are supported')
   return { entry, files, manifest: parsedManifest }
 }
 const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf' }
-const bridge = `(()=>{let serial=0;const pending=new Map();window.addEventListener('message',event=>{const data=event.data;if(event.source!==parent||!data||data.type!=='nextleek:runtime-response'||typeof data.id!=='string')return;const item=pending.get(data.id);if(!item)return;pending.delete(data.id);clearTimeout(item.timer);data.error?item.reject(new Error(String(data.error))):item.resolve(data.result)});function request(method,args,timeout){return new Promise((resolve,reject)=>{if(pending.size>=64){reject(new Error('Too many pending runtime requests'));return}const id='runtime-'+(++serial);const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Runtime request timed out'))},timeout);pending.set(id,{resolve,reject,timer});try{parent.postMessage({type:'nextleek:runtime-request',id,method,args},'*')}catch(error){pending.delete(id);clearTimeout(timer);reject(error)}})}window.nextleek=Object.freeze({runtimeSummary:()=>request('runtimeSummary',undefined,5000),invokeCapability:(sourcePluginId,sourceId,method,args={})=>request('invokeCapability',{sourcePluginId,sourceId,method,args},25000)})})();`
 function escapeScript(source: string): string { return source.replace(/<\/script/gi, '<\\/script') }
-export function renderPackage(pkg: VerifiedPackage): string {
+export function renderPackage(pkg: VerifiedPackage, context?: { commandId?: string; session: string }): string {
+  const nonce = randomBytes(18).toString('base64url')
   function resource(reference: string, origin: string): string {
     if (/[\x00-\x20\\]/.test(reference) || /^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(reference) || reference.includes('?') || reference.includes('#')) throw new Error(`Only local package assets are supported: ${reference}`)
     const path = posix.normalize(posix.join(posix.dirname(origin), reference)); safePath(path)
@@ -151,7 +166,7 @@ export function renderPackage(pkg: VerifiedPackage): string {
     if (/\btype\s*=\s*['"]?module/i.test(attrs)) throw new Error('Module scripts must be bundled to a classic script')
     const source = /\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs)
     if (source) { const path = resource(source[1] ?? source[2] ?? source[3]!, pkg.entry); if (!path.endsWith('.js')) throw new Error('Invalid script asset'); body = utf8.decode(pkg.files[path]!) }
-    return slot(`<script>${escapeScript(body)}</script>`)
+    return slot(`<script nonce="${nonce}">${escapeScript(body)}</script>`)
   })
   html = html.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (_all, source: string) => slot(`<style>${css(source, pkg.entry).replace(/<\/style/gi, '<\\/style')}</style>`))
   html = html.replace(/<link\b([^>]*)>/gi, (_all, attrs: string) => {
@@ -169,8 +184,9 @@ export function renderPackage(pkg: VerifiedPackage): string {
   html = html.replace(/\s+on[a-z][a-z0-9_-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
   html = html.replace(/\s+(?:href|action|formaction|cite|ping)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
   html = html.replace(/<!--NEXTLEEK_VERIFIED_ASSET_(\d+)-->/g, (_all, index: string) => slots[Number(index)]!)
-  const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'"
-  const prefix = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><script>${bridge}document.addEventListener('click',event=>{if(event.target.closest?.('a'))event.preventDefault()},true);document.addEventListener('submit',event=>event.preventDefault(),true);</script>`
-  if (/<head\b[^>]*>/i.test(html)) return html.replace(/<head\b[^>]*>/i, match => match + prefix)
-  return `<!doctype html><html><head>${prefix}</head><body>${html}</body></html>`
+  const policy = `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; navigate-to 'none'`
+  const prefix = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><script nonce="${nonce}">document.addEventListener('click',event=>{if(event.target.closest?.('a'))event.preventDefault()},true);document.addEventListener('submit',event=>event.preventDefault(),true);</script>`
+  const contextScript = `<script nonce="${nonce}">window.nextleekCommandId=${JSON.stringify(context?.commandId ?? null).replace(/</g, '\\u003c')};</script>`
+  if (/<head\b[^>]*>/i.test(html)) return html.replace(/<head\b[^>]*>/i, match => match + prefix + contextScript)
+  return `<!doctype html><html><head>${prefix}${contextScript}</head><body>${html}</body></html>`
 }

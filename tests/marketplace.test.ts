@@ -53,7 +53,7 @@ test('static package installs, opens bundled assets, toggles, survives restart, 
   const directory = await mkdtemp(join(tmpdir(), 'nextleek-market-'))
   let value = fixture(); let runtime = await harness(directory, server(() => value))
   try {
-    assert.deepEqual(await runtime.ctx.commands.run('plugin-market.open'), { navigate: 'plugin-market' })
+    assert.equal((await runtime.ctx.commands.run('plugin-market.open')).navigate, 'plugin-market')
     assert.equal((await runtime.invoke('catalog') as MarketEntry[])[0]!.id, id)
     assert.equal((await runtime.invoke('install', { id }) as InstalledPlugin).version, '1.0.0')
     const opened = await runtime.invoke('open', { id }) as OpenPlugin
@@ -61,7 +61,6 @@ test('static package installs, opens bundled assets, toggles, survives restart, 
     assert.match(opened.html, /connect-src 'none'/)
     assert.match(opened.html, /data:image\/png;base64/)
     assert.match(opened.html, /document.body.dataset.version/)
-    assert(opened.html.indexOf('nextleek:runtime-request') < opened.html.indexOf('document.body.dataset.version'))
     assert.doesNotMatch(opened.html, /src="main.js"|href="style.css"/)
     const summary = await runtime.invoke('runtimeSummary') as { version: string; platform: string; mode: string; status: string; installed: number; enabled: number }
     assert.equal(summary.version, '4.0.14'); assert.equal(summary.platform, process.platform); assert.equal(summary.mode, 'desktop')

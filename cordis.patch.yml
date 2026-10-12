@@ -1,0 +1,49 @@
+- insert:
+    - id: storage
+      name: nexttools/storage
+      label: LMDB 存储
+      protected: true
+    - id: commands
+      name: nexttools/commands
+      label: 命令注册表
+      protected: true
+    - id: plugin-endpoints
+      name: nexttools/plugin-endpoints
+      label: 插件端点注册表
+      protected: true
+    - id: search
+      name: nexttools/search
+      label: 搜索提供者注册表
+      protected: true
+    - id: desktop
+      name: nexttools/desktop
+      label: Electron 桌面宿主
+      protected: true
+    - id: contributions
+      name: nexttools/contributions
+      label: 工具与技能注册表
+      protected: true
+    - id: client-modules
+      name: nexttools/client-modules
+      label: 双面插件界面
+      protected: true
+    - id: settings
+      name: nexttools/settings
+      label: 设置
+      protected: true
+    - id: theme
+      name: nexttools/theme
+      label: 主题
+      protected: true
+    - id: builtin-search
+      name: nexttools/builtin-search
+      label: 搜索
+      protected: true
+    - id: plugin-market
+      name: nexttools/plugin-market
+      label: 插件市场
+      protected: true
+    - id: command-shortcuts
+      name: nexttools/command-shortcuts
+      label: 命令快捷键
+      protected: true

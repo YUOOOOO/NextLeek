@@ -26,6 +26,12 @@ export interface CapabilityRequirement {
   methods: string[]
 }
 
+export interface MarketCommandDeclaration {
+  id: string
+  title: string
+  description?: string
+  keywords: string[]
+}
 export interface MarketManifest {
   id: string
   name: string
@@ -37,6 +43,7 @@ export interface MarketManifest {
   capabilities?: string[]
   dataSources?: DataSourceDeclaration[]
   requires?: CapabilityRequirement[]
+  commands?: MarketCommandDeclaration[]
   entry: string
 }
 
@@ -52,6 +59,7 @@ export interface MarketEntry {
   permissions: string[]
   dataSources?: DataSourceDeclaration[]
   requires?: CapabilityRequirement[]
+  commands?: MarketCommandDeclaration[]
 }
 
 export interface InstalledPlugin {
@@ -61,11 +69,14 @@ export interface InstalledPlugin {
   description: string
   author: string
   enabled: boolean
+  deploymentManaged?: boolean
   dependencyErrors?: string[]
   dataSources?: DataSourceDeclaration[]
   requires?: CapabilityRequirement[]
+  commands?: MarketCommandDeclaration[]
   authenticatedSources?: string[]
 }
 
-export interface OpenPlugin { id: string; name: string; html: string; session: string }
+// html 仅保留宿主静态验证合同；客户端必须用 session 定位原生视图，不执行该文档。
+export interface OpenPlugin { id: string; name: string; html: string; session: string; commandId?: string }
 export interface MarketRuntimeSummary { version: string; platform: string; mode: 'desktop'; status: 'ready'; installed: number; enabled: number }

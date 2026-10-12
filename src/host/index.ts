@@ -6,11 +6,13 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { channels, type DesktopEvent, type Settings } from '../shared/contracts'
+import type { CommandResult } from '../shared/contracts'
 import { argumentsCount, boolean, identifier, settingsPatch, launcherSearchRequest, searchItemId } from '../shared/validation'
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
 import { createUpdater, type OnlineUpdater } from './updater'
 import { getApplicationIcon } from './services/application-icons'
+import { createPluginViewAdapter } from './services/plugin-views'
 
 
 function trayImage(directory: string) {
@@ -38,7 +40,7 @@ async function start() {
   const frameNonce = randomBytes(18).toString('base64url')
   const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
   const window = new BrowserWindow({
-    width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
+    width: 980, height: 82, minWidth: 680, minHeight: 64, show: false, skipTaskbar: true, alwaysOnTop: true,
     title: 'NextTools', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
     icon: join(iconDirectory, process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
@@ -56,8 +58,39 @@ async function start() {
   let currentHotkey: string | undefined
   let hotkeyCapture = false
   let captureAltSpace = false
+  const commandShortcuts = new Map<string, { commandId: string; callback: () => void }>()
   let layoutBounds = window.getBounds()
   let launcherCenterY = layoutBounds.y + layoutBounds.height / 2
+  let dragTimer: NodeJS.Timeout | undefined
+  let releaseDragTimer: (() => void) | undefined
+  const endWindowDrag = () => {
+    if (dragTimer === undefined) return
+    releaseDragTimer?.()
+    releaseDragTimer = undefined
+    dragTimer = undefined
+  }
+  const startWindowDrag = () => {
+    if (dragTimer !== undefined || window.isDestroyed() || !window.isVisible() || !window.isFocused()) return
+    // Electron cursor and window positions use DIP; do not mix in renderer pixels or display scale factors.
+    const cursor = screen.getCursorScreenPoint()
+    const [startX, startY] = window.getPosition()
+    let lastX = cursor.x
+    let lastY = cursor.y
+    releaseDragTimer = runtime!.ctx.effect(() => {
+      dragTimer = setInterval(() => {
+      if (window.isDestroyed() || view.webContents.isDestroyed() || !window.isVisible() || !window.isFocused()) {
+        endWindowDrag()
+        return
+      }
+      const next = screen.getCursorScreenPoint()
+      if (next.x === lastX && next.y === lastY) return
+      window.setPosition(startX + next.x - cursor.x, startY + next.y - cursor.y, false)
+      lastX = next.x
+      lastY = next.y
+    }, 16)
+      return () => { clearInterval(dragTimer); dragTimer = undefined }
+    }, 'Window input drag timer')
+  }
   const setLauncherHeight = (height: number) => {
     if (!Number.isFinite(height) || height < 0) throw new TypeError('Invalid launcher height')
     if (window.isDestroyed()) return
@@ -87,6 +120,7 @@ async function start() {
     hotkeyCapture = active
     if (active) {
       if (currentHotkey) globalShortcut.unregister(currentHotkey)
+      for (const accelerator of commandShortcuts.keys()) globalShortcut.unregister(accelerator)
       if (process.platform === 'win32') {
         captureAltSpace = globalShortcut.register('Alt+Space', () => {
           if (hotkeyCapture && window.isFocused()) emit({ type: 'hotkey', value: 'Alt+Space' })
@@ -101,12 +135,39 @@ async function start() {
       if (currentHotkey && !globalShortcut.isRegistered(currentHotkey) && !globalShortcut.register(currentHotkey, toggle)) {
         console.error(`Unable to restore global shortcut: ${currentHotkey}`)
       }
+      for (const [accelerator, binding] of commandShortcuts) {
+        if (!globalShortcut.register(accelerator, binding.callback)) throw new Error(`无法恢复插件快捷键：${accelerator}`)
+      }
     }
   }
   const desktop: DesktopService = {
     emit,
+    openPluginView: createPluginViewAdapter(window, join(here, '../preload/plugin-sandbox.cjs'), emit, async accelerator => {
+      if (!runtime || hotkeyCapture) return null
+      return await runtime.invokePlugin('command-shortcuts', 'dispatch', { accelerator }) as CommandResult | null
+    }),
     hide: () => window.hide(),
     quit: () => app.quit(),
+    // 系统桥仅注册原生组合键，指令配置和生命周期由内置插件管理。
+    registerCommandShortcut(accelerator, commandId) {
+      const nativeAccelerator = accelerator.replace(/Meta/g, 'Super')
+      if (nativeAccelerator === currentHotkey || commandShortcuts.has(nativeAccelerator)) throw new Error(`快捷键已被使用：${accelerator}`)
+      const callback = () => {
+        if (hotkeyCapture || !runtime) return
+        void runtime.runCommand(commandId).then(result => {
+          show()
+          emit({ type: 'command-result', result })
+        }).catch(error => console.error('Plugin shortcut failed', error))
+      }
+      if (!hotkeyCapture && !globalShortcut.register(nativeAccelerator, callback)) throw new Error(`系统快捷键不可用：${accelerator}`)
+      const binding = { commandId, callback }
+      commandShortcuts.set(nativeAccelerator, binding)
+      return () => {
+        if (commandShortcuts.get(nativeAccelerator) !== binding) return
+        commandShortcuts.delete(nativeAccelerator)
+        globalShortcut.unregister(nativeAccelerator)
+      }
+    },
     async openDataDirectory() {
       const error = await shell.openPath(app.getPath('userData'))
       if (error) throw new Error(error)
@@ -114,6 +175,7 @@ async function start() {
     async applySettings(next: Settings, previous?: Settings) {
       if (next.autostart && !app.isPackaged) throw new Error('Autostart is available in packaged builds only')
       if (currentHotkey !== next.hotkey) {
+        if (commandShortcuts.has(next.hotkey)) throw new Error(`快捷键已被插件指令使用：${next.hotkey}`)
         let registered = false
         try { registered = globalShortcut.register(next.hotkey, toggle) }
         catch { throw new Error(`Invalid global shortcut: ${next.hotkey}`) }
@@ -226,9 +288,14 @@ exit 1
       const denyNavigation = (event: Electron.Event) => event.preventDefault()
       const denyWebview = (event: Electron.Event) => event.preventDefault()
       const systemMenu = (event: Electron.Event) => event.preventDefault()
-      const blur = () => setHotkeyCapture(false)
+      // 主启动器失焦只隐藏，保留渲染页面和查询供下次唤出。
+      const blur = () => { endWindowDrag(); setHotkeyCapture(false); window.hide() }
       window.on('system-context-menu', systemMenu)
       window.on('blur', blur)
+      window.on('hide', endWindowDrag)
+      window.on('closed', endWindowDrag)
+      view.webContents.on('destroyed', endWindowDrag)
+      view.webContents.on('render-process-gone', endWindowDrag)
       window.on('close', close)
       app.on('before-quit', quit)
       app.on('second-instance', activate)
@@ -248,6 +315,11 @@ exit 1
         callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [policy] } })
       })
       return () => {
+        endWindowDrag()
+        window.removeListener('hide', endWindowDrag)
+        window.removeListener('closed', endWindowDrag)
+        view.webContents.removeListener('destroyed', endWindowDrag)
+        view.webContents.removeListener('render-process-gone', endWindowDrag)
         window.removeListener('resize', resize); window.removeListener('close', close)
         window.removeListener('system-context-menu', systemMenu)
         window.removeListener('blur', blur)
@@ -281,10 +353,11 @@ exit 1
         await cleanup
       },
     })
-    installIPC(runtime, view, rendererURL, frameNonce, setHotkeyCapture, setLauncherHeight, updater)
+    installIPC(runtime, view, rendererURL, frameNonce, setHotkeyCapture, setLauncherHeight, startWindowDrag, endWindowDrag, updater)
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
     show()
   } catch (error) {
+    endWindowDrag()
     if (runtime) await runtime.dispose()
     globalShortcut.unregisterAll()
     if (!view.webContents.isDestroyed()) view.webContents.close()
@@ -293,7 +366,7 @@ exit 1
   }
 }
 
-function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, frameNonce: string, setHotkeyCapture: (active: boolean) => void, setLauncherHeight: (height: number) => void, updater: OnlineUpdater) {
+function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string, frameNonce: string, setHotkeyCapture: (active: boolean) => void, setLauncherHeight: (height: number) => void, startWindowDrag: () => void, endWindowDrag: () => void, updater: OnlineUpdater) {
   const verify = (event: IpcMainInvokeEvent) => {
     const frame = event.senderFrame
     if (event.sender !== view.webContents || !frame || frame !== view.webContents.mainFrame) throw new Error('Unauthorized IPC sender')
@@ -327,6 +400,8 @@ function installIPC(runtime: Runtime, view: WebContentsView, rendererURL: string
   bind(channels.quit, 0, () => runtime.ctx.get('desktop')!.quit())
   bind(channels.hotkeyCapture, 1, active => setHotkeyCapture(boolean(active)))
   bind(channels.layout, 1, height => { if (typeof height !== 'number') throw new TypeError('Invalid launcher height'); setLauncherHeight(height) })
+  bind(channels.startWindowDrag, 0, startWindowDrag)
+  bind(channels.endWindowDrag, 0, endWindowDrag)
   bind(channels.searchLauncher, 1, request => runtime.searchLauncher(launcherSearchRequest(request)))
   bind(channels.searchAction, 3, (providerId, itemId, action) => runtime.performSearchAction(identifier(providerId), searchItemId(itemId), identifier(action)))
   bind(channels.frameNonce, 0, () => frameNonce)

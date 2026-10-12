@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
-import type { Command, DesktopAPI, DesktopEvent, LauncherSearchGroup, LauncherSearchItem, Page, Settings, Snapshot, UpdateState } from '../shared/contracts'
+import type { Command, CommandResult, DesktopAPI, DesktopEvent, LauncherSearchGroup, LauncherSearchItem, Page, Settings, Snapshot, UpdateState } from '../shared/contracts'
+import { keyboardAccelerator } from './accelerator'
 
 declare global {
   interface Window { desktop: DesktopAPI }
@@ -15,6 +16,8 @@ export const useDesktopStore = defineStore('desktop', () => {
   const error = ref('')
   const query = ref('')
   const focusRequest = ref(0)
+  const openPluginRequest = ref<{ pluginId: string; commandId?: string; revision: number } | null>(null)
+  const shortcutBindings = ref<Array<{ commandId: string; global: string | null; application: string | null }>>([])
   const updateState = ref<UpdateState | null>(null)
   const updateBusy = ref(false)
   const updateError = ref('')
@@ -25,7 +28,6 @@ export const useDesktopStore = defineStore('desktop', () => {
   const searchActionBusy = ref(false)
   const searchComposing = ref(false)
   const searchPageSize = 30
-  let searchTimer: ReturnType<typeof setTimeout> | undefined
   let searchRevision = 0
   let searchActionRevision = 0
   let updateRevision = 0
@@ -49,8 +51,6 @@ export const useDesktopStore = defineStore('desktop', () => {
     .map(id => commandsById.value.get(id)).filter((command): command is Command => Boolean(command)))
 
   function cancelSearch() {
-    clearTimeout(searchTimer)
-    searchTimer = undefined
     searchRevision++
     searchActionRevision++
     searchLoading.value = false
@@ -58,19 +58,18 @@ export const useDesktopStore = defineStore('desktop', () => {
   }
   function scheduleSearch() {
     cancelSearch()
+    if (searchComposing.value) return
     searchGroups.value = []
     searchError.value = ''
     searchFeedback.value = ''
     if (disposed || loading.value || !snapshot.value || page.value !== 'launcher' || !query.value.trim() || searchComposing.value) return
-    searchLoading.value = true
-    searchTimer = setTimeout(() => { searchTimer = undefined; void searchLauncher() }, 150)
+    // 每次已提交的输入立即查询，旧请求由版本号隔离。
+    void searchLauncher()
   }
   async function searchLauncher(providerId?: string) {
     if (disposed || loading.value || !snapshot.value || page.value !== 'launcher' || !query.value.trim() || searchComposing.value) return
     const previous = providerId ? searchGroups.value.find(group => group.providerId === providerId) : undefined
     if (providerId && (!previous?.hasMore || searchLoading.value)) return
-    clearTimeout(searchTimer)
-    searchTimer = undefined
     const current = ++searchRevision
     const searchedQuery = query.value
     const offset = previous ? previous.offset + previous.items.length : 0
@@ -121,6 +120,33 @@ export const useDesktopStore = defineStore('desktop', () => {
     }
     page.value = target
   }
+  // 指令执行结果统一驱动插件页面，保留沙箱打开请求的独立版本号。
+  function applyCommandResult(result: CommandResult) {
+    if (result.navigate) navigate(result.navigate)
+    if (result.pluginId) {
+      openPluginRequest.value = { pluginId: result.pluginId, commandId: result.commandId, revision: (openPluginRequest.value?.revision ?? 0) + 1 }
+      page.value = 'plugin-market'
+    }
+  }
+  // 应用快捷键由内置插件保存；界面只缓存有效绑定以同步阻止默认按键。
+  async function refreshShortcutBindings() {
+    if (typeof window.desktop.invokePlugin !== 'function') return
+    try {
+      const bindings = await window.desktop.invokePlugin('command-shortcuts', 'list', null)
+      if (!disposed && Array.isArray(bindings)) shortcutBindings.value = bindings
+    } catch (cause) { if (!disposed) message(cause) }
+  }
+  // 已保存的应用快捷键优先于页面按键；录制区和输入法组合不执行指令。
+  function handleApplicationShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[data-shortcut-capture]'))) return
+    const accelerator = keyboardAccelerator(event)
+    if (!accelerator || !shortcutBindings.value.some(binding => binding.application === accelerator && commands.value.some(command => command.id === binding.commandId))) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    void window.desktop.invokePlugin('command-shortcuts', 'dispatch', { accelerator }).then(result => {
+      if (result && !disposed) applyCommandResult(result as CommandResult)
+    }).catch(message)
+  }
   function receive(event: DesktopEvent) {
     if (disposed) return
     if (event.type === 'snapshot') {
@@ -133,24 +159,19 @@ export const useDesktopStore = defineStore('desktop', () => {
       if (pluginsChanged) { void refreshCommands(); scheduleSearch() }
     }
     if (event.type === 'navigate') navigate(event.page)
+    if (event.type === 'commands-changed') { void refreshCommands(); void refreshShortcutBindings() }
+    if (event.type === 'command-result') applyCommandResult(event.result)
     if (event.type === 'shown') {
-      if (page.value === 'launcher') {
-        query.value = ''
-      }
       focusRequest.value++
     }
-    if (event.type === 'close-request') {
-      if (page.value === 'launcher') void hide()
-      else if (snapshot.value?.settings.escHide) void hide()
-      else navigate('launcher')
-    }
+    if (event.type === 'close-request') void hide()
     if (event.type === 'update') { updateRevision++; updateState.value = event.update; updateError.value = '' }
   }
   async function refreshCommands() {
     const current = ++commandRevision
     try {
       const registered = await window.desktop.listCommands()
-      if (!disposed && current === commandRevision) commands.value = registered
+      if (!disposed && current === commandRevision) { commands.value = registered; void refreshShortcutBindings() }
     } catch (cause) { if (!disposed) message(cause) }
   }
   async function initialize() {
@@ -164,6 +185,7 @@ export const useDesktopStore = defineStore('desktop', () => {
       const startCommandRevision = commandRevision
       const [next, registered] = await Promise.all([window.desktop.getSnapshot(), window.desktop.listCommands()])
       if (disposed) return
+      void refreshShortcutBindings()
       if (revision === startRevision) snapshot.value = next
       if (commandRevision === startCommandRevision) commands.value = registered
       await refreshUpdateState()
@@ -180,7 +202,7 @@ export const useDesktopStore = defineStore('desktop', () => {
   async function run(command: Command) {
     await perform(async () => {
       const result = await window.desktop.runCommand(command.id)
-      if (result.navigate) navigate(result.navigate)
+      applyCommandResult(result)
     })
   }
   async function update(patch: Partial<Settings>) {
@@ -229,5 +251,5 @@ export const useDesktopStore = defineStore('desktop', () => {
     return hidden
   }
   function dispose() { disposed = true; cancelSearch(); stopSearchWatch(); unsubscribe?.(); unsubscribe = undefined }
-  return { snapshot, commands, page, loading, busy, error, query, focusRequest, results, recentCommands, pinnedCommands, searchGroups, searchLoading, searchError, searchFeedback, searchActionBusy, searchComposing, searchLauncher, setSearchComposing, performSearchAction, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherHeight, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
+  return { snapshot, commands, page, loading, busy, error, query, focusRequest, openPluginRequest, applyCommandResult, refreshShortcutBindings, handleApplicationShortcut, results, recentCommands, pinnedCommands, searchGroups, searchLoading, searchError, searchFeedback, searchActionBusy, searchComposing, searchLauncher, setSearchComposing, performSearchAction, updateState, updateBusy, updateError, navigate, initialize, run, update, pin, togglePlugin, setHotkeyCapture, setLauncherHeight, refreshUpdateState, checkForUpdates, downloadUpdate, installUpdate, hide, dispose }
 })

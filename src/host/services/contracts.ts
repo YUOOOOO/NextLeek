@@ -10,9 +10,13 @@ export interface PersistentState {
 export interface StorageService {
   read(): PersistentState
   write(state: PersistentState): void
+  readShortcuts(): CommandShortcut[]
+  writeShortcuts(shortcuts: CommandShortcut[]): void
 }
+export interface CommandShortcut { commandId: string; global: string | null; application: string | null }
 export interface CommandsService {
-  register(ctx: Context, command: Command, execute: () => Promise<CommandResult> | CommandResult): void
+  register(ctx: Context, command: Command, execute: () => Promise<CommandResult> | CommandResult): () => void
+  subscribe(ctx: Context, callback: () => void): void
   list(): Command[]
   has(id: string): boolean
   run(id: string): Promise<CommandResult>
@@ -22,12 +26,25 @@ export interface PluginEndpointsService {
   register(ctx: Context, pluginId: string, handler: PluginEndpointHandler): void
   invoke(pluginId: string, method: string, args: unknown): Promise<unknown>
 }
+export interface PluginViewBounds { x: number; y: number; width: number; height: number }
+export interface PluginViewHandle {
+  bounds(value: PluginViewBounds): void
+  visible(value: boolean): void
+}
+export interface PluginViewOptions {
+  session: string
+  html: string
+  invoke(method: 'runtimeSummary' | 'invokeCapability', args: unknown): Promise<unknown>
+  closed(): void
+}
 export interface DesktopService {
   applySettings(next: Settings, previous?: Settings): Promise<void>
   emit(event: DesktopEvent): void
   hide(): void
   quit(): void
   openDataDirectory(): Promise<void>
+  registerCommandShortcut?(accelerator: string, commandId: string): () => void
+  openPluginView?(ctx: Context, options: PluginViewOptions): Promise<PluginViewHandle>
 }
 export interface SearchProvider {
   id: string

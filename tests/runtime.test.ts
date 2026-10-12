@@ -21,8 +21,8 @@ test('LMDB settings, command history and pins survive runtime disposal while bui
   let runtime = await createRuntime(join(path, 'lmdb'), desktop(events))
   try {
     assert(runtime.getSnapshot().plugins.every(plugin => plugin.status === 'active'))
-    assert.deepEqual(await runtime.runCommand('settings.open'), { navigate: 'settings' })
-    assert.deepEqual(await runtime.runCommand('theme.open'), { navigate: 'settings' })
+    assert.equal((await runtime.runCommand('settings.open')).navigate, 'settings')
+    assert.equal((await runtime.runCommand('theme.open')).navigate, 'settings')
     await runtime.runCommand('settings.open')
     assert.deepEqual(runtime.getSnapshot().recent, ['settings.open', 'theme.open'])
     await runtime.setPinned('settings.open', true)

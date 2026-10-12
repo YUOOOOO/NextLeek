@@ -14,9 +14,10 @@ export interface Command {
   description: string
   icon: string
   keywords: string[]
+  pluginId?: string
 }
 export type Page = 'launcher' | 'settings' | 'plugins' | 'plugin-market'
-export interface CommandResult { navigate?: Page }
+export interface CommandResult { navigate?: Page; pluginId?: string; commandId?: string }
 export interface PluginInfo {
   id: string
   name: string
@@ -68,6 +69,9 @@ export type DesktopEvent =
   | { type: 'shown' }
   | { type: 'close-request' }
   | { type: 'hotkey'; value: string }
+  | { type: 'commands-changed' }
+  | { type: 'command-result'; result: CommandResult }
+  | { type: 'plugin-back'; session: string }
   | { type: 'update'; update: UpdateState }
 export interface DesktopAPI {
   getSnapshot(): Promise<Snapshot>
@@ -82,6 +86,8 @@ export interface DesktopAPI {
   quit(): Promise<void>
   setHotkeyCapture(active: boolean): Promise<void>
   setLauncherHeight(height: number): Promise<void>
+  startWindowDrag(): Promise<void>
+  endWindowDrag(): Promise<void>
   getUpdateState(): Promise<UpdateState>
   checkForUpdates(): Promise<UpdateState>
   downloadUpdate(): Promise<UpdateState>
@@ -95,6 +101,7 @@ export const channels = {
   run: 'desktop:run', pin: 'desktop:pin', plugin: 'desktop:plugin', hide: 'desktop:hide',
   quit: 'desktop:quit', event: 'desktop:event',
   hotkeyCapture: 'desktop:hotkey-capture', layout: 'desktop:layout',
+  startWindowDrag: 'desktop:start-window-drag', endWindowDrag: 'desktop:end-window-drag',
   updateState: 'desktop:update-state', updateCheck: 'desktop:update-check',
   updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
   searchLauncher: 'desktop:search-launcher', searchAction: 'desktop:search-action',

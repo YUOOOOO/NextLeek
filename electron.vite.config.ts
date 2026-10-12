@@ -13,7 +13,7 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'out/preload',
-      rollupOptions: { input: resolve('src/preload/index.ts'), external: ['electron'], output: { format: 'cjs', entryFileNames: 'index.cjs' } },
+      rollupOptions: { input: { index: resolve('src/preload/index.ts'), 'plugin-sandbox': resolve('src/preload/plugin-sandbox.ts') }, external: ['electron'], output: { format: 'cjs', entryFileNames: '[name].cjs' } },
     },
   },
   renderer: {

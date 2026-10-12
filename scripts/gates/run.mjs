@@ -1,6 +1,7 @@
 import ts from 'typescript'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { parse } from 'yaml'
 
 async function sources(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -14,6 +15,16 @@ function effectAncestor(node) {
   return false
 }
 const failures = []
+const patch = parse(await readFile('cordis.patch.yml', 'utf8'))
+const compositionIds = new Set()
+if (!Array.isArray(patch)) failures.push('cordis.patch.yml: expected insert operations')
+else for (const operation of patch) {
+  if (!Array.isArray(operation?.insert)) { failures.push('cordis.patch.yml: expected insert array'); continue }
+  for (const entry of operation.insert) {
+    if (!entry || typeof entry.id !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(entry.id) || compositionIds.has(entry.id)) failures.push('cordis.patch.yml: every entry requires a unique explicit stable id')
+    else compositionIds.add(entry.id)
+  }
+}
 for (const path of await sources('src/host')) {
   const source = ts.createSourceFile(path, await readFile(path, 'utf8'), ts.ScriptTarget.Latest, true)
   function fail(node, message) {
@@ -43,7 +54,7 @@ for (const path of await sources('src/host')) {
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ['setInterval', 'setTimeout'].includes(node.expression.text) && !effectAncestor(node)) fail(node, 'Timers must be owned by ctx.effect')
     if (ts.isObjectLiteralExpression(node) && node.properties.some(property => ts.isPropertyAssignment(property) && property.name.getText(source) === 'plugin')) {
-      if (!node.properties.some(property => ts.isPropertyAssignment(property) && property.name.getText(source) === 'id' && ts.isStringLiteral(property.initializer) && property.initializer.text)) fail(node, 'Plugin composition entry requires an explicit stable id')
+      if (!node.properties.some(property => ts.isPropertyAssignment(property) && property.name.getText(source) === 'id')) fail(node, 'Plugin composition entry requires an explicit stable id')
     }
     ts.forEachChild(node, visit)
   }
