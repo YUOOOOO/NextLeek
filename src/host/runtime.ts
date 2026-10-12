@@ -4,8 +4,7 @@ import type { CommandResult, PluginInfo, Settings, Snapshot, LauncherSearchReque
 import { settingsPatch, identifier, boolean, launcherSearchRequest, searchItemId } from '../shared/validation'
 import type { DesktopService } from './services/contracts'
 import type { EverythingEnvironment } from './services/everything'
-import type { ApplicationsEnvironment } from './services/applications'
-import { commandAccelerator } from './plugins/command-shortcuts'
+import type { ApplicationsEnvironment } from '../../plugins/applications/host'
 import { composePlugins } from './composition'
 import type { InstalledPlugin } from '../../plugins/plugin-market/shared'
 
@@ -59,9 +58,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
   async function executeCommand(id: string): Promise<CommandResult> {
     identifier(id)
     const result = await ctx.get('commands')!.run(id)
-    const storage = ctx.get('storage')!
-    const state = storage.read()
-    storage.write({ ...state, recent: [id, ...state.recent.filter(item => item !== id)].slice(0, 50) })
+    ctx.get('launcher')!.recordCommand(id)
     notify()
     if (result.navigate) desktop.emit({ type: 'navigate', page: result.navigate })
     return result
@@ -115,17 +112,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     updateSettings(patch: Partial<Settings>) {
       const validated = settingsPatch(patch)
       return serialize(async () => {
-        const storage = ctx.get('storage')!
-        const state = storage.read()
-        const next = { ...state.settings, ...validated }
-        if (validated.hotkey !== undefined) {
-          const wake = commandAccelerator(next.hotkey)
-          const conflict = storage.readShortcuts().find(item => commandAccelerator(item.global) === wake || commandAccelerator(item.application) === wake)
-          if (conflict) throw new Error(`唤醒快捷键已绑定命令 ${conflict.commandId}，请先清除命令快捷键`)
-        }
-        await desktop.applySettings(next, state.settings)
-        try { storage.write({ ...state, settings: next }) }
-        catch (error) { await desktop.applySettings(state.settings, next); throw error }
+        await ctx.get('settings')!.update(validated)
         return notify()
       })
     },
@@ -136,12 +123,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     setPinned(id: string, pinned: boolean) {
       identifier(id); boolean(pinned)
       return serialize(() => {
-        if (!ctx.get('commands')!.has(id)) throw new Error(`Command unavailable: ${id}`)
-        const storage = ctx.get('storage')!
-        const state = storage.read()
-        const pins = state.pinned.filter(item => item !== id)
-        if (pinned) pins.push(id)
-        storage.write({ ...state, pinned: pins })
+        ctx.get('launcher')!.setPinned(id, pinned)
         return notify()
       })
     },

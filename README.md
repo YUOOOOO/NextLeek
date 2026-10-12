@@ -11,6 +11,8 @@ NextTools is a desktop-first command launcher built with Electron, Vue 3, TypeSc
 - Light, dark, and system themes, six accent colors, and configurable launcher and command shortcuts.
 - Explicit Windows NSIS update check, download, install, and relaunch flow.
 
+The launcher and basic settings pages use source components adapted from the MIT-licensed upstream project. Application search, file search, settings, theme, command shortcuts, and updates are owned by Cordis plugins. Account/sync, provider configuration, and AI integration are not included in this basic release.
+
 Hiding and showing the window preserves the current page, search query, results, and an open plugin's live view. Escape navigates back one page level; in search it clears a nonempty query and otherwise stays at search. Escape at the top level does not hide the window. The launcher shortcut can toggle visibility; native window close hides rather than quits.
 
 In the marketplace, Discover offers installation and available updates; Installed offers opening and package management. Back first closes an open plugin and returns to the list, then returns to the settings or installed-plugin menu used to enter the marketplace. The marketplace itself is part of the host UI; opened plugin content uses an independent view, not an iframe.

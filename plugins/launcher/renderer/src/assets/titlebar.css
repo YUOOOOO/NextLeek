@@ -1,0 +1,90 @@
+/* 标题栏全局样式 - 与主应用颜色系统保持一致 */
+:root {
+  /* Windows 按钮颜色 */
+  --win-button-hover: rgba(0, 0, 0, 0.05);
+  --win-close-hover: #e81123;
+
+  /* 亮色模式颜色 */
+  --titlebar-bg: #f4f4f4ab;
+  --titlebar-text: #333333;
+  --titlebar-icon: #616161;
+  --titlebar-icon-hover: #333333;
+  --input-bg: rgba(0, 0, 0, 0.05);
+  --input-border: rgba(0, 0, 0, 0.1);
+  --input-focus: #059669;
+  --input-focus-bg: rgba(0, 0, 0, 0.08);
+  --hover-bg: #f9fafb;
+  --primary-color: #059669;
+}
+
+/* Windows 下根据 data-material 属性应用不同材质样式 */
+.os-windows[data-material='mica'] {
+  --titlebar-bg: transparent;
+  --input-bg: rgba(255, 255, 255, 0.6);
+  --input-focus-bg: rgba(255, 255, 255, 0.9);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --win-button-hover: rgba(0, 0, 0, 0.05);
+}
+
+.os-windows[data-material='acrylic'] {
+  --titlebar-bg: transparent;
+  --input-bg: rgba(255, 255, 255, 0.5);
+  --input-focus-bg: rgba(255, 255, 255, 0.9);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --win-button-hover: rgba(0, 0, 0, 0.05);
+}
+
+.os-windows[data-material='none']:root {
+  --titlebar-bg: #f4f4f4;
+}
+
+/* 暗色模式 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --win-button-hover: rgba(255, 255, 255, 0.1);
+    --titlebar-bg: #303133ab;
+    --titlebar-text: #f3f4f6;
+    --titlebar-icon: #bfc0c3;
+    --titlebar-icon-hover: #f3f4f6;
+    --input-bg: rgba(0, 0, 0, 0.2);
+    --input-border: rgba(0, 0, 0, 0.3);
+    --input-focus: #34d399;
+    --input-focus-bg: rgba(0, 0, 0, 0.3);
+    --hover-bg: #374151;
+    --primary-color: #34d399;
+  }
+
+  /* Windows 暗色模式下根据 data-material 属性应用不同材质样式 */
+  .os-windows[data-material='mica'] {
+    --titlebar-bg: transparent;
+    --input-bg: rgba(255, 255, 255, 0.06);
+    --input-focus-bg: rgba(255, 255, 255, 0.1);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --win-button-hover: rgba(255, 255, 255, 0.08);
+  }
+
+  .os-windows[data-material='acrylic'] {
+    --titlebar-bg: transparent;
+    --input-bg: rgba(255, 255, 255, 0.04);
+    --input-focus-bg: rgba(255, 255, 255, 0.1);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --win-button-hover: rgba(255, 255, 255, 0.06);
+  }
+
+  .os-windows[data-material='none']:root {
+    --titlebar-bg: #303133;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+  user-select: none;
+}
+
+#titlebar-app {
+  width: 100%;
+  height: 100%;
+}

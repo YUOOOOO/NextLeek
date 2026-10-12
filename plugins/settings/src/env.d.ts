@@ -1,0 +1,1109 @@
+/// <reference types="vite/client" />
+/// <reference types="@ztools-center/ztools-api-types" />
+
+import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type {
+  AiProviderInput,
+  AiProviderMutationResult,
+  AiProviderStore,
+  OfficialAiProviderStatus,
+  OfficialAiCreditAccount,
+  OfficialAiRechargeOrder,
+  AiRemoteModel
+} from '@shared/aiProviderShared'
+
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue'
+  const component: DefineComponent<Record<string, never>, Record<string, never>, unknown>
+  export default component
+}
+
+// 类型定义文件：定义 ZTools 设置插件可用的 API
+
+// Preload services 类型声明（对应 public/preload/services.js）
+interface Services {
+  readFile: (file: string) => string
+  writeTextFile: (text: string) => string
+  writeImageFile: (base64Url: string) => string | undefined
+}
+
+declare global {
+  interface Window {
+    services: Services
+    ztools: {
+      // 获取拖放文件的路径（Electron webUtils）
+      getPathForFile: (file: File) => string
+      hideMainWindow: (isRestorePreWindow?: boolean) => boolean | Promise<boolean>
+
+      internal: {
+        // 数据库操作（主程序专用，直接操作 ZTOOLS 命名空间）
+        dbPut: (key: string, data: any) => Promise<any>
+        dbGet: (key: string) => Promise<any>
+
+        // 插件管理
+        getPlugins: () => Promise<
+          Array<{
+            name: string
+            path: string
+            version: string
+            description?: string
+            logo?: string
+            features?: any[]
+            isDevelopment?: boolean
+          }>
+        >
+        getDisabledPlugins: () => Promise<string[]>
+        setPluginDisabled: (
+          pluginPath: string,
+          disabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        setPluginMainPushEnabled: (
+          pluginName: string,
+          enabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        getAllPlugins: () => Promise<
+          Array<{
+            name: string
+            path: string
+            version: string
+            description?: string
+            logo?: string
+            features?: any[]
+            isDevelopment?: boolean
+          }>
+        >
+        getRunningPlugins: () => Promise<string[]>
+        selectPluginFile: () => Promise<{ success: boolean; filePath?: string; error?: string }>
+        importPlugin: () => Promise<{ success: boolean; error?: string }>
+        readPluginInfoFromZpx: (zpxPath: string) => Promise<{
+          success: boolean
+          pluginInfo?: {
+            name: string
+            title: string
+            version: string
+            description: string
+            author: string
+            logo: string
+            features: Array<{ code: string; explain?: string }>
+            isInstalled: boolean
+          }
+          error?: string
+        }>
+        installPluginFromPath: (zpxPath: string) => Promise<{
+          success: boolean
+          error?: string
+          plugin?: any
+        }>
+        // 获取当前记录的开发项目集合
+        getDevProjects: () => Promise<any[]>
+        // 导入开发中的插件工程，可选直接传入 plugin.json 路径
+        importDevPlugin: (pluginJsonPath?: string) => Promise<{
+          success: boolean
+          error?: string
+          pluginName?: string
+          pluginPath?: string
+        }>
+        // 从开发项目列表中移除指定项目，但保留磁盘目录
+        removeDevProject: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        // 将开发项目安装为开发模式插件
+        installDevPlugin: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        // 将开发项目从开发模式卸载
+        uninstallDevPlugin: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        // 校验当前设备绑定的开发项目配置
+        validateDevProject: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        // 为当前设备重新选择开发项目配置文件
+        selectDevProjectConfig: (
+          pluginName: string
+        ) => Promise<{ success: boolean; error?: string }>
+        // 打包指定开发项目
+        packageDevProject: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        deletePlugin: (
+          pluginPath: string,
+          options?: { deleteData?: boolean }
+        ) => Promise<{ success: boolean; error?: string }>
+        killPlugin: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+        revealInFinder: (filePath: string) => Promise<void>
+        launch: (options: {
+          path: string
+          type?: 'direct' | 'plugin' | 'builtin'
+          featureCode?: string
+          param?: any
+          name?: string
+        }) => Promise<{ success: boolean; error?: string }>
+        quitApp: () => Promise<{ success: boolean }>
+        openApp: (appPath: string) => Promise<void>
+
+        // 插件市场
+        fetchPluginMarket: () => Promise<{
+          success: boolean
+          data?: any
+          storefront?: any
+          error?: string
+        }>
+        fetchPluginMarketRecommendations: (limit?: number) => Promise<any[]>
+        fetchPluginMarketComments: (
+          pluginName: string,
+          page?: number,
+          pageSize?: number,
+          anchorId?: number
+        ) => Promise<{
+          success: boolean
+          data?: {
+            items: Array<{
+              id: number
+              pluginName: string
+              uid: string
+              nickname: string
+              avatarUrl?: string
+              parentId?: number | null
+              parent?: {
+                id: number
+                uid: string
+                nickname: string
+                avatarUrl?: string
+                content: string
+                deleted: boolean
+                createdAt: number
+              } | null
+              content: string
+              likeCount: number
+              liked: boolean
+              createdAt: number
+              updatedAt: number
+            }>
+            page: { page: number; pageSize: number; total: number }
+          }
+          error?: string
+          authRequired?: boolean
+        }>
+        createPluginMarketComment: (input: {
+          pluginName: string
+          content: string
+          parentId?: number | null
+        }) => Promise<{
+          success: boolean
+          data?: any
+          error?: string
+          authRequired?: boolean
+        }>
+        togglePluginMarketCommentLike: (commentId: number) => Promise<{
+          success: boolean
+          data?: { liked: boolean; likeCount: number }
+          error?: string
+          authRequired?: boolean
+        }>
+        deletePluginMarketComment: (commentId: number) => Promise<{
+          success: boolean
+          error?: string
+          authRequired?: boolean
+        }>
+        notificationSummary: () => Promise<{
+          success: boolean
+          data?: { unreadCount: number; latestId: number; hasMoreUnread: boolean }
+          error?: string
+        }>
+        notificationList: (
+          beforeId?: number,
+          limit?: number,
+          unreadOnly?: boolean
+        ) => Promise<{
+          success: boolean
+          data?: {
+            items: Array<{
+              id: number
+              type: string
+              title: string
+              content: string
+              level: string
+              payload: Record<string, unknown>
+              read: boolean
+              createdAt: number
+            }>
+            nextBeforeId: number
+            unreadCount: number
+            hasMore: boolean
+            hasMoreUnread: boolean
+          }
+          error?: string
+          authRequired?: boolean
+        }>
+        notificationMarkRead: (
+          id: number
+        ) => Promise<{ success: boolean; error?: string; authRequired?: boolean }>
+        notificationMarkAllRead: () => Promise<{
+          success: boolean
+          error?: string
+          authRequired?: boolean
+        }>
+        notificationArchive: (
+          id: number
+        ) => Promise<{ success: boolean; error?: string; authRequired?: boolean }>
+        installPluginFromMarket: (plugin: any) => Promise<{
+          success: boolean
+          error?: string
+          plugin?: any
+          cancelled?: boolean
+        }>
+        cancelPluginMarketDownload: (
+          pluginNameOrTaskId: string
+        ) => Promise<{ success: boolean; error?: string }>
+        onPluginMarketDownloadProgress: (
+          callback: (payload: {
+            pluginName: string
+            taskId: string
+            status: 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+            progress: number | null
+            receivedBytes?: number
+            totalBytes?: number
+            error?: string
+          }) => void
+        ) => () => void
+        installPluginFromNpm: (options: {
+          packageName: string
+          useChinaMirror?: boolean
+        }) => Promise<{
+          success: boolean
+          error?: string
+          plugin?: any
+        }>
+
+        // 插件数据管理
+        getPluginReleaseHistory: (
+          pluginName: string,
+          offset?: number
+        ) => Promise<import('@shared/pluginReleaseHistory').PluginReleaseHistoryResult>
+        getPluginReadme: (pluginPath: string) => Promise<{
+          success: boolean
+          content?: string
+          error?: string
+        }>
+        getPluginDocKeys: (pluginName: string) => Promise<{
+          success: boolean
+          data?: Array<{ key: string; type: 'document' | 'attachment' }>
+          error?: string
+        }>
+        getPluginDoc: (
+          pluginName: string,
+          key: string
+        ) => Promise<{
+          success: boolean
+          data?: any
+          type?: 'document' | 'attachment'
+          error?: string
+        }>
+        deletePluginDoc: (
+          pluginName: string,
+          key: string
+        ) => Promise<{
+          success: boolean
+          deletedCount?: number
+          error?: string
+        }>
+        exportPluginDoc: (
+          pluginName: string,
+          key: string
+        ) => Promise<{
+          success: boolean
+          exportPath?: string
+          canceled?: boolean
+          error?: string
+        }>
+        getPluginDataStats: () => Promise<{
+          success: boolean
+          data?: Array<{
+            pluginName: string
+            pluginTitle: string | null
+            isDevelopment: boolean
+            docCount: number
+            attachmentCount: number
+            logo: string | null
+          }>
+          error?: string
+        }>
+        clearPluginData: (pluginName: string) => Promise<{
+          success: boolean
+          deletedCount?: number
+          error?: string
+        }>
+        exportAllPlugins: () => Promise<{
+          success: boolean
+          exportPath?: string
+          count?: number
+          error?: string
+        }>
+        getPluginMemoryInfo: (pluginPath: string) => Promise<{
+          success: boolean
+          data?: {
+            private: number
+            shared: number
+            total: number
+          } | null
+          error?: string
+        }>
+
+        // 快捷键相关
+        startHotkeyRecording: () => Promise<{ success: boolean; error?: string }>
+        updateShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+        getCurrentShortcut: () => Promise<string>
+        registerGlobalShortcut: (
+          shortcut: string,
+          target: string,
+          autoCopy?: boolean,
+          preScreenshotOptimization?: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        unregisterGlobalShortcut: (shortcut: string) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        updateGlobalShortcutConfig: (
+          shortcut: string,
+          config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+        ) => Promise<{ success: boolean; error?: string }>
+        registerAppShortcut: (
+          shortcut: string,
+          target: string
+        ) => Promise<{ success: boolean; error?: string }>
+        unregisterAppShortcut: (shortcut: string) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        onHotkeyRecorded: (callback: (shortcut: string) => void) => void
+
+        // 窗口和设置
+        setWindowOpacity: (opacity: number) => Promise<void>
+        setWindowDefaultHeight: (height: number) => Promise<void>
+        setCompactMainWindowHeader: (
+          enabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
+        getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
+        onUpdateWindowMaterial: (callback: (material: 'mica' | 'acrylic' | 'none') => void) => void
+        updateAcrylicOpacity: (lightOpacity: number, darkOpacity: number) => Promise<void>
+        updateSearchWallpaper: (
+          wallpaper: SearchWallpaperConfig | null
+        ) => Promise<{ success: boolean }>
+        updatePlaceholder: (placeholder: string) => Promise<void>
+        selectAvatar: () => Promise<{ success: boolean; path?: string; error?: string }>
+        selectImageFile: () => Promise<{
+          success: boolean
+          path?: string
+          url?: string
+          error?: string
+        }>
+        selectSearchWallpaper: () => Promise<{
+          success: boolean
+          path?: string
+          url?: string
+          width?: number
+          height?: number
+          compressed?: boolean
+          error?: string
+        }>
+        updateAvatar: (avatar: string) => Promise<void>
+        updateAutoPaste: (autoPaste: string) => Promise<void>
+        updateAutoClear: (autoClear: string) => Promise<void>
+        updateAutoBackToSearch: (autoBackToSearch: string) => Promise<void>
+        updateHideMainWindowOnPluginEsc: (
+          enabled: boolean
+        ) => Promise<{ success: boolean; error?: string }>
+        updateWindowPositionStrategy: (strategy: string) => Promise<void>
+        updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>
+        updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
+        updateLocalAppSearch: (enabled: boolean) => Promise<void>
+        updateRecentRows: (rows: number) => Promise<void>
+        updatePinnedRows: (rows: number) => Promise<void>
+        updateClipboardConfig: (config: { retentionDays: number }) => Promise<void>
+        updateSearchMode: (searchMode: 'aggregate' | 'list') => Promise<void>
+        updateTabKeyFunction: (mode: 'navigate' | 'target-command') => Promise<void>
+        updateTabTarget: (target: string) => Promise<void>
+        updateSpaceOpenCommand: (enabled: boolean) => Promise<void>
+        updateFloatingBallDoubleClickCommand: (command: string) => Promise<void>
+        setTheme: (theme: string) => Promise<void>
+        updatePrimaryColor: (primaryColor: string, customColor?: string) => Promise<void>
+        setTrayIconVisible: (visible: boolean) => Promise<void>
+        setGameMode: (v: boolean) => Promise<void>
+        setIgnoreHotkeysOnFullscreen: (v: boolean) => Promise<void>
+        setFloatingBallEnabled: (enabled: boolean) => Promise<{ success: boolean }>
+        setFloatingBallLetter: (letter: string) => Promise<{ success: boolean }>
+        getFloatingBallLetter: () => Promise<string>
+        setLaunchAtLogin: (enable: boolean) => Promise<void>
+        getLaunchAtLogin: () => Promise<boolean>
+        setProxyConfig: (config: { enabled: boolean; url: string }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+
+        // 系统信息
+        getAppVersion: () => Promise<string>
+        getAppName: () => Promise<string>
+        getSystemVersions: () => Promise<NodeJS.ProcessVersions>
+        getPlatform: () => NodeJS.Platform
+        isWindows11: () => Promise<boolean>
+
+        // 软件更新
+        updaterCheckUpdate: () => Promise<{
+          hasUpdate: boolean
+          latestVersion?: string
+          updateInfo?: any
+          migrationRequired?: boolean
+          migrationReasons?: string[]
+          releaseUrl?: string
+          error?: string
+        }>
+        updaterStartUpdate: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        updaterSetAutoCheck: (enabled: boolean) => Promise<{
+          success: boolean
+          error?: string
+        }>
+
+        // 指令管理
+        // 返回设置页使用的原始指令快照，用于构建 alias 目标列表（commands 文本指令 + regexCommands 中可直接触发的 window 指令）
+        getCommands: () => Promise<{
+          commands: any[]
+          regexCommands: any[]
+          plugins: any[]
+        }>
+        // 保存 alias 映射。主进程会负责归一化、持久化，并触发主窗口的指令缓存刷新。
+        updateCommandAliases: (
+          aliases: Record<string, Array<{ alias: string; icon?: string }>>
+        ) => Promise<{ success: boolean }>
+
+        // 本地启动管理
+        localShortcuts: {
+          getAll: () => Promise<
+            Array<{
+              id: string
+              name: string
+              alias?: string
+              path: string
+              type: 'file' | 'folder' | 'app'
+              icon?: string
+              keywords?: string[]
+              pinyin?: string
+              pinyinAbbr?: string
+              addedAt: number
+            }>
+          >
+          add: (type: 'file' | 'folder') => Promise<{ success: boolean; error?: string }>
+          addByPath: (filePath: string) => Promise<{ success: boolean; error?: string }>
+          delete: (id: string) => Promise<{ success: boolean; error?: string }>
+          deleteWhenNotExist: () => Promise<{ success: boolean; error?: string }>
+          open: (path: string) => Promise<{ success: boolean; error?: string }>
+          updateAlias: (id: string, alias: string) => Promise<{ success: boolean; error?: string }>
+        }
+
+        // 图片分析
+        analyzeImage: (imagePath: string) => Promise<{
+          isSimpleIcon: boolean
+          mainColor: string | null
+          isDark: boolean
+          needsAdaptation: boolean
+        }>
+
+        // 数据同步（WebSocket 版）
+        accountGetSession: () => Promise<{
+          success: boolean
+          session?: {
+            serverUrl: string
+            username: string
+            token: string
+            refreshToken?: string
+          } | null
+          error?: string
+        }>
+        accountLogin: (params: {
+          username: string
+          password: string
+          captchaVerifyParam?: string
+        }) => Promise<{
+          success: boolean
+          token?: string
+          refreshToken?: string
+          isNew?: boolean
+          error?: string
+        }>
+        accountSaveSession: (params: {
+          username: string
+          token: string
+          refreshToken?: string
+        }) => Promise<{ success: boolean; error?: string }>
+        accountLogout: () => Promise<{ success: boolean; error?: string }>
+        accountChangePassword: (params: {
+          currentPassword: string
+          newPassword: string
+        }) => Promise<{ success: boolean; error?: string }>
+        accountDelete: () => Promise<{ success: boolean; error?: string }>
+        syncGetConfig: () => Promise<{
+          success: boolean
+          config?: {
+            provider: 'official' | 'private'
+            enabled: boolean
+            serverUrl: string
+            syncInterval: number
+            lastSyncTime: number
+            deviceId?: string
+          }
+          error?: string
+        }>
+        syncGetUnsyncedCount: () => Promise<{
+          success: boolean
+          count?: number
+          error?: string
+        }>
+        syncGetConflictCount: () => Promise<{
+          success: boolean
+          count?: number
+          error?: string
+        }>
+        syncListConflicts: () => Promise<{
+          success: boolean
+          items?: Array<{
+            docId: string
+            winningRev?: string
+            conflictCount: number
+            deleted: boolean
+            lastModified?: number
+          }>
+          error?: string
+        }>
+        syncGetConflictDetail: (docId: string) => Promise<{
+          success: boolean
+          detail?: {
+            docId: string
+            winningRev?: string
+            deleted: boolean
+            winner: any
+            conflicts: any[]
+          }
+          error?: string
+        }>
+        syncResolveConflict: (
+          docId: string,
+          sourceRev: string
+        ) => Promise<{
+          success: boolean
+          rev?: string
+          error?: string
+        }>
+        syncStopAutoSync: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncTestConnection: (config: { serverUrl: string }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetCaptchaConfig: (params: { serverUrl: string }) => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            prefix?: string
+            sceneId?: string
+            encryptedSceneId?: string
+            region?: string
+          }
+          error?: string
+        }>
+        syncLogin: (params: {
+          serverUrl: string
+          username: string
+          password: string
+          captchaVerifyParam?: string
+        }) => Promise<{
+          success: boolean
+          token?: string
+          refreshToken?: string
+          isNew?: boolean
+          error?: string
+        }>
+        syncLoginPrivate: (params: {
+          serverUrl: string
+          username: string
+          password: string
+        }) => Promise<{
+          success: boolean
+          token?: string
+          refreshToken?: string
+          isNew?: boolean
+          error?: string
+        }>
+        syncLogoutPrivate: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncSaveConfig: (config: {
+          provider?: 'official' | 'private'
+          enabled: boolean
+          serverUrl: string
+          syncInterval: number
+        }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetState: () => Promise<{
+          state: string
+        }>
+        syncGetStatus: () => Promise<{
+          success: boolean
+          status?: {
+            config?: {
+              enabled: boolean
+              serverUrl: string
+              token: string
+              refreshToken?: string
+              syncInterval: number
+              lastSyncTime: number
+              deviceId: string
+              username?: string
+            } | null
+            profile?: {
+              provider: 'official' | 'private'
+              enabled: boolean
+              serverUrl: string
+              syncInterval: number
+              lastSyncTime: number
+              deviceId?: string
+            }
+            state: string
+            loggedIn: boolean
+            username: string
+            lastSyncTime: number
+            unsyncedCount: number
+            conflictCount: number
+            retryStatus?: {
+              pendingPushBatches: number
+              pendingUploads: number
+              pendingDownloads: number
+              failedPermanent: number
+              authRequired: number
+              lastError?: string
+              nextRetryAt?: number
+            } | null
+            officialAccount?: { loggedIn: boolean; username: string }
+            privateSession?: {
+              loggedIn: boolean
+              serverUrl: string
+              username: string
+            }
+          }
+          error?: string
+        }>
+        syncGetDefaultImportStatus: () => Promise<{
+          success: boolean
+          status?: {
+            pending: boolean
+            uid: string | null
+            defaultDocCount: number
+            targetDocCount: number
+            skipped: boolean
+            imported: boolean
+          }
+          error?: string
+        }>
+        syncImportDefaultData: () => Promise<{
+          success: boolean
+          result?: {
+            importedDocs: number
+            importedAttachments: number
+          }
+          error?: string
+        }>
+        syncSkipDefaultImport: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetRetryStatus: () => Promise<{
+          success: boolean
+          status?: {
+            pendingPushBatches: number
+            pendingUploads: number
+            pendingDownloads: number
+            failedPermanent: number
+            authRequired: number
+            lastError?: string
+            nextRetryAt?: number
+          } | null
+          error?: string
+        }>
+        syncGetAccountStats: () => Promise<{
+          success: boolean
+          stats?: {
+            documentCount: number
+            attachmentCount: number
+            storageBytes: number
+            monthlyTraffic: number
+          }
+          error?: string
+        }>
+        syncGetAccountCredits: () => Promise<{
+          success: boolean
+          credits?: OfficialAiCreditAccount
+          error?: string
+        }>
+        syncGetAICheckinStatus: () => Promise<{
+          success: boolean
+          checkin?: import('@shared/aiProviderShared').OfficialAiCheckinStatus
+          error?: string
+        }>
+        syncAICheckin: () => Promise<{
+          success: boolean
+          checkin?: import('@shared/aiProviderShared').OfficialAiCheckinStatus
+          error?: string
+        }>
+        syncCreateAIRechargeOrder: (amount: string) => Promise<{
+          success: boolean
+          order?: OfficialAiRechargeOrder
+          error?: string
+        }>
+        syncGetAIRechargeOrder: (orderId: string) => Promise<{
+          success: boolean
+          order?: OfficialAiRechargeOrder
+          error?: string
+        }>
+        syncOpenAIRechargeURL: (paymentUrl: string) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncCloseAIRechargeWindow: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGetAccountProfile: () => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncUploadAccountAvatar: (avatarPath: string) => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncUpdateNickname: (params: { nickname: string }) => Promise<{
+          success: boolean
+          profile?: {
+            uid: string
+            nickname?: string
+            avatarUrl?: string
+          }
+          error?: string
+        }>
+        syncGithubInitSession: (params: { serverUrl: string }) => Promise<{
+          success: boolean
+          sessionId?: string
+          expiresIn?: number
+          error?: string
+        }>
+        syncGithubOpenBrowser: (params: { serverUrl: string; sessionId: string }) => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncGithubPollStatus: (params: { serverUrl: string; sessionId: string }) => Promise<{
+          success: boolean
+          status?: 'pending' | 'success'
+          token?: string
+          refreshToken?: string
+          username?: string
+          isNew?: boolean
+          error?: string
+        }>
+        syncRetryNow: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncPerformSync: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncForcePushAll: () => Promise<{
+          success: boolean
+          error?: string
+        }>
+        syncResetLocalSyncState: () => Promise<{
+          success: boolean
+          documentsQueued?: number
+          tasksCleared?: number
+          error?: string
+        }>
+        onSyncStatusChanged?: (
+          callback: (payload: {
+            state?: string
+            retryStatus?: any
+            lastSyncTime?: number
+            lastError?: string
+            credentialsInvalidated?: boolean
+            accountCredentialsInvalidated?: boolean
+            refresh?: boolean
+          }) => void
+        ) => () => void
+        onSyncAccountStorageChanged?: (
+          callback: (payload: { username?: string | null }) => void
+        ) => () => void
+
+        // AI 供应商管理
+        aiProviders: {
+          getAll: () => Promise<{ success: boolean; data?: AiProviderStore; error?: string }>
+          getOfficial: () => Promise<{
+            success: boolean
+            data?: OfficialAiProviderStatus
+            error?: string
+          }>
+          add: (provider: AiProviderInput) => Promise<AiProviderMutationResult>
+          update: (provider: AiProviderInput) => Promise<AiProviderMutationResult>
+          delete: (providerId: string) => Promise<AiProviderMutationResult>
+          setEnabled: (providerId: string, enabled: boolean) => Promise<AiProviderMutationResult>
+          fetchModels: (
+            apiUrl: string,
+            apiKey: string
+          ) => Promise<{ success: boolean; data?: AiRemoteModel[]; error?: string }>
+        }
+
+        // Provider（翻译 / OCR 等）管理
+        providers: {
+          getAll: (type?: 'translation' | 'ocr') => Promise<{
+            success: boolean
+            data?: Array<{
+              id: string
+              type: 'translation' | 'ocr'
+              label: string
+              description: string
+              source: 'builtin' | 'plugin'
+              pluginName?: string
+              pluginPath?: string
+              pluginLogo?: string
+            }>
+            error?: string
+          }>
+          getSettings: () => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          setEnabled: (
+            providerId: string,
+            enabled: boolean
+          ) => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          setDefault: (
+            type: 'translation' | 'ocr',
+            providerId: string
+          ) => Promise<{
+            success: boolean
+            data?: {
+              enabled: Partial<Record<'translation' | 'ocr', string[]>>
+              defaultId: Partial<Record<'translation' | 'ocr', string>>
+              params: Record<string, Record<string, unknown>>
+            }
+            error?: string
+          }>
+          getParams: (
+            providerId: string
+          ) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>
+          setParams: (
+            providerId: string,
+            params: Record<string, unknown>
+          ) => Promise<{ success: boolean; data?: any; error?: string }>
+          // 翻译引擎（内置 Bergamot）状态与总开关
+          getTranslationStatus: () => Promise<{
+            status: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
+            error?: string
+          }>
+          setTranslationEnabled: (enabled: boolean) => Promise<{ success: boolean }>
+        }
+
+        // 网页快开
+        webSearch: {
+          getAll: () => Promise<{
+            success: boolean
+            data?: WebSearchEngine[]
+            error?: string
+          }>
+          add: (engine: WebSearchEngine) => Promise<{ success: boolean; error?: string }>
+          update: (engine: WebSearchEngine) => Promise<{ success: boolean; error?: string }>
+          delete: (id: string) => Promise<{ success: boolean; error?: string }>
+          fetchFavicon: (
+            url: string
+          ) => Promise<{ success: boolean; data?: string; error?: string }>
+        }
+
+        // 超级面板
+        updateSuperPanelConfig: (config: {
+          enabled: boolean
+          mouseButton: string
+          longPressMs: number
+        }) => Promise<{ success: boolean }>
+        updateSuperPanelBlockedApps: (
+          blockedApps: Array<{ app: string; bundleId?: string; label?: string }>
+        ) => Promise<{ success: boolean }>
+        getCurrentWindowInfo: () => Promise<{
+          app: string
+          bundleId?: string
+          pid?: number
+          title?: string
+          appPath?: string
+          className?: string
+          hwnd?: number
+        } | null>
+
+        // 唤醒黑名单
+        updateWakeupBlacklist: (
+          blacklist: Array<{ app: string; bundleId?: string; label?: string }>
+        ) => Promise<{ success: boolean }>
+
+        // 超级面板翻译
+        updateSuperPanelTranslate: (enabled: boolean) => Promise<{ success: boolean }>
+        getTranslationStatus: () => Promise<{
+          status: 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
+          error?: string
+        }>
+
+        pinToSuperPanel: (command: any) => Promise<{ success: boolean; error?: string }>
+        unpinSuperPanelCommand: (
+          path: string,
+          featureCode?: string
+        ) => Promise<{ success: boolean; error?: string }>
+        getSuperPanelPinned: () => Promise<any[]>
+
+        // 通知主渲染进程禁用指令列表已更改
+        notifyDisabledCommandsChanged: () => Promise<{ success: boolean }>
+
+        // 固定/取消固定指令到搜索窗口
+        pinApp: (app: any) => Promise<void>
+        unpinApp: (appPath: string, featureCode?: string, name?: string) => Promise<void>
+
+        // HTTP 服务
+        httpServerGetConfig: () => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            port: number
+            apiKey: string
+          }
+          error?: string
+        }>
+        httpServerSaveConfig: (config: {
+          enabled: boolean
+          port: number
+          apiKey: string
+        }) => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            port: number
+            apiKey: string
+          }
+          error?: string
+        }>
+        httpServerRegenerateKey: () => Promise<{
+          success: boolean
+          apiKey?: string
+          error?: string
+        }>
+        httpServerStatus: () => Promise<{
+          success: boolean
+          running?: boolean
+          error?: string
+        }>
+        // MCP 服务配置与状态管理
+        mcpServerGetConfig: () => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            port: number
+            apiKey: string
+          }
+          error?: string
+        }>
+        mcpServerSaveConfig: (config: {
+          enabled: boolean
+          port: number
+          apiKey: string
+        }) => Promise<{
+          success: boolean
+          config?: {
+            enabled: boolean
+            port: number
+            apiKey: string
+          }
+          error?: string
+        }>
+        mcpServerRegenerateKey: () => Promise<{
+          success: boolean
+          apiKey?: string
+          error?: string
+        }>
+        mcpServerStatus: () => Promise<{
+          success: boolean
+          running?: boolean
+          error?: string
+        }>
+        // 当前已安装插件中声明的 MCP 工具列表
+        mcpServerTools: () => Promise<{
+          success: boolean
+          data?: Array<{
+            pluginName: string
+            pluginPath: string
+            pluginLogo?: string
+            toolName: string
+            mcpName: string
+            description: string
+            inputSchema: Record<string, unknown>
+            outputSchema?: Record<string, unknown>
+            enabled: boolean
+          }>
+          error?: string
+        }>
+
+        // 调试日志
+        logEnable: () => Promise<{ success: boolean }>
+        logDisable: () => Promise<{ success: boolean }>
+        logGetBuffer: () => Promise<
+          Array<{
+            id: number
+            timestamp: number
+            level: string
+            source: string
+            message: string
+          }>
+        >
+        logIsEnabled: () => Promise<boolean>
+        logSubscribe: () => Promise<{ success: boolean }>
+        onLogEntries: (
+          callback: (
+            entries: Array<{
+              id: number
+              timestamp: number
+              level: string
+              source: string
+              message: string
+            }>
+          ) => void
+        ) => void
+        offLogEntries: (callback: (...args: any[]) => void) => void
+      }
+    }
+  }
+}
+
+export {}

@@ -1,0 +1,454 @@
+/// <reference types="vite-svg-loader" />
+
+// Ambient type declarations for renderer, so TS knows window.ztools
+
+import type { CommonKeyboardModifier } from '@renderer/utils/convertKeyboardEvent'
+import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
+import type { AfdianPaymentMethod, AfdianPaymentWindowState } from '@shared/afdianPaymentWindow'
+
+/**
+ * 上次匹配状态接口
+ */
+interface LastMatchState {
+  searchQuery: string
+  pastedImage: string | null
+  pastedFiles: any[] | null
+  pastedText: string | null
+  timestamp: number
+}
+
+interface SuperPanelWindowInfo {
+  platform?: 'win32' | 'darwin'
+  kind?: 'windows-explorer' | 'windows-file-dialog' | 'mac-finder' | 'mac-file-dialog'
+  preciseTarget?: boolean
+  app?: string
+  title?: string
+  className?: string
+  hwnd?: number
+  windowId?: number
+  finderId?: number
+  bundleId?: string
+  pid?: number
+  path?: string
+  url?: string
+  axRole?: string
+  axSubrole?: string
+}
+
+interface FileLocationWindowInfo extends SuperPanelWindowInfo {}
+
+interface PluginUpdateCheckResult {
+  success: boolean
+  updateAvailable: boolean
+  currentVersion?: string
+  latestVersion?: string
+  plugin?: {
+    name: string
+    version: string
+    title?: string
+    logo?: string
+    updatedAt?: number
+  }
+  reason?: string
+  error?: string
+}
+
+interface PluginMarketDownloadProgress {
+  pluginName: string
+  taskId: string
+  status: 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}
+
+declare global {
+  interface Window {
+    afdianPayment: {
+      onState: (callback: (state: AfdianPaymentWindowState) => void) => () => void
+      sendLoginCode: (phone: string) => void
+      submitLoginCode: (phone: string, code: string) => void
+      selectMethod: (method: AfdianPaymentMethod) => void
+      submit: () => void
+      openOriginal: () => void
+      close: () => void
+    }
+    electron: {
+      ipcRenderer: {
+        send: (channel: string, ...args: any[]) => void
+        on: (channel: string, callback: (...args: any[]) => void) => () => void
+      }
+    }
+    ztools: {
+      getApps: () => Promise<Array<{ name: string; path: string; icon?: string }>>
+      getSystemSettings: () => Promise<any[]>
+      isWindows: () => Promise<boolean>
+      launch: (options: {
+        path: string
+        type?: 'direct' | 'plugin' | 'builtin' | 'file'
+        featureCode?: string
+        param?: any
+        name?: string
+        cmdType?: string // cmd 类型（用于判断是否添加历史记录）
+        confirmDialog?: any // 确认对话框配置
+        launchSource?: 'search' | 'global-shortcut' | 'super-panel'
+      }) => Promise<any>
+      launchAsAdmin: (appPath: string, name?: string) => Promise<void>
+      hideWindow: () => void
+      resizeWindow: (height: number) => void
+      onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void
+      onUpdateHideMainWindowOnPluginEsc: (callback: (enabled: boolean) => void) => () => void
+      updateLaunchContext: (context: {
+        searchQuery: string
+        pastedImage: string | null
+        pastedFiles: Array<{ path: string; name: string; isDirectory: boolean }> | null
+        pastedText: string | null
+      }) => void
+      getWindowPosition: () => Promise<{ x: number; y: number }>
+      setWindowPosition: (x: number, y: number) => void
+      setWindowSizeLock: (lock: boolean) => void
+      getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
+      setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
+      openExternal: (url: string) => Promise<void>
+      copyToClipboard: (text: string) => Promise<void>
+      openTerminal: (path: string) => Promise<void>
+      getFinderPath: () => Promise<string | null>
+      analyzeImage: (imagePath: string) => Promise<{
+        isSimpleIcon: boolean
+        mainColor: string | null
+        isDark: boolean
+        needsAdaptation: boolean
+      }>
+      getFrontmostApp: () => Promise<{
+        name: string
+        bundleId: string
+        path: string
+      } | null>
+      activateApp: (
+        identifier: string,
+        type?: 'name' | 'bundleId' | 'path'
+      ) => Promise<{ success: boolean; error?: string }>
+      revealInFinder: (filePath: string) => Promise<void>
+      showContextMenu: (menuItems: any[]) => Promise<void>
+      getAllPlugins: () => Promise<any[]>
+      getDisabledPlugins: () => Promise<string[]>
+      setPluginMainPushEnabled: (
+        pluginName: string,
+        enabled: boolean
+      ) => Promise<{ success: boolean; error?: string }>
+      killPluginAndReturn: (pluginPath: string) => Promise<{ success: boolean; error?: string }>
+      pluginUpdates: {
+        check: (pluginName: string, pluginPath: string) => Promise<PluginUpdateCheckResult>
+        upgrade: (
+          pluginName: string,
+          pluginPath: string
+        ) => Promise<{
+          success: boolean
+          error?: string
+          plugin?: any
+          cancelled?: boolean
+        }>
+        openMarket: (pluginName: string) => Promise<{ success: boolean; error?: string }>
+        onProgress: (callback: (payload: PluginMarketDownloadProgress) => void) => () => void
+      }
+      // mainPush 功能
+      queryMainPush: (
+        pluginPath: string,
+        featureCode: string,
+        queryData: { code: string; type: string; payload: string }
+      ) => Promise<any[]>
+      selectMainPush: (
+        pluginPath: string,
+        featureCode: string,
+        selectData: { code: string; type: string; payload: string; option: any }
+      ) => Promise<boolean>
+      detachPlugin: () => Promise<{ success: boolean; error?: string }>
+      sendInputEvent: (event: {
+        type: 'keyDown' | 'keyUp' | 'char' | 'mouseDown' | 'mouseUp' | 'mouseMove'
+        keyCode?: string
+        modifiers?: CommonKeyboardModifier[]
+        x?: number
+        y?: number
+        button?: 'left' | 'right' | 'middle'
+        clickCount?: number
+      }) => Promise<{ success: boolean; error?: string }>
+      // 历史记录管理
+      removeFromHistory: (appPath: string, featureCode?: string, name?: string) => Promise<void>
+      // 固定应用管理
+      pinApp: (app: any) => Promise<void>
+      unpinApp: (appPath: string, featureCode?: string, name?: string) => Promise<void>
+      updatePinnedOrder: (newOrder: any[]) => Promise<void>
+      hidePlugin: () => void
+      onContextMenuCommand: (callback: (command: string) => void) => () => void
+      onFocusSearch: (
+        callback: (
+          windowInfo?: {
+            app: string
+            bundleId?: string
+            pid?: number
+            title?: string
+            x?: number
+            y?: number
+            width?: number
+            height?: number
+            appPath?: string
+            className?: string
+            hwnd?: number
+          } | null
+        ) => void
+      ) => void
+      onBackToSearch: (callback: () => void) => void
+      onRedirectSearch: (callback: (data: { cmdName: string; payload?: any }) => void) => void
+      onPluginOpened: (
+        callback: (plugin: {
+          name: string
+          logo: string
+          path: string
+          subInputPlaceholder?: string
+          subInputVisible?: boolean
+        }) => void
+      ) => void
+      onPluginLoaded: (callback: (plugin: { name: string; path: string }) => void) => void
+      onPluginClosed: (callback: () => void) => void
+      onPluginsChanged: (callback: () => void) => void
+      onAppsChanged: (callback: () => void) => void
+      onLocalShortcutsChanged: (callback: () => void) => void
+      onCommandAliasesChanged: (callback: () => void) => void
+      onHistoryChanged: (callback: () => void) => void
+      onPinnedChanged: (callback: () => void) => void
+      onSuperPanelPinnedChanged: (callback: () => void) => void
+      onDisabledCommandsChanged: (callback: () => void) => void
+      onShowPluginPlaceholder: (callback: () => void) => void
+      onShowSettings: (callback: () => void) => void
+      onAppLaunched: (callback: () => void) => void
+      onIpcLaunch: (
+        callback: (options: {
+          path: string
+          type?: 'app' | 'direct' | 'plugin' | 'builtin' | 'file'
+          featureCode?: string
+          param?: any
+          name?: string
+          cmdType?: string // cmd 类型（用于判断是否添加历史记录）
+        }) => void
+      ) => void
+      openPluginDevTools: () => Promise<{ success: boolean; error?: string }>
+      // 快捷键相关
+      updateShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      getCurrentShortcut: () => Promise<string>
+      registerGlobalShortcut: (
+        shortcut: string,
+        target: string,
+        autoCopy?: boolean,
+        preScreenshotOptimization?: boolean
+      ) => Promise<{ success: boolean; error?: string }>
+      unregisterGlobalShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
+      updateGlobalShortcutConfig: (
+        shortcut: string,
+        config: { autoCopy: boolean; preScreenshotOptimization: boolean }
+      ) => Promise<{ success: boolean; error?: string }>
+      // 快捷键录制（临时注册，触发后自动注销）
+      startHotkeyRecording: () => Promise<{ success: boolean; error?: string }>
+      onHotkeyRecorded: (callback: (shortcut: string) => void) => void
+      // 数据库相关
+      dbPut: (key: string, data: any) => Promise<any>
+      dbGet: (key: string) => Promise<any>
+      dbRemove: (bucket: string, doc: any) => Promise<any>
+      dbBulkDocs: (bucket: string, docs: any[]) => Promise<any>
+      dbAllDocs: (bucket: string, key: string | string[]) => Promise<any>
+      // 窗口相关
+      windowPaste: () => Promise<{ success: boolean; error?: string }>
+      onWindowInfoChanged: (
+        callback: (windowInfo: {
+          app: string
+          bundleId?: string
+          pid?: number
+          title?: string
+          x?: number
+          y?: number
+          width?: number
+          height?: number
+          appPath?: string
+          timestamp?: number
+          className?: string
+          hwnd?: number
+        }) => void
+      ) => void
+      getLastCopiedContent: (timeLimit?: number) => Promise<{
+        type: 'text' | 'image' | 'file'
+        data: string | Array<{ isFile: boolean; isDirectory: boolean; name: string; path: string }>
+        timestamp: number
+      } | null>
+      // 子输入框相关
+      notifySubInputChange: (text: string) => void
+      setSubInputValue: (text: string) => Promise<boolean>
+      onSetSearchText: (callback: (text: string) => void) => void
+      onSetSubInputValue: (callback: (text: string) => void) => void
+      onFocusSubInput: (callback: () => void) => void
+      onSelectSubInput: (callback: () => void) => void
+      onUpdateSubInputPlaceholder?: (
+        callback: (data: { pluginPath: string; placeholder: string }) => void
+      ) => void
+      onUpdateSubInputVisible?: (callback: (visible: boolean) => void) => void
+      // 设置插件通知主渲染进程的事件
+      openSettings: () => void
+      onUpdatePlaceholder: (callback: (placeholder: string) => void) => void
+      onUpdateAvatar: (callback: (avatar: string) => void) => void
+      onUpdateSearchWallpaper: (
+        callback: (wallpaper: SearchWallpaperConfig | null) => void
+      ) => () => void
+      onAiStatusChanged: (callback: (change: AiRequestStatusChange) => void) => void
+      onUpdateAutoPaste: (callback: (autoPaste: string) => void) => void
+      onUpdateAutoClear: (callback: (autoClear: string) => void) => void
+      onUpdateShowRecentInSearch: (callback: (showRecentInSearch: boolean) => void) => void
+      onUpdateMatchRecommendation: (callback: (showMatchRecommendation: boolean) => void) => void
+      onUpdateRecentRows: (callback: (rows: number) => void) => void
+      onUpdatePinnedRows: (callback: (rows: number) => void) => void
+      onUpdateTabTarget: (callback: (target: string) => void) => void
+      onUpdateTabKeyFunction: (callback: (mode: 'navigate' | 'target-command') => void) => void
+      onUpdateSpaceOpenCommand: (callback: (enabled: boolean) => void) => void
+      onUpdateFloatingBallDoubleClickCommand?: (callback: (command: string) => void) => void
+      onUpdateSearchMode: (callback: (mode: string) => void) => void
+      onUpdatePrimaryColor: (
+        callback: (data: { primaryColor: string; customColor?: string }) => void
+      ) => void
+      onUpdateWindowMaterial?: (callback: (material: 'mica' | 'acrylic' | 'none') => void) => void
+      onUpdateAcrylicOpacity?: (
+        callback: (data: { lightOpacity: number; darkOpacity: number }) => void
+      ) => void
+      // 软件更新
+      updater: {
+        checkUpdate: () => Promise<{
+          hasUpdate: boolean
+          currentVersion?: string
+          latestVersion?: string
+          updateInfo?: any
+          migrationRequired?: boolean
+          migrationReasons?: string[]
+          releaseUrl?: string
+          error?: string
+        }>
+        showUpdateWindow: () => Promise<{ success: boolean; error?: string }>
+        startUpdate: (
+          sourceID?: number
+        ) => Promise<{ success: boolean; cancelled?: boolean; error?: string }>
+        cancelUpdate: () => Promise<{ success: boolean; cancelled?: boolean; error?: string }>
+        openDownloadSource: (sourceID: number) => Promise<{ success: boolean; error?: string }>
+        installDownloadedUpdate: () => Promise<{ success: boolean; error?: string }>
+        getDownloadStatus: () => Promise<{
+          hasUpdate: boolean
+          hasDownloaded: boolean
+          version?: string
+          changelog?: string
+          status?: string
+        }>
+      }
+      onUpdateAvailable: (callback: (data: { version: string; changelog: string }) => void) => void
+      onAutoCheckUpdateChanged: (callback: (enabled: boolean) => void) => () => void
+      onUpdateDownloaded: (callback: (data: { version: string; changelog: string }) => void) => void
+      onUpdateDownloadStart: (callback: (data: { version: string }) => void) => void
+      onUpdateDownloadFailed: (callback: (data: { error: string }) => void) => void
+      getPlatform: () => string
+      // 上次匹配状态管理
+      getLastMatchState: () => Promise<LastMatchState | null>
+      restoreLastMatch: () => Promise<LastMatchState | null>
+      // 使用统计管理
+      getUsageStats: () => Promise<
+        Array<{
+          path: string
+          type: string
+          featureCode?: string | null
+          name: string
+          lastUsed: number
+          useCount: number
+        }>
+      >
+      // 本地启动管理
+      localShortcuts: {
+        getAll: () => Promise<
+          Array<{
+            id: string
+            name: string
+            alias?: string
+            path: string
+            type: 'file' | 'folder' | 'app'
+            icon?: string
+            keywords?: string[]
+            pinyin?: string
+            pinyinAbbr?: string
+            addedAt: number
+          }>
+        >
+        add: (type: 'file' | 'folder') => Promise<{ success: boolean; error?: string }>
+        delete: (id: string) => Promise<{ success: boolean; error?: string }>
+        deleteWhenNotExist: () => Promise<{ success: boolean; error?: string }>
+        open: (path: string) => Promise<{ success: boolean; error?: string }>
+        updateAlias: (id: string, alias: string) => Promise<{ success: boolean; error?: string }>
+      }
+      // 文件系统检查（异步，通过主进程）
+      checkFilePaths: (
+        paths: string[]
+      ) => Promise<Array<{ path: string; isDirectory: boolean; exists: boolean }>>
+      // 获取拖放文件的路径（Electron webUtils）
+      getPathForFile: (file: File) => string
+      // 超级面板相关
+      onSuperPanelSearch: (
+        callback: (data: { text: string; clipboardContent?: any }) => void
+      ) => void
+      sendSuperPanelSearchResult: (data: { results: any[]; clipboardContent?: any }) => void
+      onSuperPanelData: (
+        callback: (data: {
+          type: string
+          commands?: any[]
+          results?: any[]
+          clipboardContent?: any
+          windowInfo?: SuperPanelWindowInfo | null
+        }) => void
+      ) => void
+      superPanelLaunch: (command: any) => Promise<{ success: boolean; error?: string }>
+      superPanelReady: () => void
+      superPanelShowPinned: () => void
+      superPanelShowMainWindow: () => void
+      updateSuperPanelPinnedOrder: (
+        commands: any[]
+      ) => Promise<{ success: boolean; error?: string }>
+      unpinSuperPanelCommand: (
+        path: string,
+        featureCode?: string
+      ) => Promise<{ success: boolean; error?: string }>
+      pinToSuperPanel: (command: any) => Promise<{ success: boolean; error?: string }>
+      getSuperPanelPinned: () => Promise<any[]>
+      onSuperPanelLaunch: (
+        callback: (data: { command: any; clipboardContent?: any; windowInfo?: any }) => void
+      ) => void
+      superPanelAddBlockedApp: () => Promise<{ success: boolean; app?: string; error?: string }>
+      // 超级面板窗口匹配
+      superPanelGetFileLocationWindows: () => Promise<Array<FileLocationWindowInfo | string>>
+      superPanelIsFileLocationWindow: (
+        hwnd: number
+      ) => Promise<{ supported: boolean; isFileLocation: boolean }>
+      superPanelSetFileLocationAddressBar: (
+        target: number | FileLocationWindowInfo,
+        address: string
+      ) => Promise<boolean>
+      superPanelSearchWindowCommands: (windowInfo: SuperPanelWindowInfo) => Promise<void>
+      onSuperPanelWindowCommandsData: (
+        callback: (data: { requestId?: number; results: any[] }) => void
+      ) => void
+      onSuperPanelTranslation: (
+        callback: (data: { text: string; sourceText?: string }) => void
+      ) => void
+      onSuperPanelSearchWindowCommands: (
+        callback: (data: { requestId: number; windowInfo: SuperPanelWindowInfo }) => void
+      ) => void
+      sendSuperPanelWindowCommandsResult: (data: { requestId: number; results: any[] }) => void
+      onFloatingBallFiles: (
+        callback: (files: Array<{ path: string; name: string; isDirectory: boolean }>) => void
+      ) => void
+      onFloatingBallDoubleClickCommand?: (callback: (command: string) => void) => void
+    }
+  }
+}
+
+export {}

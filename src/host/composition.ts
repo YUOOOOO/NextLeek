@@ -7,11 +7,13 @@ import { storagePlugin } from './services/storage'
 import { commandsPlugin } from './services/commands'
 import { searchPlugin } from './services/search'
 import { pluginEndpointsPlugin } from './services/plugin-endpoints'
-import { settingsPlugin, themePlugin, everythingSearchPlugin } from './plugins/builtins'
-import { everythingPlugin, type EverythingEnvironment } from './services/everything'
-import { applicationsPlugin, type ApplicationsEnvironment } from './services/applications'
+import { themePlugin } from '../../plugins/theme/host'
+import { launcherPlugin } from '../../plugins/launcher/host'
+import { settingsPlugin } from '../../plugins/settings/host'
+import type { EverythingEnvironment } from './services/everything'
+import type { ApplicationsEnvironment } from '../../plugins/applications/host'
 import { marketPlugin } from '../../plugins/plugin-market/host'
-import { commandShortcutsPlugin } from './plugins/command-shortcuts'
+import { commandShortcutsPlugin } from '../../plugins/command-shortcuts/host'
 import type { DesktopService } from './services/contracts'
 import type { CommandResult } from '../shared/contracts'
 import { contributionsPlugin } from './services/contributions'
@@ -49,15 +51,7 @@ export async function composePlugins(environment: CompositionEnvironment): Promi
     'nexttools/theme': () => themePlugin,
     'nexttools/plugin-market': () => marketPlugin({ directory: join(dirname(environment.path), 'plugins'), version: environment.version }),
     'nexttools/command-shortcuts': () => commandShortcutsPlugin(environment.executeCommand),
-    'nexttools/builtin-search': () => ({
-      name: 'builtin-search', inject: ['search', 'commands'],
-      async apply(ctx: Context) {
-        ctx.commands.register(ctx, { id: 'builtin-search.open', pluginId: 'builtin-search', title: '搜索', description: '搜索已安装应用和文件', icon: 'search', keywords: ['搜索', '文件', '应用', 'search'] }, () => ({ navigate: 'launcher' }))
-        await ctx.plugin(everythingPlugin(environment.everything)).await()
-        await ctx.plugin(everythingSearchPlugin).await()
-        if (environment.applications) await ctx.plugin(applicationsPlugin(environment.applications)).await()
-      },
-    }),
+    'nexttools/builtin-search': () => launcherPlugin(environment.everything, environment.applications),
   }
   const require = createRequire(import.meta.url)
   const patchPath = require.resolve('nexttools/cordis.patch.yml')

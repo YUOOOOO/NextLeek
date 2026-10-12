@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import { applicationsPlugin, createApplicationsProvider, type ApplicationsEnvironment, type ApplicationsPorts, type ApplicationDirectoryEntry } from '../src/host/services/applications'
+import { applicationsPlugin, createApplicationsProvider, type ApplicationsEnvironment, type ApplicationsPorts, type ApplicationDirectoryEntry } from '../plugins/applications/host'
 import { searchPlugin } from '../src/host/services/search'
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBaoAAAAASUVORK5CYII='

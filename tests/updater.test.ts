@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
-import { createUpdateController, updateSupport, type UpdaterPort } from '../src/host/updater'
+import { createUpdateController, updateSupport, type UpdaterPort } from '../plugins/updater/host'
 import type { DesktopEvent } from '../src/shared/contracts'
 
 class ReleaseUpdater extends EventEmitter implements UpdaterPort {

@@ -1,6 +1,6 @@
 {
   "name": "nexttools",
-  "version": "4.0.21",
+  "version": "4.0.22",
   "description": "Cordis-powered desktop command launcher",
   "author": "NextTools Contributors",
   "private": true,
@@ -40,21 +40,29 @@
     "fflate": "^0.8.3",
     "lmdb": "3.4.2",
     "pinia": "3.0.3",
+    "pinyin-pro": "3.27.0",
     "semver": "7.7.3",
     "vue": "3.5.43",
+    "vuedraggable": "4.1.0",
     "yaml": "2.8.1"
   },
   "devDependencies": {
+    "@iconify/utils": "3.1.0",
     "@types/node": "24.10.1",
+    "@unocss/preset-icons": "66.6.6",
+    "@unocss/transformer-directives": "66.6.6",
     "@vitejs/plugin-vue": "6.0.1",
     "electron": "41.0.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "less": "4.5.1",
     "playwright-core": "1.64.0",
     "sharp": "0.34.5",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
+    "unocss": "66.6.6",
     "vite": "7.1.10",
+    "vite-svg-loader": "5.1.0",
     "vue-tsc": "3.1.1"
   }
 }

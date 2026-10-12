@@ -1,0 +1,122 @@
+{
+  "$schema": "node_modules/@ztools-center/ztools-api-types/resource/ztools.schema.json",
+  "name": "setting",
+  "title": "设置",
+  "description": "ZTools 内置设置插件",
+  "author": "Zing",
+  "version": "1.0.0",
+  "main": "index.html",
+  "logo": "logo.png",
+  "development": {
+    "main": "http://localhost:5177"
+  },
+  "features": [
+    {
+      "code": "ui.router?router=GeneralSetting",
+      "explain": "应用设置",
+      "icon": "logo.png",
+      "cmds": ["通用设置"]
+    },
+    {
+      "code": "ui.router?router=Shortcuts",
+      "explain": "快捷键",
+      "icon": "logo.png",
+      "cmds": ["快捷键"]
+    },
+    {
+      "code": "ui.router?router=Plugins",
+      "explain": "已安装插件",
+      "icon": "logo.png",
+      "cmds": ["已安装插件"]
+    },
+    {
+      "code": "ui.router?router=Market",
+      "explain": "插件市场",
+      "icon": "logo.png",
+      "cmds": ["插件市场"]
+    },
+    {
+      "code": "function.plugin-market-search",
+      "explain": "插件市场搜索",
+      "icon": "logo.png",
+      "cmds": [
+        {
+          "type": "over",
+          "label": "插件市场搜索",
+          "minLength": 1,
+          "maxLength": 50
+        }
+      ]
+    },
+    {
+      "code": "function.install-plugin?router=PluginInstaller",
+      "explain": "安装插件",
+      "icon": "logo.png",
+      "cmds": [
+        {
+          "type": "files",
+          "label": "安装插件",
+          "fileType": "file",
+          "match": "/\\.(zpx|zip)$/i",
+          "maxLength": 1
+        }
+      ]
+    },
+    {
+      "code": "ui.router?router=Data",
+      "explain": "我的数据",
+      "icon": "logo.png",
+      "cmds": ["我的数据"]
+    },
+    {
+      "code": "ui.router?router=AllCommands",
+      "explain": "所有指令",
+      "icon": "logo.png",
+      "cmds": ["所有指令"]
+    },
+    {
+      "code": "ui.router?router=Sync",
+      "explain": "WebDAV 同步",
+      "icon": "logo.png",
+      "cmds": ["WebDAV 同步"]
+    },
+    {
+      "code": "ui.router?router=About",
+      "explain": "关于 ZTools",
+      "icon": "logo.png",
+      "cmds": ["关于 ZTools"]
+    },
+    {
+      "code": "function.local-launch-add?router=LocalLaunch",
+      "explain": "添加到本地启动",
+      "icon": "logo.png",
+      "cmds": [
+        {
+          "type": "files",
+          "label": "添加到本地启动",
+          "fileType": "all",
+          "maxLength": 99
+        }
+      ]
+    },
+    {
+      "code": "function.pin-to-search",
+      "explain": "固定到搜索框",
+      "icon": "logo.png",
+      "cmds": [
+        {
+          "type": "files",
+          "label": "固定到搜索框",
+          "fileType": "all",
+          "maxLength": 99
+        }
+      ]
+    },
+    {
+      "code": "function.exit",
+      "explain": "退出 ZTools",
+      "icon": "logo.png",
+      "cmds": ["退出 ZTools"]
+    }
+  ]
+}

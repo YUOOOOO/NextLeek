@@ -8,7 +8,7 @@ import { createRuntime } from '../src/host/runtime'
 import type { DesktopService } from '../src/host/services/contracts'
 import type { DesktopEvent } from '../src/shared/contracts'
 import { searchPlugin } from '../src/host/services/search'
-import { everythingSearchPlugin } from '../src/host/plugins/builtins'
+import { everythingSearchPlugin } from '../plugins/file-search/host'
 import { storagePlugin } from '../src/host/services/storage'
 
 function desktop(events: DesktopEvent[]): DesktopService {

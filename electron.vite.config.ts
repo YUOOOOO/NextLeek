@@ -1,6 +1,9 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'node:path'
+import UnoCSS from 'unocss/vite'
+import svgLoader from 'vite-svg-loader'
+import settingsUno from './plugins/settings/uno.config'
 
 export default defineConfig({
   main: {
@@ -17,7 +20,9 @@ export default defineConfig({
     },
   },
   renderer: {
-    root: 'src/client', plugins: [vue()],
+    root: 'src/client',
+    plugins: [vue(), svgLoader(), UnoCSS({ ...settingsUno, content: { filesystem: ['plugins/settings/src/**/*.{vue,js,ts}'] } })],
+    resolve: { alias: { '@renderer': resolve('plugins/launcher/renderer/src'), '@shared': resolve('plugins/ztools-shared') } },
     build: { outDir: resolve('out/renderer'), rollupOptions: { input: resolve('src/client/index.html') } },
   },
 })

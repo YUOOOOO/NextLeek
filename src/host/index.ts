@@ -10,7 +10,7 @@ import type { CommandResult } from '../shared/contracts'
 import { argumentsCount, boolean, identifier, settingsPatch, launcherSearchRequest, searchItemId } from '../shared/validation'
 import { createRuntime, type Runtime } from './runtime'
 import type { DesktopService } from './services/contracts'
-import { createUpdater, type OnlineUpdater } from './updater'
+import { updaterPlugin, type OnlineUpdater } from '../../plugins/updater/host'
 import { getApplicationIcon } from './services/application-icons'
 import { createPluginViewAdapter } from './services/plugin-views'
 
@@ -344,7 +344,7 @@ exit 1
       tray.on('click', toggle)
       return () => tray.destroy()
     }, 'system tray')
-    const updater = await createUpdater(ctx, {
+    const updaterFiber = ctx.plugin(updaterPlugin({
       app,
       emit,
       async prepareInstall() {
@@ -352,7 +352,9 @@ exit 1
         cleanup ??= runtime!.dispose()
         await cleanup
       },
-    })
+    }))
+    await updaterFiber.await()
+    const updater = ctx.get('updater')!
     installIPC(runtime, view, rendererURL, frameNonce, setHotkeyCapture, setLauncherHeight, startWindowDrag, endWindowDrag, updater)
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
     show()
