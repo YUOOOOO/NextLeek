@@ -311,6 +311,16 @@ try {
   const mainQuery = page.locator('.app-shell > .search-header .search-input')
   const group = page.locator('[data-testid="search-provider"][data-provider-id="everything"]')
   const rows = group.getByTestId('search-result-row')
+  await page.evaluate(() => window.desktop.updateSettings({ hotkey: 'Alt+Space' }))
+  const restoreAfterExternalOpen = async () => {
+    const query = await mainQuery.inputValue()
+    const count = await rows.count()
+    await eventually('External application did not hide the blurred launcher', async () => await powershell(`(Get-Process -Id ${app.pid}).MainWindowHandle`) === '0')
+    await powershell("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('% ')")
+    await eventually('Physical shortcut did not restore the launcher', async () => await powershell(`(Get-Process -Id ${app.pid}).MainWindowHandle`) !== '0')
+    assert.equal(await mainQuery.inputValue(), query)
+    assert.equal(await rows.count(), count)
+  }
   const showQuery = async (value, expected) => {
     await mainQuery.fill(value)
     await eventually(`Main launcher did not show ${value} results`, async () => (await group.getAttribute('data-status')) === 'ready' && (await rows.count()) === expected)
@@ -339,10 +349,12 @@ try {
     return editors.length ? editors : false
   })
   await writeFile(join(evidence, 'file-open-processes.json'), JSON.stringify(fileEditors, null, 2))
+  await restoreAfterExternalOpen()
   await page.screenshot({ path: join(evidence, 'main-file-open.png') })
   await showQuery('打开安全目录', 1)
   await rows.getByTestId('search-result-open').click()
   await eventually('shell.openPath did not open the safe real folder in Explorer', async () => (await explorerShows(join(fixtureDirectory, folders[2]))) === 'yes')
+  await restoreAfterExternalOpen()
   await showQuery('Unicode 中文,逗号', 1)
   await rows.click({ button: 'right' })
   await page.getByTestId('search-result-copy-path').click()
@@ -352,6 +364,8 @@ try {
   await rows.click({ button: 'right' })
   await page.getByTestId('search-result-reveal').click()
   await eventually('shell.showItemInFolder did not select the real Unicode file in Explorer', async () => (await explorerShows(dirname(fixtures.at(-1).path), fixtures.at(-1).path)) === 'yes')
+  await restoreAfterExternalOpen()
+  checks.push('Opening editors and Explorer hides the blurred launcher; physical shortcut restores the same query and results')
   await page.screenshot({ path: join(evidence, 'main-file-actions.png') })
   checks.push('Actual main top field searches 1.txt and directory-only vscode/Code.exe; main rows paginate and perform real text-file open, folder open, Explorer file reveal, and system clipboard copy')
   // Auto-start is the production recovery contract. Do not query while our
