@@ -104,7 +104,9 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     },
     searchLauncher(request: LauncherSearchRequest) {
       const validated = launcherSearchRequest(request)
-      return serialize(() => ctx.get('search')!.search(validated))
+      // 查询不能占用变更队列；旧查询由渲染端版本号隔离，服务释放由 Cordis effect 管理。
+      if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
+      return ctx.get('search')!.search(validated)
     },
     performSearchAction(providerId: string, itemId: string, action: string) {
       identifier(providerId); searchItemId(itemId); identifier(action)
