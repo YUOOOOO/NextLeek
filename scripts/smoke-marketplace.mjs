@@ -129,10 +129,15 @@ async function openMarketplace() {
   await page.getByRole('button', { name: '打开市场', exact: true }).click()
   await page.getByTestId('plugin-market').waitFor({ state: 'visible', timeout: 30000 })
   await page.getByTestId('plugin-market-back').click()
+  assert.equal(await page.locator('.settings-sidebar .active').textContent(), '已安装插件')
   await page.getByRole('button', { name: '打开设置', exact: true }).click()
   await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
   await page.locator('[data-testid="plugin-market"]').waitFor({ state: 'visible', timeout: 30000 })
   await page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]').waitFor({ state: 'visible', timeout: 60000 })
+  await page.getByTestId('plugin-market-back').click()
+  assert.equal(await page.locator('.settings-sidebar .active').textContent(), '通用设置')
+  await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
+  await page.getByTestId('plugin-market').waitFor({ state: 'visible', timeout: 30000 })
   checks.push('Opened marketplace from both the built-in plugin row and the settings navigation menu')
 }
 async function invokeRejected(plugin, method, args) {

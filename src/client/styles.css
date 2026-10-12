@@ -111,8 +111,11 @@ button { border: 0; }
 .brand-button svg { width: var(--space-8); height: var(--space-8); }
 .back-button { display: grid; place-items: center; padding: var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
 .back-button:hover { background: var(--surface-hover); color: var(--ink); }
-.launcher { flex: 1; min-height: 0; width: 100%; overflow-y: auto; }
+.launcher { position: relative; flex: 1; min-height: 0; width: 100%; overflow-y: auto; }
 .launcher-content { display: flow-root; padding: var(--space-half) 0 0; }
+.launcher--searching { overflow: hidden; }
+.launcher--searching .launcher-content { visibility: hidden; }
+.search-provider-progress { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; color: var(--muted); text-align: center; }
 .launcher section { margin-bottom: var(--space-1); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: var(--section-height); padding: var(--space-half) var(--space-3); margin-bottom: var(--space-half); }
 h1, h2, p { margin: 0; }

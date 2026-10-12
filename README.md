@@ -12,7 +12,7 @@ NextTools is a desktop-first command launcher built with Electron, Vue 3, TypeSc
 - Light, dark, system themes and six accent colors in General Settings, alongside configurable global shortcuts.
 - Explicit Windows NSIS update check, download, install, and relaunch flow.
 
-In the marketplace, browse and install plugins under Discover; open, enable/disable, or uninstall them under Installed. Package updates appear in Discover when a newer version is available.
+In the marketplace, browse and install plugins under Discover; open, enable/disable, or uninstall them under Installed. Package updates appear in Discover when a newer version is available. Back returns to the settings or installed-plugin menu used to enter the marketplace; an open plugin first returns to the marketplace list.
 
 ## Development
 

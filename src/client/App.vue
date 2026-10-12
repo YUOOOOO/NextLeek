@@ -16,6 +16,7 @@ const errorStrip = ref<HTMLElement | null>(null)
 const stateMessage = ref<HTMLElement | null>(null)
 const selected = ref(0)
 const hotkeyInput = ref<HTMLInputElement | null>(null)
+const marketReturnPage = ref<'settings' | 'plugins'>('settings')
 const capturingHotkey = ref(false)
 const hotkey = ref('')
 const systemDark = ref(false)
@@ -106,7 +107,9 @@ function scheduleLauncherHeight() {
           + (footer.value?.getBoundingClientRect().height ?? 0) + (errorStrip.value?.getBoundingClientRect().height ?? 0)
           + (stateMessage.value?.getBoundingClientRect().height ?? 0) + 1
         : 690
-      const nextHeight = Math.min(690, Math.ceil(height))
+      const nextHeight = desktop.page === 'launcher' && desktop.searchLoading
+        ? window.innerHeight
+        : Math.min(690, Math.ceil(height))
       if (nextHeight === requestedLauncherHeight) return
       requestedLauncherHeight = nextHeight
       void desktop.setLauncherHeight(nextHeight)
@@ -121,7 +124,12 @@ function observeLauncherLayout() {
   scheduleLauncherHeight()
 }
 watch([header, launcherContent, footer, errorStrip, stateMessage], observeLauncherLayout, { flush: 'post' })
-watch([() => desktop.page, launcherExpanded, () => settings.value?.compact, () => desktop.focusRequest], scheduleLauncherHeight, { flush: 'post' })
+watch([() => desktop.page, () => desktop.searchLoading, launcherExpanded, () => settings.value?.compact, () => desktop.focusRequest], scheduleLauncherHeight, { flush: 'post' })
+watch(() => desktop.page, (page, previous) => {
+  if (page === 'plugin-market' && previous !== 'plugin-market') {
+    marketReturnPage.value = previous === 'plugins' ? 'plugins' : 'settings'
+  }
+}, { flush: 'sync' })
 watch(() => desktop.page, async page => {
   selected.value = 0
   void releaseHotkeyCapture()
@@ -184,7 +192,7 @@ function keydown(event: KeyboardEvent) {
     } else void desktop.hide()
     return
   }
-  if (desktop.page !== 'launcher' || !resultCount.value || desktop.busy || desktop.searchActionBusy) return
+  if (desktop.page !== 'launcher' || !resultCount.value || desktop.busy || desktop.searchLoading || desktop.searchActionBusy) return
   if (target.closest('.command-context-menu, .brand-button')) return
   const resultTarget = target.closest('.command-launch, .search-result-open')
   if (event.key === 'Enter' && (target === search.value || resultTarget)) {
@@ -248,7 +256,7 @@ onUnmounted(() => {
 <template>
   <div class="app-shell" :class="{ dark, compact: settings?.compact, collapsed: !launcherExpanded }" :data-accent="settings?.accent ?? 'green'">
     <header ref="header" class="search-header">
-      <button v-if="desktop.page !== 'launcher'" class="back-button" aria-label="返回启动器" @click="desktop.navigate('launcher')"><AppIcon name="back" /></button>
+      <button v-if="desktop.page !== 'launcher'" class="back-button" :aria-label="desktop.page === 'plugin-market' ? '返回菜单列表' : '返回启动器'" @click="desktop.navigate(desktop.page === 'plugin-market' ? marketReturnPage : 'launcher')"><AppIcon name="back" /></button>
       <input ref="search" v-model="desktop.query" class="search-input" data-testid="launcher-query" type="search" aria-label="搜索应用、文件和指令" placeholder="搜索应用、文件和指令" autocomplete="off" spellcheck="false" :disabled="desktop.loading || !desktop.snapshot" @compositionstart="desktop.setSearchComposing(true)" @compositionend="desktop.setSearchComposing(false)" />
       <button class="brand-button" aria-label="打开设置" title="NextTools · 设置" @click="desktop.navigate('settings')"><AppIcon name="brand" /></button>
     </header>
@@ -256,7 +264,7 @@ onUnmounted(() => {
     <div v-if="desktop.error" ref="errorStrip" class="error-strip" role="alert"><span>{{ desktop.error }}</span><button v-if="!desktop.snapshot" @click="desktop.initialize()">重新连接</button><button v-else aria-label="关闭错误提示" @click="desktop.error = ''"><AppIcon name="close" /></button></div>
     <main v-if="desktop.loading" ref="stateMessage" class="state-message" role="status">正在连接桌面运行时…</main>
     <main v-else-if="!desktop.snapshot" ref="stateMessage" class="state-message"><AppIcon name="command" /><h1>无法连接桌面运行时</h1><p>未读取到设置和指令。请重试连接，或重新打开应用。</p><button class="text-button" @click="desktop.initialize()">重新连接</button></main>
-    <main v-else-if="desktop.page === 'launcher' && launcherExpanded" class="launcher" aria-label="启动器" :aria-busy="desktop.busy">
+    <main v-else-if="desktop.page === 'launcher' && launcherExpanded" class="launcher" :class="{ 'launcher--searching': desktop.searchLoading }" aria-label="启动器" :aria-busy="desktop.busy || desktop.searchLoading">
       <div ref="launcherContent" class="launcher-content">
       <section v-for="section in commandSections" :key="section.id" :aria-labelledby="`${section.id}-heading`" :data-command-section="section.id">
         <div class="section-heading"><h1 :id="`${section.id}-heading`">{{ section.title }}</h1><button v-if="section.total > 18" class="section-expand" :aria-expanded="expandedSections.includes(section.id)" @click="toggleSection(section.id)">{{ expandedSections.includes(section.id) ? '收起' : `展开 (${section.total})` }}</button></div>
@@ -275,13 +283,13 @@ onUnmounted(() => {
           </div>
         </section>
         <div v-if="applicationGroup && (applicationGroup.status !== 'ready' || applicationGroup.message)" class="search-provider-status" data-testid="search-provider-status" :data-provider-id="applicationGroup.providerId" :data-status="applicationGroup.status" role="status">{{ applicationGroup.message || '应用搜索暂时不可用。' }}<button v-if="applicationGroup.status !== 'ready'" class="text-button" :disabled="desktop.searchLoading" @click="desktop.searchLauncher()">重试</button></div>
-        <p v-if="desktop.searchLoading" class="search-provider-progress" data-testid="search-loading" role="status">正在搜索…</p>
         <div v-if="desktop.searchError" class="error-strip" data-testid="search-error" role="alert"><span>{{ desktop.searchError }}</span><button class="text-button" data-testid="search-provider-retry" :disabled="desktop.searchLoading" @click="desktop.searchLauncher()">重试</button></div>
         <SearchProviderResults v-for="section in providerSections" :key="section.group.providerId" :group="section.group" :offset="section.offset" :selected="selected" :loading="desktop.searchLoading" :disabled="desktop.busy || desktop.searchActionBusy" @select="selected = $event" @action="desktop.performSearchAction" @retry="desktop.searchLauncher()" @load-more="desktop.searchLauncher" />
         <p v-if="desktop.searchFeedback" class="search-feedback" data-testid="search-feedback" role="status">{{ desktop.searchFeedback }}</p>
       </template>
       <div v-if="!resultCount && !desktop.searchLoading && !desktop.searchError && !desktop.searchGroups.some(group => group.status !== 'ready')" class="empty-state"><h2>{{ searchMode ? '没有匹配的结果' : '暂无可用指令' }}</h2><p>{{ searchMode ? '试试应用名称、文件名、路径或指令关键词。' : '打开设置查看已安装插件，或搜索其他指令。' }}</p><button v-if="!searchMode" class="text-button" @click="desktop.navigate('plugins')">查看已安装插件</button></div>
       </div>
+      <p v-if="desktop.searchLoading" class="search-provider-progress" data-testid="search-loading" role="status">正在搜索…</p>
     </main>
     <div v-else-if="desktop.page !== 'launcher' && desktop.page !== 'plugin-market'" class="settings-layout">
       <nav class="settings-sidebar" aria-label="设置导航"><button v-for="item in navigation" :key="item.id" :class="{ active: desktop.page === item.id }" :aria-current="desktop.page === item.id ? 'page' : undefined" @click="desktop.navigate(item.id)"><AppIcon :name="item.icon" />{{ item.label }}</button></nav>
@@ -324,7 +332,7 @@ onUnmounted(() => {
         </template>
       </main>
     </div>
-    <PluginMarket v-show="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" :active="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" @back="desktop.navigate('launcher')" />
+    <PluginMarket v-show="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" :active="desktop.page === 'plugin-market' && !!desktop.snapshot && !desktop.loading" @back="desktop.navigate(marketReturnPage)" />
     <footer v-if="desktop.snapshot && desktop.page === 'launcher' && launcherExpanded" ref="footer" class="launcher-footer"><span><kbd>↑ ↓ ← →</kbd> 选择 <kbd>Enter</kbd> 打开</span><span><kbd>Esc</kbd> {{ searchMode ? '清除搜索' : '隐藏窗口' }}</span></footer>
   </div>
 </template>

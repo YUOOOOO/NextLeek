@@ -259,7 +259,7 @@ onUnmounted(() => { disposed = true; closePlugin(); window.removeEventListener('
 <template>
   <section class="plugin-market" data-testid="plugin-market" aria-label="插件市场" @keydown="onKey">
     <header class="plugin-market__header">
-      <button class="back-button" data-testid="plugin-market-back" :aria-label="opened ? '返回插件列表' : '返回启动器'" @click="back"><AppIcon name="back" /></button>
+      <button class="back-button" data-testid="plugin-market-back" :aria-label="opened ? '返回插件列表' : '返回菜单列表'" @click="back"><AppIcon name="back" /></button>
       <div><h1>{{ opened ? opened.name : '插件市场' }}</h1><p>{{ opened ? '插件在独立沙箱中运行' : '发现插件，让 NextTools 更适合你' }}</p></div>
       <button v-if="!opened" class="text-button" data-testid="plugin-market-refresh" :disabled="disabled" @click="load">刷新</button>
       <button v-else class="text-button" data-testid="plugin-market-close" @click="closePlugin">返回列表</button>
