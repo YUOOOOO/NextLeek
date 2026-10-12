@@ -102,6 +102,12 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     getSnapshot: snapshot,
     listCommands: () => ctx.get('commands')!.list(),
     invokePlugin(pluginId: string, method: string, args: unknown) {
+      // Data requests must not hold the mutation queue: disabling their provider
+      // needs to reach the market immediately so it can abort in-flight work.
+      if (pluginId === 'plugin-market' && (method === 'invokeCapability' || method === 'configureSource' || method === 'close')) {
+        if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
+        return ctx.get('pluginEndpoints')!.invoke(pluginId, method, args)
+      }
       return serialize(() => ctx.get('pluginEndpoints')!.invoke(pluginId, method, args))
     },
     searchLauncher(request: LauncherSearchRequest) {

@@ -14,7 +14,6 @@ const launcherContent = ref<HTMLElement | null>(null)
 const footer = ref<HTMLElement | null>(null)
 const errorStrip = ref<HTMLElement | null>(null)
 const stateMessage = ref<HTMLElement | null>(null)
-const themeControl = ref<HTMLSelectElement | null>(null)
 const selected = ref(0)
 const hotkeyInput = ref<HTMLInputElement | null>(null)
 const capturingHotkey = ref(false)
@@ -85,8 +84,8 @@ const accents = [
 ] as const
 const navigation = [
   { id: 'settings', label: '通用设置', icon: 'gear' },
-  { id: 'theme', label: '外观主题', icon: 'palette' },
   { id: 'plugins', label: '已安装插件', icon: 'puzzle' },
+  { id: 'plugin-market', label: '插件市场', icon: 'store' },
 ] as const
 
 watch(() => settings.value?.hotkey, value => { hotkey.value = value ?? '' })
@@ -128,7 +127,6 @@ watch(() => desktop.page, async page => {
   void releaseHotkeyCapture()
   await nextTick()
   if (page === 'launcher') search.value?.focus()
-  if (page === 'theme') themeControl.value?.focus()
 })
 watch(() => desktop.focusRequest, async () => {
   selected.value = 0
@@ -136,8 +134,7 @@ watch(() => desktop.focusRequest, async () => {
   await nextTick()
   if (desktop.page === 'launcher') search.value?.focus()
   else if (!document.activeElement?.closest('.settings-layout')) {
-    if (desktop.page === 'theme') themeControl.value?.focus()
-    else search.value?.focus()
+    search.value?.focus()
   }
 })
 
@@ -295,6 +292,8 @@ onUnmounted(() => {
           <div class="setting-row"><div><label id="autostart-label">开机自启</label><p>登录电脑后自动运行 NextTools</p></div><button class="switch" role="switch" aria-labelledby="autostart-label" :aria-checked="settings.autostart" :disabled="desktop.busy" @click="desktop.update({ autostart: !settings.autostart })"><span /></button></div>
           <div class="setting-row"><div><label id="compact-label">紧凑顶部栏</label><p>缩小搜索框，留出更多内容空间</p></div><button class="switch" role="switch" aria-labelledby="compact-label" :aria-checked="settings.compact" :disabled="desktop.busy" @click="desktop.update({ compact: !settings.compact })"><span /></button></div>
           <div class="setting-row"><div><label id="escape-label">ESC 隐藏</label><p>默认返回搜索；开启后在页面中按 Esc 隐藏窗口，下次唤出保留当前页面</p></div><button class="switch" role="switch" aria-labelledby="escape-label" :aria-checked="settings.escHide" :disabled="desktop.busy" @click="desktop.update({ escHide: !settings.escHide })"><span /></button></div>
+          <div class="setting-row"><div><label for="theme">主题设置</label><p>选择应用的主题外观</p></div><select id="theme" :value="settings.theme" :disabled="desktop.busy" @change="changeTheme"><option value="system">跟随系统</option><option value="light">亮色</option><option value="dark">暗色</option></select></div>
+          <div class="setting-row"><div><h2 id="accent-label">主题色</h2><p>自定义应用的主题色调</p></div><div class="accent-options" role="group" aria-labelledby="accent-label"><button v-for="accent in accents" :key="accent.id" class="accent-swatch" :data-swatch="accent.id" :aria-label="accent.label" :aria-pressed="settings.accent === accent.id" :disabled="desktop.busy" @click="desktop.update({ accent: accent.id })"><span v-if="settings.accent === accent.id" /></button></div></div>
           <section class="setting-row update-row" aria-labelledby="update-heading" :aria-busy="updateInProgress">
             <div class="update-info">
               <h2 id="update-heading">在线更新</h2>
@@ -318,15 +317,10 @@ onUnmounted(() => {
             </div>
           </section>
         </template>
-        <template v-else-if="desktop.page === 'theme' && settings">
-          <h1 class="sr-only">外观主题</h1>
-          <div class="setting-row"><div><label for="theme">主题设置</label><p>选择应用的主题外观</p></div><select id="theme" ref="themeControl" :value="settings.theme" :disabled="desktop.busy" @change="changeTheme"><option value="system">跟随系统</option><option value="light">亮色</option><option value="dark">暗色</option></select></div>
-          <div class="setting-row"><div><h2 id="accent-label">主题色</h2><p>自定义应用的主题色调</p></div><div class="accent-options" role="group" aria-labelledby="accent-label"><button v-for="accent in accents" :key="accent.id" class="accent-swatch" :data-swatch="accent.id" :aria-label="accent.label" :aria-pressed="settings.accent === accent.id" :disabled="desktop.busy" @click="desktop.update({ accent: accent.id })"><span v-if="settings.accent === accent.id" /></button></div></div>
-        </template>
         <template v-else-if="desktop.page === 'plugins'">
           <div class="plugins-heading"><h1>已安装插件</h1><span>{{ desktop.snapshot.plugins.length }} 个插件</span></div>
           <p v-if="!desktop.snapshot.plugins.length" class="inline-empty">运行时尚未注册插件。插件加载后会显示在这里。</p>
-          <article v-for="plugin in desktop.snapshot.plugins" :key="plugin.id" class="plugin-row"><span class="plugin-icon"><AppIcon name="puzzle" /></span><div class="plugin-info"><h2>{{ plugin.name }} <span class="plugin-version">v{{ plugin.version }}</span></h2><p>{{ plugin.id }}</p><span class="plugin-status">{{ plugin.status }}<template v-if="plugin.protected"> · 内置核心</template></span></div><button class="switch" role="switch" :aria-label="`启用${plugin.name}`" :aria-checked="plugin.enabled" :disabled="desktop.busy || plugin.protected" @click="desktop.togglePlugin(plugin.id, !plugin.enabled)"><span /></button></article>
+          <article v-for="plugin in desktop.snapshot.plugins" :key="plugin.id" class="plugin-row"><span class="plugin-icon"><AppIcon name="puzzle" /></span><div class="plugin-info"><h2>{{ plugin.name }} <span class="plugin-version">v{{ plugin.version }}</span></h2><p>{{ plugin.id }}</p><span class="plugin-status">{{ plugin.status }}<template v-if="plugin.protected"> · 内置核心</template></span></div><button v-if="plugin.id === 'plugin-market'" class="text-button" :disabled="desktop.busy || !plugin.enabled" @click="desktop.navigate('plugin-market')">打开市场</button><button class="switch" role="switch" :aria-label="`启用${plugin.name}`" :aria-checked="plugin.enabled" :disabled="desktop.busy || plugin.protected" @click="desktop.togglePlugin(plugin.id, !plugin.enabled)"><span /></button></article>
         </template>
       </main>
     </div>

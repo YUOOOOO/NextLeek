@@ -14,7 +14,7 @@ export const settingsPlugin = {
 export const themePlugin = {
   name: 'theme', inject: ['commands'],
   apply(ctx: Context) {
-    navigation(ctx, 'theme.open', '主题与外观', '系统、亮色、暗色与六种主题色', 'palette', 'theme', ['theme', '主题', 'zhuti', '外观'])
+    navigation(ctx, 'theme.open', '主题与外观', '系统、亮色、暗色与六种主题色', 'palette', 'settings', ['theme', '主题', 'zhuti', '外观'])
   },
 }
 export const everythingSearchPlugin = {

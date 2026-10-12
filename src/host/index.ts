@@ -40,7 +40,7 @@ async function start() {
   const window = new BrowserWindow({
     width: 980, height: 82, minWidth: 680, minHeight: 64, show: false,
     title: 'NextTools', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
-    icon: join(iconDirectory, 'icon-256.png'),
+    icon: join(iconDirectory, process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
   })
   const view = new WebContentsView({ webPreferences: {

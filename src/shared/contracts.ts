@@ -15,7 +15,7 @@ export interface Command {
   icon: string
   keywords: string[]
 }
-export type Page = 'launcher' | 'settings' | 'plugins' | 'theme' | 'plugin-market'
+export type Page = 'launcher' | 'settings' | 'plugins' | 'plugin-market'
 export interface CommandResult { navigate?: Page }
 export interface PluginInfo {
   id: string

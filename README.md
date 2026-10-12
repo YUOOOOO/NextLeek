@@ -7,10 +7,12 @@ NextTools is a desktop-first command launcher built with Electron, Vue 3, TypeSc
 - ZTools-style launcher with full-width search results.
 - Built-in application and Everything file search on Windows.
 - Protected built-in search plugin with reversible Cordis lifecycle effects.
-- Built-in plugin marketplace backed by [NextLeek-Plugins](https://github.com/YUOOOOO/NextLeek-Plugins).
+- Built-in plugin marketplace backed by [NextLeek-Plugins](https://github.com/YUOOOOO/NextLeek-Plugins), accessible from Settings → Plugin Marketplace or the built-in marketplace plugin's Open Market button.
 - Sandboxed static plugin pages with verified package hashes and a read-only runtime summary bridge.
-- Light, dark, system themes and configurable global shortcuts.
+- Light, dark, system themes and six accent colors in General Settings, alongside configurable global shortcuts.
 - Explicit Windows NSIS update check, download, install, and relaunch flow.
+
+In the marketplace, browse and install plugins under Discover; open, enable/disable, or uninstall them under Installed. Package updates appear in Discover when a newer version is available.
 
 ## Development
 

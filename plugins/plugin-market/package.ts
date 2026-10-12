@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import { unzipSync } from 'fflate'
-import type { MarketEntry } from './shared'
+import type { MarketEntry, MarketManifest } from './shared'
+import { compareVersions, validateDeclarations, validateVersion } from './capabilities'
 
 export const CATALOG_URL = 'https://raw.githubusercontent.com/YUOOOOO/NextLeek-Plugins/main/index.json'
 export const MAX_PACKAGE_BYTES = 16 * 1024 * 1024
@@ -10,7 +11,7 @@ const MAX_FILES = 512
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 
 export function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Expected an object')
+  if (!value || typeof value !== 'object' || Array.isArray(value) || ![null, Object.prototype].includes(Object.getPrototypeOf(value)) || Object.keys(value).some(key => ['__proto__', 'prototype', 'constructor'].includes(key.toLowerCase()))) throw new TypeError('Expected a safe plain object')
   return value as Record<string, unknown>
 }
 function text(value: unknown, field: string, max = 2048): string {
@@ -19,38 +20,12 @@ function text(value: unknown, field: string, max = 2048): string {
 }
 export function pluginId(value: unknown): string {
   const id = text(value, 'plugin id', 128)
-  if (!/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(id)) throw new TypeError('Invalid plugin id')
+  if (!/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(id) || ['__proto__', 'prototype', 'constructor'].includes(id)) throw new TypeError('Invalid plugin id')
   return id
 }
-function version(value: unknown): string {
-  const result = text(value, 'version', 64)
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(result)) throw new TypeError('Invalid version')
-  return result
-}
+function version(value: unknown): string { return validateVersion(value) }
 export function ensureCompatible(current: string, minimum: string): void {
-  version(current); version(minimum)
-  const [core, prerelease] = current.split('-')
-  const [minCore, minPrerelease] = minimum.split('-')
-  const actual = core!.split('.').map(Number)
-  const required = minCore!.split('.').map(Number)
-  for (let index = 0; index < 3; index++) {
-    if (actual[index]! > required[index]!) return
-    if (actual[index]! < required[index]!) throw new Error(`Plugin requires NextTools ${minimum} or newer`)
-  }
-  if (prerelease && !minPrerelease) throw new Error(`Plugin requires NextTools ${minimum} or newer`)
-  if (prerelease && minPrerelease) {
-    const a = prerelease.split('.'); const b = minPrerelease.split('.')
-    for (let index = 0; index < Math.max(a.length, b.length); index++) {
-      if (a[index] === b[index]) continue
-      const left = a[index]; const right = b[index]
-      if (left === undefined) throw new Error(`Plugin requires NextTools ${minimum} or newer`)
-      if (right === undefined) return
-      const numericLeft = /^\d+$/.test(left); const numericRight = /^\d+$/.test(right)
-      const comparison = numericLeft && numericRight ? Number(left) - Number(right) : numericLeft ? -1 : numericRight ? 1 : left < right ? -1 : 1
-      if (comparison < 0) throw new Error(`Plugin requires NextTools ${minimum} or newer`)
-      return
-    }
-  }
+  if (compareVersions(current, minimum) < 0) throw new Error(`Plugin requires NextTools ${minimum} or newer`)
 }
 export function packageUrl(value: unknown): string {
   const input = text(value, 'package URL')
@@ -67,7 +42,12 @@ export function marketEntry(value: unknown): MarketEntry {
   const entry = object(value)
   const sha256 = text(entry.sha256, 'SHA-256', 64)
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new TypeError('Invalid SHA-256')
-  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions) }
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), sha256, packageUrl: packageUrl(entry.packageUrl), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry) }
+}
+function manifest(value: unknown): MarketManifest {
+  const entry = object(value)
+  if (entry.capabilities !== undefined && (!Array.isArray(entry.capabilities) || entry.capabilities.length)) throw new Error('Unsupported plugin capabilities')
+  return { id: pluginId(entry.id), name: text(entry.name, 'name', 128), version: version(entry.version), description: text(entry.description, 'description'), author: text(entry.author, 'author', 128), minCreatorVersion: version(entry.minCreatorVersion), permissions: permissions(entry.permissions), ...validateDeclarations(entry), entry: text(entry.entry, 'entry', 512) }
 }
 export function parseCatalog(bytes: Uint8Array): MarketEntry[] {
   const data = object(JSON.parse(utf8.decode(bytes)))
@@ -120,7 +100,12 @@ function inspectZip(bytes: Uint8Array): Set<string> {
   if (offset !== end) throw new Error('Invalid ZIP directory size')
   return names
 }
-export interface VerifiedPackage { entry: string; files: Record<string, Uint8Array> }
+function declarationFingerprint(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(declarationFingerprint).sort().join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${declarationFingerprint((value as Record<string, unknown>)[key])}`).join(',')}}`
+  return JSON.stringify(value)
+}
+export interface VerifiedPackage { entry: string; files: Record<string, Uint8Array>; manifest: MarketManifest }
 export function verifyPackage(bytes: Uint8Array, catalog: MarketEntry, creatorVersion: string): VerifiedPackage {
   ensureCompatible(creatorVersion, catalog.minCreatorVersion)
   if (createHash('sha256').update(bytes).digest('hex') !== catalog.sha256) throw new Error('Plugin package SHA-256 verification failed')
@@ -128,16 +113,16 @@ export function verifyPackage(bytes: Uint8Array, catalog: MarketEntry, creatorVe
   const files = unzipSync(bytes)
   if (Object.keys(files).length !== names.size || Object.keys(files).some(name => !names.has(name)) || Object.values(files).reduce((sum, file) => sum + file.length, 0) > MAX_EXPANDED_BYTES) throw new Error('Invalid decompressed package')
   if (!files['manifest.json']) throw new Error('Plugin manifest is missing')
-  const manifest = object(JSON.parse(utf8.decode(files['manifest.json'])))
-  for (const key of ['id', 'name', 'version', 'description', 'author', 'minCreatorVersion'] as const) if (manifest[key] !== catalog[key]) throw new Error(`Plugin manifest ${key} does not match marketplace index`)
-  permissions(manifest.permissions)
-  if (manifest.capabilities !== undefined && (!Array.isArray(manifest.capabilities) || manifest.capabilities.length)) throw new Error('Unsupported plugin capabilities')
-  const entry = text(manifest.entry, 'entry', 512); safePath(entry)
+  const parsedManifest = manifest(JSON.parse(utf8.decode(files['manifest.json'])))
+  for (const key of ['id', 'name', 'version', 'description', 'author', 'minCreatorVersion'] as const) if (parsedManifest[key] !== catalog[key]) throw new Error(`Plugin manifest ${key} does not match marketplace index`)
+  const catalogDeclarations = validateDeclarations(catalog)
+  if (declarationFingerprint(parsedManifest.dataSources ?? []) !== declarationFingerprint(catalogDeclarations.dataSources ?? []) || declarationFingerprint(parsedManifest.requires ?? []) !== declarationFingerprint(catalogDeclarations.requires ?? [])) throw new Error('Plugin manifest declarations do not match marketplace index')
+  const entry = parsedManifest.entry; safePath(entry)
   if (!entry.endsWith('.html') || !files[entry]) throw new Error('Only existing static HTML plugin entries are supported')
-  return { entry, files }
+  return { entry, files, manifest: parsedManifest }
 }
 const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf' }
-const bridge = `(()=>{let serial=0;const pending=new Map();window.addEventListener('message',event=>{const data=event.data;if(event.source!==parent||!data||data.type!=='nextleek:runtime-response'||typeof data.id!=='string')return;const item=pending.get(data.id);if(!item)return;pending.delete(data.id);clearTimeout(item.timer);data.error?item.reject(new Error(String(data.error))):item.resolve(data.result)});window.nextleek=Object.freeze({runtimeSummary:()=>new Promise((resolve,reject)=>{const id='summary-'+(++serial);const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Runtime summary timed out'))},5000);pending.set(id,{resolve,reject,timer});parent.postMessage({type:'nextleek:runtime-request',id,method:'runtimeSummary'},'*')})})})();`
+const bridge = `(()=>{let serial=0;const pending=new Map();window.addEventListener('message',event=>{const data=event.data;if(event.source!==parent||!data||data.type!=='nextleek:runtime-response'||typeof data.id!=='string')return;const item=pending.get(data.id);if(!item)return;pending.delete(data.id);clearTimeout(item.timer);data.error?item.reject(new Error(String(data.error))):item.resolve(data.result)});function request(method,args,timeout){return new Promise((resolve,reject)=>{if(pending.size>=64){reject(new Error('Too many pending runtime requests'));return}const id='runtime-'+(++serial);const timer=setTimeout(()=>{pending.delete(id);reject(new Error('Runtime request timed out'))},timeout);pending.set(id,{resolve,reject,timer});try{parent.postMessage({type:'nextleek:runtime-request',id,method,args},'*')}catch(error){pending.delete(id);clearTimeout(timer);reject(error)}})}window.nextleek=Object.freeze({runtimeSummary:()=>request('runtimeSummary',undefined,5000),invokeCapability:(sourcePluginId,sourceId,method,args={})=>request('invokeCapability',{sourcePluginId,sourceId,method,args},25000)})})();`
 function escapeScript(source: string): string { return source.replace(/<\/script/gi, '<\\/script') }
 export function renderPackage(pkg: VerifiedPackage): string {
   function resource(reference: string, origin: string): string {

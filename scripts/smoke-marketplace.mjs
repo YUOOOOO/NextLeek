@@ -92,6 +92,9 @@ async function launch() {
     }
     return false
   }, 45000)
+  // Keep CDP-driven desktop layouts active when macOS runs without a foreground GUI session.
+  const session = await page.context().newCDPSession(page)
+  await session.send('Emulation.setFocusEmulationEnabled', { enabled: true })
   await page.locator('[data-testid="launcher-query"]').waitFor({ state: 'visible', timeout: 30000 })
   return page
 }
@@ -121,12 +124,16 @@ async function quitProcess() {
   child = undefined
 }
 async function openMarketplace() {
-  await page.getByTestId('launcher-query').fill('插件市场')
-  const command = page.getByRole('button', { name: '插件市场', exact: true })
-  await command.waitFor({ state: 'visible', timeout: 30000 })
-  await command.click()
+  await page.getByRole('button', { name: '打开设置', exact: true }).click()
+  await page.getByRole('button', { name: '已安装插件', exact: true }).click()
+  await page.getByRole('button', { name: '打开市场', exact: true }).click()
+  await page.getByTestId('plugin-market').waitFor({ state: 'visible', timeout: 30000 })
+  await page.getByTestId('plugin-market-back').click()
+  await page.getByRole('button', { name: '打开设置', exact: true }).click()
+  await page.locator('.settings-sidebar').getByRole('button', { name: '插件市场', exact: true }).click()
   await page.locator('[data-testid="plugin-market"]').waitFor({ state: 'visible', timeout: 30000 })
   await page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]').waitFor({ state: 'visible', timeout: 60000 })
+  checks.push('Opened marketplace from both the built-in plugin row and the settings navigation menu')
 }
 async function invokeRejected(plugin, method, args) {
   return await bounded('Secure endpoint rejection', () => page.evaluate(async ({ plugin, method, args }) => {
@@ -164,6 +171,15 @@ async function assertDashboard(summary) {
   const bridged = await bounded('Sandbox runtime summary', () => frame.evaluate(async () => await window.nextleek.runtimeSummary()))
   assert.deepEqual(bridged, summary)
   await eventually('Dashboard did not render the actual runtime summary', async () => await frame.locator('#version').textContent() === `v${summary.version}` && await frame.locator('#status').textContent() === `运行正常 · ${summary.mode}`, 15000)
+  assert.equal(await frame.locator('#platform').textContent(), summary.platform)
+  assert.equal(await frame.locator('#mode').textContent(), summary.mode)
+  assert.equal(await frame.locator('#runtime-status').textContent(), summary.status)
+  assert.equal(await frame.locator('#installed').textContent(), String(summary.installed))
+  assert.equal(await frame.locator('#enabled').textContent(), String(summary.enabled))
+  await frame.getByRole('button', { name: '刷新概览', exact: true }).click()
+  await eventually('Dashboard refresh did not complete', async () => await frame.locator('#feedback').textContent() === '已获取最新宿主运行信息。')
+  assert.equal(await frame.locator('#version').textContent(), `v${summary.version}`)
+  checks.push('Dashboard refresh renders the real platform, mode, status and installed/enabled counts')
   const values = await bounded('Dashboard sandbox inspection', () => frame.evaluate(() => {
     let parentDom = 'denied'
     try { void window.parent.document; parentDom = 'allowed' } catch { /* sandbox isolation is expected */ }
@@ -222,7 +238,15 @@ try {
   checks.push('Secured bridge rejects an unknown endpoint and an unknown marketplace method')
 
   const installButton = page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"] [data-testid="plugin-market-install"]')
+  const installConfirmation = bounded('Install permission confirmation', async () => {
+    const dialog = await page.waitForEvent('dialog', { timeout: 15000 })
+    assert.equal(dialog.type(), 'confirm')
+    assert.match(dialog.message(), /权限：无/)
+    assert.match(dialog.message(), /独立沙箱/)
+    await dialog.accept()
+  })
   await installButton.click()
+  await installConfirmation
   await eventually('Marketplace install did not finish', async () => {
     const row = page.locator('[data-testid="plugin-market-entry"][data-plugin-id="com.nextleek.dashboard"]')
     const label = await row.locator('[data-testid="plugin-market-install"]').textContent().catch(() => '')

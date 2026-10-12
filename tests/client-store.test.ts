@@ -36,15 +36,15 @@ test('show clears launcher query while settings hide and escHide native close re
     receive!({ type: 'shown' })
     assert.equal(store.query, '')
     assert.equal(store.focusRequest, 2)
-    store.navigate('theme')
+    store.navigate('settings')
     store.query = '设置'
     hideFails = true
     await store.hide()
-    assert.equal(store.page, 'theme')
+    assert.equal(store.page, 'settings')
     assert.equal(store.query, '设置')
     hideFails = false
     await store.hide()
-    assert.equal(store.page, 'theme')
+    assert.equal(store.page, 'settings')
     assert.equal(store.query, '设置')
     receive!({ type: 'close-request' })
     assert.equal(store.page, 'launcher')
