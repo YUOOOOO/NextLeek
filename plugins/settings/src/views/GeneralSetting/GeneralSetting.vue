@@ -18,6 +18,7 @@ import {
   normalizeSearchWallpaperConfig,
   type SearchWallpaperConfig
 } from '@shared/searchWallpaper'
+import type { UpdateState } from '../../../../../src/shared/contracts'
 
 const { success, error, info, confirm } = useToast()
 
@@ -274,6 +275,42 @@ const colorPickerInput = ref<HTMLInputElement | null>(null)
 
 // 自动检查更新（保留用于设置持久化）
 const autoCheckUpdate = ref(true)
+const receiveBetaUpdates = ref(false)
+const updateState = ref<UpdateState | null>(null)
+const updateBusy = computed(() => !!updateState.value && ['checking', 'downloading', 'installing'].includes(updateState.value.status))
+let releaseUpdateListener: (() => void) | undefined
+
+// 单独持久化更新偏好，避免其他设置保存失败后仍触发更新检查。
+async function handleUpdatePreferencesChange(): Promise<void> {
+  try {
+    const previous = await window.ztools.internal.dbGet('settings-general')
+    await window.ztools.internal.dbPut('settings-general', {
+      ...previous,
+      autoCheckUpdate: autoCheckUpdate.value,
+      receiveBetaUpdates: receiveBetaUpdates.value
+    })
+    await window.ztools.internal.updaterSetAutoCheck(autoCheckUpdate.value)
+  } catch (err) {
+    error(err instanceof Error ? err.message : '更新设置保存失败')
+  }
+}
+
+// 按宿主更新状态执行检查、下载或确认后的重启安装。
+async function handleOnlineUpdate(): Promise<void> {
+  if (updateBusy.value) return
+  try {
+    if (updateState.value?.status === 'downloaded') {
+      if (!await confirm({ title: '安装更新', message: '更新已下载，是否立即重启并安装？' })) return
+      updateState.value = await window.desktop.installUpdate()
+    } else if (updateState.value?.status === 'available') {
+      updateState.value = await window.desktop.downloadUpdate()
+    } else {
+      updateState.value = await window.desktop.checkForUpdates()
+    }
+  } catch (err) {
+    error(err instanceof Error ? err.message : '在线更新失败')
+  }
+}
 
 // 主题色选项
 const themeColors = [
@@ -395,8 +432,9 @@ async function handleCompactMainWindowHeaderChange(): Promise<void> {
     if (!result.success) {
       throw new Error(result.error || '主窗口布局更新失败')
     }
-  } catch (error) {
-    console.error('设置主窗口紧凑顶部栏失败:', error)
+  } catch (err) {
+    console.error('设置主窗口紧凑顶部栏失败:', err)
+    error(err instanceof Error ? err.message : '主窗口布局更新失败')
   }
 }
 
@@ -999,8 +1037,9 @@ async function handleWindowMaterialChange(): Promise<void> {
     await window.ztools.internal.setWindowMaterial(windowMaterial.value)
     // 设置插件自己也需要更新 data-material 属性
     document.documentElement.setAttribute('data-material', windowMaterial.value)
-  } catch (error) {
-    console.error('更新窗口材质失败:', error)
+  } catch (err) {
+    console.error('更新窗口材质失败:', err)
+    error(err instanceof Error ? err.message : '窗口材质更新失败')
   }
 }
 
@@ -1234,6 +1273,7 @@ async function loadSettings(): Promise<void> {
       primaryColor.value = data.primaryColor ?? 'green'
       searchMode.value = data.searchMode ?? 'aggregate'
       autoCheckUpdate.value = data.autoCheckUpdate ?? true
+      receiveBetaUpdates.value = data.receiveBetaUpdates === true
       tabKeyFunction.value =
         data.tabKeyFunction ?? (data.tabTargetCommand ? 'target-command' : 'navigate')
       // Tab 键目标指令
@@ -1355,6 +1395,7 @@ async function saveSettings(): Promise<void> {
       proxyEnabled: proxyEnabled.value,
       proxyUrl: proxyUrl.value,
       autoCheckUpdate: autoCheckUpdate.value,
+      receiveBetaUpdates: receiveBetaUpdates.value,
       clipboardRetentionDays: clipboardRetentionDays.value,
       terminal: terminal.value,
       terminalCustomCommand: terminalCustomCommand.value
@@ -1370,6 +1411,7 @@ async function initializeSettings(): Promise<void> {
     // 平台会影响快捷键默认值和平台专属选项，需在设置表单展示前确定。
     await getPlatformInfo()
     await loadSettings()
+    updateState.value = await window.desktop.getUpdateState()
   } finally {
     settingsLoaded.value = true
   }
@@ -1378,11 +1420,15 @@ async function initializeSettings(): Promise<void> {
 // 初始化时加载设置
 onMounted(() => {
   document.addEventListener('click', handleQuickActionsClickOutside)
+  releaseUpdateListener = window.desktop.subscribe(event => {
+    if (event.type === 'update') updateState.value = event.update
+  })
   void initializeSettings()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleQuickActionsClickOutside)
+  releaseUpdateListener?.()
 })
 </script>
 
@@ -1641,73 +1687,6 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="setting-item wallpaper-setting-item">
-        <div class="setting-label">
-          <span>主搜索窗口壁纸</span>
-          <span class="setting-desc">图片副本保存在 .ztools/avatar，超宽图片会自动压缩</span>
-        </div>
-        <div class="setting-control wallpaper-control">
-          <div v-if="searchWallpaper" class="wallpaper-preview-wrapper">
-            <img
-              v-if="!searchWallpaperPreviewFailed"
-              :src="searchWallpaper.url"
-              class="wallpaper-preview"
-              alt="主搜索窗口壁纸预览"
-              draggable="false"
-              @load="searchWallpaperPreviewFailed = false"
-              @error="searchWallpaperPreviewFailed = true"
-            />
-            <div v-else class="wallpaper-preview wallpaper-preview-error">图片不可用</div>
-          </div>
-          <div class="wallpaper-actions">
-            <span v-if="searchWallpaper" class="wallpaper-file-name" :title="searchWallpaper.path">
-              {{ searchWallpaperFileName }}
-            </span>
-            <div class="wallpaper-buttons">
-              <button class="btn" @click="handleSelectSearchWallpaper">
-                {{ searchWallpaper ? '更换图片' : '选择图片' }}
-              </button>
-              <button v-if="searchWallpaper" class="btn" @click="handleClearSearchWallpaper">
-                清除
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="searchWallpaper" class="setting-item">
-        <div class="setting-label">
-          <span>壁纸透明度</span>
-          <span class="setting-desc">只调整壁纸图片层，不影响窗口和文字透明度</span>
-        </div>
-        <div class="setting-control opacity-control">
-          <Slider
-            v-model="searchWallpaper.opacity"
-            :min="0.05"
-            :max="1"
-            :step="0.05"
-            :formatter="(value) => `${Math.round(value * 100)}%`"
-            @change="handleSearchWallpaperEffectChange"
-          />
-        </div>
-      </div>
-
-      <div v-if="searchWallpaper" class="setting-item">
-        <div class="setting-label">
-          <span>壁纸模糊</span>
-          <span class="setting-desc">模糊仅作用于壁纸图片，范围 0 至 20 像素</span>
-        </div>
-        <div class="setting-control opacity-control">
-          <Slider
-            v-model="searchWallpaper.blur"
-            :min="0"
-            :max="20"
-            :step="1"
-            :formatter="(value) => `${value}px`"
-            @change="handleSearchWallpaperEffectChange"
-          />
-        </div>
-      </div>
     </div>
 
     <!-- ==================== 终端打开 ==================== -->
@@ -2233,6 +2212,46 @@ onUnmounted(() => {
             @blur="handleProxyUrlChange"
             @keyup.enter="handleProxyUrlChange"
           />
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <h3 class="setting-group-title">在线更新</h3>
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>当前版本 {{ updateState?.currentVersion }}</span>
+          <span class="setting-desc" role="status">{{ updateState?.message }}</span>
+          <span v-if="updateState?.progress" class="setting-desc">下载进度 {{ updateState.progress.percent.toFixed(1) }}%</span>
+        </div>
+        <div class="setting-control">
+          <button class="btn" :disabled="!updateState?.supported || updateBusy" @click="handleOnlineUpdate">
+            {{ updateState?.status === 'downloaded' ? '重启并安装' : updateState?.status === 'available' ? '下载更新' : updateBusy ? '更新处理中…' : '检查更新' }}
+          </button>
+        </div>
+      </div>
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>自动检查更新</span>
+          <span class="setting-desc">启动时及每 30 分钟检查，不会自动下载或安装</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input v-model="autoCheckUpdate" type="checkbox" aria-label="自动检查更新" :disabled="updateBusy" @change="handleUpdatePreferencesChange" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="setting-item">
+        <div class="setting-label">
+          <span>接收测试版更新</span>
+          <span class="setting-desc">包含 GitHub Releases 预发布版本，可能存在不稳定功能；关闭后仅接收正式版</span>
+        </div>
+        <div class="setting-control">
+          <label class="toggle">
+            <input v-model="receiveBetaUpdates" type="checkbox" aria-label="接收测试版更新" :disabled="updateBusy" @change="handleUpdatePreferencesChange" />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
       </div>
     </div>

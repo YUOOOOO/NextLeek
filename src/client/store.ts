@@ -114,7 +114,7 @@ export const useDesktopStore = defineStore('desktop', () => {
   function message(cause: unknown) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   }
-  // 页面导航保留查询；首页 Escape 的清空由界面显式处理。
+  // 页面导航与搜索页 Esc 隐藏均保留查询，唤出后继续使用。
   function navigate(target: typeof page.value) {
     page.value = target
   }

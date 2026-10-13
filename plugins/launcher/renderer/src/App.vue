@@ -5,6 +5,7 @@
       'app-container__plugin': currentView === ViewMode.Plugin,
       'has-search-wallpaper': hasSearchWallpaper
     }"
+    :style="{ '--launcher-header-height': `${resolveMainWindowHeaderHeight(windowStore.compactMainWindowHeader)}px` }"
   >
     <div
       v-if="hasSearchWallpaper"
@@ -63,6 +64,7 @@ import {
 } from './utils/convertKeyboardEvent'
 import { installLauncherBridge } from './bridge'
 import settingsLogo from '../../../settings/public/logo.png'
+import { resolveMainWindowHeaderHeight } from './shared/mainWindowLayout'
 import './style.css'
 
 // 原版组件保持完整，只有平台调用交给受限 Cordis 桥接。
@@ -194,9 +196,11 @@ function updateWindowHeight(): Promise<void> {
   return nextTick(() => {
     // 内嵌设置由宿主恢复固定内容高度，返回搜索的延迟测量不能再收缩它。
     if (props.embeddedSettings) return
-    const container = document.querySelector('.app-container')
-    if (container) {
-      const height = container.scrollHeight
+    const header = document.querySelector('.search-box-wrapper')
+    const results = document.querySelector('.scrollable-content')
+    if (header) {
+      // 测量结果内容而非已限高的视口，避免窗口收缩后无法随新数据长高。
+      const height = header.getBoundingClientRect().height + Math.min(541, results?.scrollHeight ?? 0)
       window.ztools.resizeWindow(height + 1)
     }
   })
@@ -543,19 +547,8 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
       return
     }
 
-    // 搜索页面 - 分步清除
-    if (searchQuery.value.trim()) {
-      // 第一步：清除输入框
-      searchQuery.value = ''
-    } else if (pastedImageData.value || pastedFilesData.value || pastedTextData.value) {
-      // 第二步：清除粘贴内容
-      pastedImageData.value = null
-      pastedFilesData.value = null
-      pastedTextData.value = null
-    } else {
-      // Esc 始终留在搜索窗口，不改变显示状态。
-      searchBoxRef.value?.focus()
-    }
+    // 搜索页 Esc 隐藏窗口，保留查询和选择供下次唤出恢复。
+    window.ztools.hideWindow()
     return
   }
 

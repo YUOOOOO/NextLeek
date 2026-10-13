@@ -1,6 +1,7 @@
 import { useCommandDataStore } from '../../launcher/renderer/src/stores/commandDataStore'
 import { createMarketBridge } from '../market-bridge'
 import { COMMAND_ALIASES_KEY, normalizeCommandAliases, type CommandAliasStore } from '../../launcher/renderer/src/shared/commandShared'
+import { searchWallpaperReference } from '../../ztools-shared/searchWallpaper'
 
 // 原版设置调用保留；只把底层 IPC 接到 Cordis 所有者，不覆盖启动器 API。
 export function installSettingsBridge(): () => void {
@@ -30,7 +31,10 @@ export function installSettingsBridge(): () => void {
     return () => { hotkeyCallbacks.delete(callback) }
   }
   // 原版设置的可选字段和响应式数据在边界转成端点要求的 JSON。
-  const invoke = (method: string, args: unknown = null) => api.invokePlugin('settings', method, JSON.parse(JSON.stringify(args)))
+  const invoke = (method: string, args: unknown = null) => {
+    const payload = method === 'updateSearchWallpaper' && Array.isArray(args) ? [searchWallpaperReference(args[0])] : args
+    return api.invokePlugin('settings', method, JSON.parse(JSON.stringify(payload)))
+  }
   const on = (name: string, callback: (...args: unknown[]) => void) => {
     const bucket = callbacks.get(name) ?? new Set(); callbacks.set(name, bucket); bucket.add(callback)
     return () => bucket.delete(callback)
@@ -65,7 +69,21 @@ export function installSettingsBridge(): () => void {
     offLogEntries: (fn: (...args: unknown[]) => void) => callbacks.get('log-entries')?.delete(fn),
     ...createMarketBridge(api),
   }
-  for (const method of ['registerGlobalShortcut', 'unregisterGlobalShortcut', 'registerAppShortcut', 'unregisterAppShortcut', 'updateGlobalShortcutConfig']) direct[method] = (...args: unknown[]) => api.invokePlugin('command-shortcuts', 'source', { method, args })
+  // 原版页面使用“插件显示名/指令”，原生注册必须使用 Cordis 的稳定命令 ID。
+  for (const method of ['registerGlobalShortcut', 'registerAppShortcut']) direct[method] = async (...args: unknown[]) => {
+    const target = args[1]
+    if (typeof target === 'string') {
+      const [snapshot, commands] = await Promise.all([api.getSnapshot(), api.listCommands()])
+      const command = commands.find(item => {
+        const plugin = snapshot.plugins.find(plugin => plugin.id === item.pluginId)
+        return item.id === target || [item.title, ...item.keywords].some(name =>
+          `${plugin?.name}/${name}` === target || `${item.pluginId}/${name}` === target)
+      })
+      if (command) args[1] = command.id
+    }
+    return api.invokePlugin('command-shortcuts', 'source', { method, args })
+  }
+  for (const method of ['unregisterGlobalShortcut', 'unregisterAppShortcut', 'updateGlobalShortcutConfig']) direct[method] = (...args: unknown[]) => api.invokePlugin('command-shortcuts', 'source', { method, args })
   for (const method of ['pinApp', 'unpinApp', 'pinToSuperPanel', 'unpinSuperPanelCommand', 'getSuperPanelPinned', 'getUsageStats', 'updatePinnedOrder']) direct[method] = (...args: unknown[]) => callSource(method, args)
   for (const name of ['LocalShortcutsChanged', 'AppsChanged', 'CommandAliasesChanged', 'DisabledCommandsChanged']) direct[`on${name}`] = (fn: (...args: unknown[]) => void) => callSource(`on${name}`, [fn])
   const internal = new Proxy(direct, { get(target, property: string) {

@@ -33,7 +33,8 @@ export function normalizeSearchWallpaperConfig(value: unknown): SearchWallpaperC
   const candidate = value as Partial<SearchWallpaperConfig>
   const path = typeof candidate.path === 'string' ? candidate.path.trim() : ''
   const url = typeof candidate.url === 'string' ? candidate.url.trim() : ''
-  if (!path || !url.startsWith('file:')) return null
+  const persistedPng = /^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(url)
+  if (!path || (!url.startsWith('file:') && !persistedPng)) return null
 
   return {
     path,
@@ -41,4 +42,11 @@ export function normalizeSearchWallpaperConfig(value: unknown): SearchWallpaperC
     opacity: clampWallpaperNumber(candidate.opacity, DEFAULT_SEARCH_WALLPAPER_OPACITY, 0.05, 1),
     blur: clampWallpaperNumber(candidate.blur, DEFAULT_SEARCH_WALLPAPER_BLUR, 0, 20)
   }
+}
+
+/** 已选图片由宿主持有，设置请求只携带引用及可调整效果。 */
+export function searchWallpaperReference(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const wallpaper = value as Record<string, unknown>
+  return { path: wallpaper.path, opacity: wallpaper.opacity, blur: wallpaper.blur }
 }

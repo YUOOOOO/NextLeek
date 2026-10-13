@@ -1097,7 +1097,7 @@ defineExpose({
 
 <style scoped>
 .scrollable-content {
-  max-height: 541px;
+  max-height: min(541px, calc(100vh - var(--launcher-header-height, 58px)));
   overflow-y: auto;
   overflow-x: hidden;
   user-select: none;

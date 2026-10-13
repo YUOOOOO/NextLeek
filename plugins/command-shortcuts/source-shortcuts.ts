@@ -74,6 +74,10 @@ export function installSourceShortcuts(ctx: Context) {
         if (!Array.isArray(records)) continue
         for (const record of records) {
           if (!record || typeof record !== 'object' || typeof record.target !== 'string') continue
+          // 已保存绑定以稳定命令 ID 恢复；无需再按可能改名的显示文本重建目标。
+          const scope = key === 'global-shortcuts' ? 'global' : 'application'
+          const binding = typeof record.shortcut === 'string' && ctx.storage.readShortcuts().find(item => item[scope] === commandAccelerator(record.shortcut))
+          if (binding && ctx.commands.has(binding.commandId)) continue
           try { await resolveTarget(record.target) }
           catch (error) { console.error('恢复快捷键目标失败:', record.target, error) }
         }

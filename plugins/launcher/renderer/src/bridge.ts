@@ -6,6 +6,7 @@ import settingsIcon from '../../../settings/src/assets/icons/settings.svg?url'
 import searchIcon from '../../../settings/src/assets/icons/search.svg?url'
 import pluginIcon from '../../../settings/src/assets/icons/plugin.svg?url'
 import storeIcon from '../../../settings/src/assets/icons/store.svg?url'
+import { searchWallpaperReference } from '../../../ztools-shared/searchWallpaper'
 
 const commandIcons: Record<string, string> = { settings: settingsIcon, palette: settingsIcon, search: searchIcon, blocks: pluginIcon, store: storeIcon }
 
@@ -93,7 +94,9 @@ export function installLauncherBridge(): () => void {
       return value
     },
     dbPut: async (key: string, value: unknown) => {
-      await invoke('settings', 'dbPut', { key, value })
+      const document = key === 'settings-general' && value && typeof value === 'object' && 'searchWallpaper' in value
+        ? { ...value, searchWallpaper: searchWallpaperReference(value.searchWallpaper) } : value
+      await invoke('settings', 'dbPut', { key, value: document })
       const event: Record<string, string> = { 'pinned-commands': 'PinnedChanged', 'command-history': 'HistoryChanged', 'command-aliases': 'CommandAliasesChanged', 'disable-commands': 'DisabledCommandsChanged' }
       if (event[key]) emit(event[key])
     },

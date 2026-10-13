@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import defaultAvatar from '../assets/image/default.png'
-import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '../shared/searchWallpaper'
+import { normalizeSearchWallpaperConfig, type SearchWallpaperConfig } from '../../../../ztools-shared/searchWallpaper'
 import {
   resolveVisibleAiRequestStatus,
   type AiRequestStatus,

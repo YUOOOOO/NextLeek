@@ -3,7 +3,7 @@
 // Ambient type declarations for renderer, so TS knows window.ztools
 
 import type { CommonKeyboardModifier } from './utils/convertKeyboardEvent'
-import type { SearchWallpaperConfig } from './shared/searchWallpaper'
+import type { SearchWallpaperConfig } from '../../../ztools-shared/searchWallpaper'
 import type { AiRequestStatusChange } from './shared/aiRequestStatus'
 
 /**

@@ -23,6 +23,15 @@ export function installSettingsEndpoints(ctx: Context, documents: SettingsDocume
   let logSubscribed = false
   let nextLogId = 0
   const persist = (key: string, value: unknown) => { documents.put(key, value); changed(key, value) }
+  // 已选壁纸只回传引用与效果参数，避免图片数据突破通用 IPC 大小限制。
+  const resolveWallpaper = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+    const wallpaper = value as Record<string, unknown>
+    if ('url' in wallpaper) return value
+    const previous = documents.get('settings-general') as { searchWallpaper?: Record<string, unknown> } | null
+    if (!previous?.searchWallpaper || wallpaper.path !== previous.searchWallpaper.path) throw new TypeError('Unknown selected wallpaper reference')
+    return { ...wallpaper, url: previous.searchWallpaper.url }
+  }
   const localShortcuts = createLocalShortcuts(documents, changed, options)
   const http = new HttpServer({ get: key => documents.get(key), put: persist,
     show: text => native.showMainWindow(text), hide: () => ctx.desktop.hide(), toggle: () => native.toggleMainWindow(),
@@ -72,9 +81,24 @@ export function installSettingsEndpoints(ctx: Context, documents: SettingsDocume
     }
     if (method === 'dbGet' || method === 'dbPut') {
       if (!input || typeof input !== 'object' || !('key' in input) || typeof input.key !== 'string') throw new TypeError('Invalid document request')
-      if (method === 'dbGet') return documents.get(input.key)
+      if (method === 'dbGet') {
+        const document = documents.get(input.key) as Record<string, unknown> | null
+        if (input.key === 'settings-general' && document?.searchWallpaper && typeof document.searchWallpaper === 'object') {
+          const wallpaper = document.searchWallpaper as Record<string, unknown>
+          if (typeof wallpaper.path === 'string' && wallpaper.path.startsWith('data:')) {
+            const updated = { ...document, searchWallpaper: { ...wallpaper, path: 'search-wallpaper.png' } }
+            persist(input.key, updated)
+            return updated
+          }
+        }
+        return document
+      }
       if (!('value' in input)) throw new TypeError('Document value is missing')
-      persist(input.key, input.value); return true
+      let document = input.value
+      if (input.key === 'settings-general' && document && typeof document === 'object' && !Array.isArray(document) && 'searchWallpaper' in document) {
+        document = { ...document, searchWallpaper: resolveWallpaper(document.searchWallpaper) }
+      }
+      persist(input.key, document); return true
     }
     if (method === 'getLocalShortcuts') return localShortcuts.getAll()
     if (method === 'openLocalShortcut') {
@@ -96,11 +120,19 @@ export function installSettingsEndpoints(ctx: Context, documents: SettingsDocume
     if (method === 'getLaunchAtLogin') return native.getLaunchAtLogin()
     if (method === 'setLaunchAtLogin') { await ctx.settings.update({ autostart: !!value }); return { success: true } }
     if (method === 'selectAvatar') return native.selectAvatar()
-    if (method === 'selectSearchWallpaper') { const selected = await native.selectSearchWallpaper(); return { ...selected, url: selected.path } }
+    if (method === 'selectSearchWallpaper') {
+      const selected = await native.selectSearchWallpaper()
+      if (!selected.success || !selected.path) return selected
+      const previous = documents.get('settings-general') as Record<string, unknown> | null
+      const wallpaper = { path: 'search-wallpaper.png', url: selected.path, opacity: 0.35, blur: 0 }
+      persist('settings-general', { ...previous, searchWallpaper: wallpaper })
+      ctx.desktop.emit({ type: 'source-event', name: 'update-search-wallpaper', payload: wallpaper })
+      return { ...selected, path: wallpaper.path, url: wallpaper.url }
+    }
     if (method === 'getCurrentWindowInfo') return native.getCurrentWindowInfo()
     if (method === 'setWindowOpacity') return native.setWindowOpacity(Number(value))
     if (method === 'setWindowDefaultHeight') return native.setWindowDefaultHeight(Number(value))
-    if (method === 'setWindowMaterial') return native.setWindowMaterial(value as 'mica' | 'acrylic' | 'none')
+    if (method === 'setWindowMaterial') { await native.setWindowMaterial(value as 'mica' | 'acrylic' | 'none'); return { success: true } }
     if (method === 'setTrayIconVisible') return native.setTrayIconVisible(!!value)
     if (method === 'setProxyConfig') return native.setProxyConfig(value as Parameters<SettingsNative['setProxyConfig']>[0])
     if (method === 'setIgnoreHotkeysOnFullscreen') return native.setIgnoreHotkeysOnFullscreen(!!value)
@@ -112,7 +144,16 @@ export function installSettingsEndpoints(ctx: Context, documents: SettingsDocume
     if (method === 'updateSuperPanelBlockedApps') return native.updateSuperPanelBlockedApps(value as Parameters<SettingsNative['updateSuperPanelBlockedApps']>[0])
     if (method === 'updateAcrylicOpacity') return native.setAcrylicOpacity(Number(value), Number(args[1]))
     if (method === 'updatePrimaryColor') { const previous = documents.get('settings-general') as Record<string, unknown> | null; persist('settings-general', { ...previous, primaryColor: value, customColor: args[1] }); return { success: true } }
-    if (preferenceFields[method]) { const previous = documents.get('settings-general') as Record<string, unknown> | null; persist('settings-general', { ...previous, [preferenceFields[method]]: value }); return { success: true } }
+    if (preferenceFields[method]) {
+      if (method === 'setCompactMainWindowHeader' && typeof value !== 'boolean') throw new TypeError('Invalid compact header setting')
+      const previous = documents.get('settings-general') as Record<string, unknown> | null
+      const preference = method === 'updateSearchWallpaper' ? resolveWallpaper(value) : value
+      persist('settings-general', { ...previous, [preferenceFields[method]]: preference })
+      if (method === 'setCompactMainWindowHeader' || method === 'updateSearchWallpaper') {
+        ctx.desktop.emit({ type: 'source-event', name: method === 'setCompactMainWindowHeader' ? 'update-compact-main-window-header' : 'update-search-wallpaper', payload: preference })
+      }
+      return { success: true }
+    }
     if (method === 'notifyDisabledCommandsChanged' || method === 'updateCommandAliases') { ctx.desktop.emit({ type: 'source-event', name: method === 'updateCommandAliases' ? 'command-aliases-changed' : 'disabled-commands-changed' }); return }
     if (method === 'logEnable') { logEnabled = true; logSubscribed = true; return { success: true } }
     if (method === 'logDisable') { logEnabled = false; logSubscribed = false; return { success: true } }

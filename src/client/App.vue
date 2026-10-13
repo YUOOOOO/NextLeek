@@ -52,7 +52,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.source-shell { height: 100dvh; overflow: hidden; background: var(--bg-color); color: var(--text-color); }
+.source-shell { height: 100dvh; overflow: hidden; background: transparent; color: var(--text-color); }
 .source-shell :deep(.app-container__plugin) { height: 100%; }
 .source-shell :deep(.plugin-placeholder) { min-height: 0; }
 .source-error { position: fixed; bottom: 0; left: 0; right: 0; padding: 8px 12px; margin: 0; background: var(--dialog-bg, var(--bg-color)); color: var(--danger-color, #ef4444); z-index: 100; }

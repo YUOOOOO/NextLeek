@@ -7,6 +7,11 @@ import type { SourceResponse } from '../../../plugins/auxiliary-surfaces/host'
 
 // 原版页面只调用白名单原生操作；业务数据与插件权限仍由所属 Cordis 服务处理。
 export function createSourceNative(ctx: Context, window: BrowserWindow, emit: (event: DesktopEvent) => void, resize: (height: number) => void, environment: SourceEnvironment, setSizeLock: (locked: boolean) => void) {
+  let lockedSize: { width: number; height: number } | undefined
+  ctx.effect(() => () => {
+    if (lockedSize) setSizeLock(false)
+    lockedSize = undefined
+  }, 'Source window drag size lock')
   const text = (value: unknown): string => {
     if (typeof value !== 'string' || value.length > 32768 || value.includes('\0')) throw new TypeError('Invalid native string')
     return value
@@ -41,8 +46,19 @@ export function createSourceNative(ctx: Context, window: BrowserWindow, emit: (e
         return environment.getContext().nativeContext.analyzeImage(args[0])
       }
       case 'setWindowSizeLock': {
-        if (typeof args[0] !== 'boolean') throw new TypeError('Invalid window size lock')
-        setSizeLock(args[0]); return
+        const locked = args[0]
+        if (typeof locked !== 'boolean') throw new TypeError('Invalid window size lock')
+        if (locked && !lockedSize) {
+          const [width, height] = window.getSize()
+          lockedSize = { width, height }
+        } else if (!locked && lockedSize) {
+          const bounds = window.getBounds()
+          if (bounds.width !== lockedSize.width || bounds.height !== lockedSize.height) {
+            window.setBounds({ x: bounds.x, y: bounds.y, ...lockedSize }, false)
+          }
+          lockedSize = undefined
+        }
+        setSizeLock(locked); return
       }
       case 'getLastCopiedContent': {
         const content = await environment.getContext().nativeContext.clipboardManager.getLastCopiedContent(args[0] === undefined ? undefined : number(args[0]), args[1] === undefined ? undefined : number(args[1]))
@@ -59,7 +75,16 @@ export function createSourceNative(ctx: Context, window: BrowserWindow, emit: (e
       }
       case 'getWindowMaterial': return environment.getWindowMaterial()
       case 'getWindowPosition': { const [x, y] = window.getPosition(); return { x, y } }
-      case 'setWindowPosition': window.setPosition(Math.round(number(args[0])), Math.round(number(args[1]))); return
+      case 'setWindowPosition': {
+        const x = Math.round(number(args[0]))
+        const y = Math.round(number(args[1]))
+        const [currentX, currentY] = window.getPosition()
+        if (x === currentX && y === currentY) return
+        // Electron setPosition 会重新读取尺寸；拖动固定使用起始快照，避免 DIP 取整误差累积。
+        if (lockedSize) window.setBounds({ x, y, ...lockedSize }, false)
+        else window.setPosition(x, y, false)
+        return
+      }
       case 'copyToClipboard': clipboard.writeText(text(args[0])); return
       case 'revealInFinder': { const path = text(args[0]); await stat(path); shell.showItemInFolder(path); return }
       case 'openExternal': {

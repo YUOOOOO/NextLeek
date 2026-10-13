@@ -41,8 +41,10 @@ async function start() {
   const rendererURL = devURL ?? pathToFileURL(rendererFile).href
   const frameNonce = randomBytes(18).toString('base64url')
   const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
+  // 搜索窗口宽度固定且不超出当前屏幕可用区；高度仍由结果布局调整。
+  const launcherWidth = Math.min(980, screen.getPrimaryDisplay().workArea.width)
   const window = new BrowserWindow({
-    width: 980, height: 82, minWidth: 680, minHeight: 64, show: false, skipTaskbar: true, alwaysOnTop: true,
+    width: launcherWidth, height: 82, minWidth: launcherWidth, maxWidth: launcherWidth, minHeight: 64, resizable: false, maximizable: false, show: false, skipTaskbar: true, alwaysOnTop: true,
     title: 'NextTools', frame: false, backgroundColor: nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4', autoHideMenuBar: true,
     icon: join(iconDirectory, process.platform === 'win32' ? 'icon.ico' : 'icon-256.png'),
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
@@ -51,6 +53,8 @@ async function start() {
     preload: join(here, '../preload/index.cjs'), sandbox: true, contextIsolation: true,
     nodeIntegration: false, webSecurity: true, allowRunningInsecureContent: false,
   } })
+  // 原生材质由宿主窗口绘制，嵌入页面不能再盖一层默认白底。
+  view.setBackgroundColor('#00000000')
   window.contentView.addChildView(view)
   const resize = () => { const [width, height] = window.getContentSize(); view.setBounds({ x: 0, y: 0, width, height }) }
   resize()
@@ -60,6 +64,7 @@ async function start() {
   let currentHotkey: string | undefined
   let hotkeyCapture = false
   let captureAltSpace = false
+  let materialActive = false
   const commandShortcuts = new Map<string, { commandId: string; callback: () => void }>()
   let layoutBounds = window.getBounds()
   let launcherCenterY = layoutBounds.y + layoutBounds.height / 2
@@ -112,7 +117,11 @@ async function start() {
     window.setBounds({ ...bounds, height: nextHeight, y })
     layoutBounds = window.getBounds()
   }
-  const emit = (event: DesktopEvent) => { if (!view.webContents.isDestroyed()) view.webContents.send(channels.event, event) }
+  const emit = (event: DesktopEvent) => {
+    // Electron 的颜色 getter 不保留透明度，使用原生材质成功广播记录状态。
+    if (event.type === 'source-event' && event.name === 'update-window-material') materialActive = event.payload !== 'none'
+    if (!view.webContents.isDestroyed()) view.webContents.send(channels.event, event)
+  }
   const show = () => {
     if (window.isDestroyed()) return
     if (window.isMinimized()) window.restore()
@@ -226,7 +235,10 @@ async function start() {
           if (app.getLoginItemSettings().openAtLogin !== next.autostart) throw new Error('Operating system did not apply autostart preference')
         }
         nativeTheme.themeSource = next.theme
-        window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4')
+        // 材质启用时保留原生透明底色，主题或快捷键更新不能覆盖它。
+        if (!materialActive) {
+          window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#303133' : '#f4f4f4')
+        }
       } catch (error) {
         if (previous && currentHotkey !== previous.hotkey) {
           globalShortcut.unregister(currentHotkey!)

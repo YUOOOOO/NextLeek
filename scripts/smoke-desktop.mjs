@@ -45,6 +45,11 @@ async function waitNativeVisibility(visible) {
     return (stdout.trim() !== '0') === visible
   })
 }
+async function showNativeWindow() {
+  // 二次启动走宿主已有 single-instance 唤醒，不新增业务 IPC。
+  await promisify(execFile)(executable, [...appArgs, `--profile-dir=${profile}`], { timeout: 15000 })
+  if (process.platform === 'win32') await waitNativeVisibility(true)
+}
 const psLiteral = value => `'${value.replaceAll("'", "''")}'`
 async function createApplicationFixture() {
   if (process.platform === 'darwin') {
@@ -109,6 +114,8 @@ async function verifyNativeInputDrag(page) {
     assert.equal(await input.inputValue(), '拖动后仍可输入')
     await input.focus()
     await page.keyboard.press('Escape')
+    if (process.platform === 'win32') await waitNativeVisibility(false)
+    await showNativeWindow()
     checks.push('Search input keeps sub-threshold click behavior, drags the actual native window with physical cursor movement, stops on release and remains editable')
   } finally {
     await page.mouse.up().catch(() => {})
@@ -212,7 +219,9 @@ try {
   await query().fill('设置')
   await page.locator('.aggregate-view .search-results').waitFor()
   await query().press('Escape')
-  assert.equal(await query().inputValue(), '')
+  if (process.platform === 'win32') await waitNativeVisibility(false)
+  await showNativeWindow()
+  assert.equal(await query().inputValue(), '设置')
   await page.screenshot({ path: resolve(evidence, 'launcher.png') })
   if (applicationFixture) {
     await query().fill(applicationName)
@@ -233,6 +242,7 @@ try {
       assert.equal(await query().inputValue(), applicationName)
     }
     await query().press('Escape')
+    await showNativeWindow()
     await query().fill(broadApplicationName)
     const best = section('最佳搜索结果')
     await eventually('Initial application subset missing', async () => { const count = await best.locator('.app-item').count(); return count > 0 && count < 100 })
@@ -254,6 +264,7 @@ try {
       assert.equal(await best.locator('.app-item.selected').getAttribute('title'), selection)
     }
     await query().press('Escape')
+    await showNativeWindow()
     checks.push('Original expand/navigation/scroll and native hide/show preserve query, full results and selection')
   }
   await query().fill('设置')
@@ -292,10 +303,11 @@ try {
     await page.locator('.plugin-list').waitFor()
     await query().focus(); await page.keyboard.press('Escape')
     await page.locator('.plugin-tag').waitFor({ state: 'hidden' })
-    await query().press('Escape')
-    assert.equal(await query().inputValue(), '')
-    await query().press('Escape'); await waitNativeVisibility(true)
-    checks.push('Physical Alt+Space capture/save and WM_CLOSE preserve original settings/detail; Esc returns layers and never hides')
+    await query().fill('保留查询')
+    await query().press('Escape'); await waitNativeVisibility(false)
+    await send(); await waitNativeVisibility(true)
+    assert.equal(await query().inputValue(), '保留查询')
+    checks.push('Physical Alt+Space capture/save and WM_CLOSE preserve settings/detail; search Esc hides and wake restores query')
     await verifyNativeInputDrag(page)
     await openSettings()
   }
@@ -323,9 +335,11 @@ try {
   assert.ok((process.platform === 'win32' ? ['ready', 'unavailable', 'error'] : ['unsupported']).includes(files.status))
   await query().fill('nexttools-smoke-no-matching-file')
   await query().press('Escape')
-  assert.equal(await query().inputValue(), '')
+  if (process.platform === 'win32') await waitNativeVisibility(false)
+  await showNativeWindow()
+  assert.equal(await query().inputValue(), 'nexttools-smoke-no-matching-file')
   await page.evaluate(hotkey => window.desktop.updateSettings({ hotkey }), initial.settings.hotkey)
-  checks.push('Real native file-search reports its actual status; original main input clears with Escape')
+  checks.push('Real native file-search reports its actual status; search Escape hides without clearing the query')
   await quit(page)
   await writeFile(resolve(evidence, 'result.json'), JSON.stringify({ passed: true, checks }, null, 2))
   console.log(checks.join('\n'))

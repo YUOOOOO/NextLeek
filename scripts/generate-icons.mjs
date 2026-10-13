@@ -18,6 +18,18 @@ const pngs = new Map(await Promise.all(sizes.map(async size => {
   return [size, png]
 })))
 await writeFile(new URL('icon.png', icons), pngs.get(512))
+// 启动器、设置与辅助窗口统一使用项目图标，避免重新引入上游 Logo。
+await writeFile(new URL('../plugins/settings/public/logo.png', import.meta.url), pngs.get(128))
+await writeFile(new URL('../plugins/launcher/renderer/src/assets/logo.png', import.meta.url), pngs.get(1024))
+// 插件市场横幅也从同一图标生成，保留原版页面布局而替换上游品牌。
+const banner = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="560" height="180"><rect width="560" height="180" fill="#eef3f6"/><text x="280" y="155" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="28" fill="#078564">NextTools</text></svg>`)
+await writeFile(new URL('../plugins/settings/src/assets/market/ztools-banner.png', import.meta.url), await sharp(banner).composite([{ input: pngs.get(128), left: 216, top: 0 }]).png().toBuffer())
+for (const size of [16, 24, 32]) await writeFile(new URL(`tray-${size}.png`, icons), pngs.get(size))
+// macOS 托盘使用单色模板，保持项目图形但由系统负责着色。
+for (const [name, size] of [['trayTemplate.png', 16], ['trayTemplate@2x.png', 32]]) {
+  const png = await sharp(Buffer.from(mark.replace('currentColor', '#000000'))).resize(size, size).png().toBuffer()
+  await writeFile(new URL(name, icons), png)
+}
 
 // Windows Vista+ reads PNG-compressed ICO frames directly, preserving alpha.
 const windowsSizes = sizes.filter(size => size <= 256)

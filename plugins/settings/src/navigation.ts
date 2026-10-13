@@ -6,5 +6,4 @@ export const settingMenu = [
   { name: 'Plugins', meta: { menu: { label: '已安装插件', icon: 'i-z-plugin' } } },
   { name: 'Market', meta: { menu: { label: '插件市场', icon: 'i-z-store' } } },
   { name: 'AllCommands', meta: { menu: { label: '所有指令', icon: 'i-z-list' } } },
-  { name: 'About', meta: { menu: { label: '关于', icon: 'i-z-info' } } },
 ] as const

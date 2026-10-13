@@ -124,17 +124,6 @@ const homeRoutes: MenuRouterItemType[] = [
     }
   },
   {
-    path: '/about',
-    name: 'About',
-    component: () => import('@/views/AboutSetting/AboutSetting.vue'),
-    meta: {
-      menu: {
-        label: '关于',
-        icon: 'i-z-info'
-      }
-    }
-  },
-  {
     path: '/pluginInstaller',
     name: 'PluginInstaller',
     component: () => import('@/views/PluginInstaller/PluginInstaller.vue')

@@ -81,12 +81,6 @@
       "cmds": ["WebDAV 同步"]
     },
     {
-      "code": "ui.router?router=About",
-      "explain": "关于 ZTools",
-      "icon": "logo.png",
-      "cmds": ["关于 ZTools"]
-    },
-    {
       "code": "function.local-launch-add?router=LocalLaunch",
       "explain": "添加到本地启动",
       "icon": "logo.png",

@@ -9,11 +9,11 @@ NextTools is a desktop-first command launcher built with Electron, Vue 3, TypeSc
 - A marketplace backed by [NextLeek-Plugins](https://github.com/YUOOOOO/NextLeek-Plugins), accessible from Settings → Plugin Marketplace or its built-in command.
 - Plugin pages hosted in independent sandboxed Electron `WebContentsView` surfaces, with verified static packages and a restricted bridge.
 - Light, dark, and system themes, six accent colors, and configurable launcher and command shortcuts.
-- Explicit Windows NSIS update check, download, install, and relaunch flow.
+- General Settings online updates: current version, manual check/download/restart installation, automatic checks, and opt-in GitHub prerelease updates. Downloads and installation always require user action; Windows NSIS installations support online installation, while portable ZIP builds update manually.
 
 The launcher and settings use the original MIT-licensed source pages, including their templates, styles, router, state, and handlers. Their native calls are adapted to Cordis-owned application search, file search, settings, shortcuts, HTTP, local-launch, floating-ball, and SuperPanel services. Account/sync, provider configuration, and AI integration are not included in this basic release.
 
-Hiding and showing the window preserves the current page, search query, results, and an open plugin's live view. Escape navigates back one page level; in search it clears a nonempty query and otherwise stays at search. Escape at the top level does not hide the window. The launcher shortcut can toggle visibility; native window close hides rather than quits.
+Hiding and showing the window preserves the current page, search query, results, and an open plugin's live view. Escape navigates back one page level from settings and plugins; in search it hides the window without clearing the query. The search window has a fixed width, cannot be manually resized, and grows with results up to its height limit; excess results scroll vertically. The launcher shortcut can toggle visibility; native window close hides rather than quits.
 
 The plugin marketplace and installed-plugin manager are host Vue pages. Closing an opened package returns to the originating marketplace or installed-plugin list. Opened plugin content uses an independent native view, not an iframe; closing it ends that session, and reopening creates a new one.
 
