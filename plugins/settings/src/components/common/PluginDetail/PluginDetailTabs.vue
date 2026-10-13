@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
-import { CommandTag, FeatureCard, MatchCommandDetailDialog, TagDropdown } from '@/components'
+import { CommandTag, MatchCommandDetailDialog, TagDropdown } from '@/components'
+import FeatureCard from '@/components/common/FeatureCard/FeatureCard.vue'
 import { usePluginCommandActions } from '@/composables'
 import type { DocItem, PluginItem, TabId, TabItem } from './types'
 import PluginReleaseNotes from './PluginReleaseNotes.vue'

@@ -9,7 +9,7 @@ import { searchPlugin } from './services/search'
 import { pluginEndpointsPlugin } from './services/plugin-endpoints'
 import { themePlugin } from '../../plugins/theme/host'
 import { launcherPlugin } from '../../plugins/launcher/host'
-import { settingsPlugin } from '../../plugins/settings/host'
+import { createSettingsPlugin, type SettingsPluginOptions } from '../../plugins/settings/host'
 import type { EverythingEnvironment } from './services/everything'
 import type { ApplicationsEnvironment } from '../../plugins/applications/host'
 import { marketPlugin } from '../../plugins/plugin-market/host'
@@ -19,6 +19,8 @@ import type { CommandResult } from '../shared/contracts'
 import { contributionsPlugin } from './services/contributions'
 import { clientModulesPlugin } from './services/client-modules'
 import { loadTrustedPlugin } from './trusted-plugin'
+import { createNativeContextPlugin, type NativeContextPluginOptions } from '../../plugins/native-context/host'
+import { createAuxiliarySurfacesPlugin, type AuxiliarySurfacesOptions } from '../../plugins/auxiliary-surfaces/host'
 
 export interface PluginEntry {
   id: string
@@ -34,6 +36,9 @@ export interface CompositionEnvironment {
   desktop: DesktopService
   everything?: EverythingEnvironment
   applications?: ApplicationsEnvironment
+  settings?: Partial<SettingsPluginOptions>
+  nativeContext?: NativeContextPluginOptions
+  auxiliarySurfaces?: AuxiliarySurfacesOptions
   executeCommand(id: string): Promise<CommandResult>
 }
 
@@ -47,17 +52,19 @@ export async function composePlugins(environment: CompositionEnvironment): Promi
     'nexttools/desktop': () => ({ name: 'desktop', apply(ctx: Context) { ctx.provide('desktop', environment.desktop) } }),
     'nexttools/contributions': () => contributionsPlugin,
     'nexttools/client-modules': () => clientModulesPlugin,
-    'nexttools/settings': () => settingsPlugin,
+    'nexttools/settings': () => createSettingsPlugin({ documentsPath: join(dirname(environment.path), 'settings', 'documents.json'), version: environment.version, ...environment.settings }),
     'nexttools/theme': () => themePlugin,
-    'nexttools/plugin-market': () => marketPlugin({ directory: join(dirname(environment.path), 'plugins'), version: environment.version }),
+    'nexttools/plugin-market': () => marketPlugin({ directory: join(dirname(environment.path), 'plugins'), version: environment.version, chooseExportPath: environment.desktop.chooseMarketExportPath, revealPath: environment.desktop.revealMarketPath, onDownloadProgress: payload => environment.desktop.emit({ type: 'source-event', name: 'plugin-market-download-progress', payload }) }),
     'nexttools/command-shortcuts': () => commandShortcutsPlugin(environment.executeCommand),
     'nexttools/builtin-search': () => launcherPlugin(environment.everything, environment.applications),
   }
+  if (environment.nativeContext) factories['nexttools/native-context'] = () => createNativeContextPlugin(environment.nativeContext!)
+  if (environment.auxiliarySurfaces) factories['nexttools/auxiliary-surfaces'] = () => createAuxiliarySurfacesPlugin(environment.auxiliarySurfaces!)
   const require = createRequire(import.meta.url)
   const patchPath = require.resolve('nexttools/cordis.patch.yml')
   const document: unknown = parse(readFileSync(patchPath, 'utf8'))
   if (!Array.isArray(document) || document.some(item => !item || typeof item !== 'object' || !Array.isArray(item.insert))) throw new Error('Cordis patch requires insert arrays')
-  const declarations: unknown[] = document.flatMap(item => item.insert)
+  const declarations: unknown[] = document.flatMap(item => item.insert).filter((entry: { name?: string }) => !(entry.name === 'nexttools/native-context' && !environment.nativeContext) && !(entry.name === 'nexttools/auxiliary-surfaces' && !environment.auxiliarySurfaces))
   const ids = new Set<string>()
   return Promise.all(declarations.map(async (entry: unknown) => {
     if (!entry || typeof entry !== 'object') throw new Error('Invalid Cordis composition entry')

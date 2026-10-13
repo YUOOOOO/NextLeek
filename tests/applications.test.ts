@@ -3,14 +3,16 @@ import { test } from 'node:test'
 import { Context } from '@deepseek-ai/cordis'
 import { applicationsPlugin, createApplicationsProvider, type ApplicationsEnvironment, type ApplicationsPorts, type ApplicationDirectoryEntry } from '../plugins/applications/host'
 import { searchPlugin } from '../src/host/services/search'
+import { pluginEndpointsPlugin } from '../src/host/services/plugin-endpoints'
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBaoAAAAASUVORK5CYII='
 const request = (query: string, offset = 0, limit = 100) => ({ query, offset, limit })
 function entry(name: string, kind: 'directory' | 'file' | 'symlink'): ApplicationDirectoryEntry {
   return { name, isDirectory: () => kind === 'directory', isFile: () => kind === 'file', isSymbolicLink: () => kind === 'symlink' }
 }
-function harness(platform: 'win32' | 'darwin' | 'linux' = 'win32', directories = ['C:\\Programs', 'C:\\Desktop']) {
+async function harness(platform: 'win32' | 'darwin' | 'linux' = 'win32', directories = ['C:\\Programs', 'C:\\Desktop']) {
   const ctx = new Context()
+  await ctx.plugin(pluginEndpointsPlugin).await()
   const children = new Map<string, ApplicationDirectoryEntry[]>()
   const files = new Map<string, { directory: boolean; revision: number }>()
   const canonical = new Map<string, string>()
@@ -41,8 +43,8 @@ function harness(platform: 'win32' | 'darwin' | 'linux' = 'win32', directories =
     file(path: string, directory = false, revision = 1) { files.set(path, { directory, revision }) },
   }
 }
-function windowsFixture() {
-  const h = harness()
+async function windowsFixture() {
+  const h = await harness()
   h.folder('C:\\Programs', [entry('Visual Studio Code.lnk', 'file'), entry('微信.lnk', 'file'), entry('Utilities', 'directory'), entry('Uninstall App.lnk', 'file'), entry('report.exe', 'file'), entry('Website.url', 'file')])
   h.folder('C:\\Programs\\Utilities', [entry('Calculator.lnk', 'file')])
   h.folder('C:\\Desktop', [entry('Paint.lnk', 'file'), entry('Project', 'directory')])
@@ -52,7 +54,7 @@ function windowsFixture() {
 }
 
 test('Windows searches genuine shortcut display names, collapsed phrases and generic acronyms with real icons', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     for (const query of ['Visual Studio Code', 'VISUAL STUDIO CODE', 'visualstudiocode', 'vsc']) {
       const result = await h.provider.search(request(query))
@@ -73,7 +75,7 @@ test('Windows searches genuine shortcut display names, collapsed phrases and gen
 })
 
 test('macOS bundle metadata supplies localized names and aliases; scan stops at bundles and avoids symlink loops', async () => {
-  const h = harness('darwin', ['/Applications', '/System/Applications', '/missing'])
+  const h = await harness('darwin', ['/Applications', '/System/Applications', '/missing'])
   h.folder('/Applications', [entry('WeChat.app', 'directory'), entry('Visual Studio Code.app', 'directory'), entry('Browser Apps', 'directory'), entry('Loop', 'symlink'), entry('Safari.app', 'symlink')])
   h.folder('/Applications/Browser Apps', [entry('Work App.app', 'directory'), entry('Deep', 'directory')])
   h.folder('/System/Applications', [entry('Safari.app', 'directory')])
@@ -98,7 +100,7 @@ test('macOS bundle metadata supplies localized names and aliases; scan stops at 
 })
 
 test('pagination reports total matches and icon extraction is restricted to returned items', async () => {
-  const h = harness()
+  const h = await harness()
   h.folder('C:\\Programs', ['Alpha App', 'Beta App', 'Gamma App'].map(name => entry(`${name}.lnk`, 'file')))
   h.folder('C:\\Desktop', [])
   for (const name of ['Alpha App', 'Beta App', 'Gamma App']) h.file(`C:\\Programs\\${name}.lnk`)
@@ -112,7 +114,7 @@ test('pagination reports total matches and icon extraction is restricted to retu
 })
 
 test('launches use only host-issued opaque IDs and preserve shortcut paths; shell errors remain visible', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     const item = (await h.provider.search(request('Visual Studio Code'))).items[0]
     await assert.rejects(h.provider.performAction(item.path, 'open'), /result ID/)
@@ -131,7 +133,7 @@ test('launches use only host-issued opaque IDs and preserve shortcut paths; shel
 })
 
 test('query-time refresh discovers installs and removes stale entries, icons and launch IDs', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     const old = (await h.provider.search(request('微信'))).items[0]
     h.folder('C:\\Programs', [entry('New App.lnk', 'file')]); h.files.delete(old.path); h.file('C:\\Programs\\New App.lnk')
@@ -151,7 +153,7 @@ test('query-time refresh discovers installs and removes stale entries, icons and
 })
 
 test('failed icons do not fabricate an image or block application search and retry on the next query', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     h.iconError(true)
     const item = (await h.provider.search(request('微信'))).items[0]
@@ -163,7 +165,7 @@ test('failed icons do not fabricate an image or block application search and ret
 })
 
 test('icon and authorization ledgers are bounded and cleaned up by their Cordis owner', async () => {
-  const h = harness()
+  const h = await harness()
   const names = Array.from({ length: 140 }, (_, index) => `App ${String(index).padStart(3, '0')}`)
   h.folder('C:\\Programs', names.map(name => entry(`${name}.lnk`, 'file'))); h.folder('C:\\Desktop', [])
   for (const name of names) h.file(`C:\\Programs\\${name}.lnk`)
@@ -180,23 +182,25 @@ test('icon and authorization ledgers are bounded and cleaned up by their Cordis 
 })
 
 test('unsupported systems are explicit and applications plugin uses the generic registry lifecycle', async () => {
-  const h = harness('linux')
+  const h = await harness('linux')
+  const ctx = new Context()
   try {
     const result = await h.provider.search(request('App'))
     assert.equal(result.status, 'unsupported'); assert.deepEqual(result.items, []); assert.deepEqual(h.reads, [])
-    await h.ctx.plugin(searchPlugin).await()
-    const plugin = h.ctx.plugin(applicationsPlugin(h.environment))
+    await ctx.plugin(pluginEndpointsPlugin).await()
+    await ctx.plugin(searchPlugin).await()
+    const plugin = ctx.plugin(applicationsPlugin(h.environment))
     await plugin.await()
-    const groups = await h.ctx.search.search(request('App'))
+    const groups = await ctx.search.search(request('App'))
     assert.equal(groups.length, 1); assert.equal(groups[0].providerId, 'applications'); assert.equal(groups[0].title, '应用')
     assert.equal(groups[0].status, 'unsupported')
     await plugin.dispose()
-    assert.deepEqual(await h.ctx.search.search(request('App')), [])
-  } finally { await h.ctx.fiber.dispose() }
+    assert.deepEqual(await ctx.search.search(request('App')), [])
+  } finally { await ctx.fiber.dispose(); await h.ctx.fiber.dispose() }
 })
 
 test('concurrent queries share one asynchronous scan and one icon extraction', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     const results = await Promise.all([h.provider.search(request('微信')), h.provider.search(request('微信'))])
     assert.equal(results[0].items[0].name, '微信'); assert.equal(results[1].items[0].name, '微信')
@@ -207,19 +211,20 @@ test('concurrent queries share one asynchronous scan and one icon extraction', a
 })
 
 test('directory access failures and invalid inputs are reported instead of fabricated applications', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   try {
     h.ports.readdir = async () => { throw Object.assign(new Error('access denied'), { code: 'EACCES' }) }
     await assert.rejects(h.provider.search(request('微信')), /无法读取应用目录.*access denied/)
     await assert.rejects(h.provider.search(request('微信', 0, 101)), /limit/)
-    const relative = createApplicationsProvider(h.ctx, { ...h.environment, directories: ['./applications'] }, h.ports)
-    await assert.rejects(relative.search(request('微信')), /绝对路径/)
+    const relative = await harness('win32', ['./applications'])
+    try { await assert.rejects(relative.provider.search(request('微信')), /绝对路径/) }
+    finally { await relative.ctx.fiber.dispose() }
     assert.deepEqual(h.iconCalls, []); assert.deepEqual(h.launches, [])
   } finally { await h.ctx.fiber.dispose() }
 })
 
 test('disposing the owner during discovery rejects the pending query and cannot issue launch IDs', async () => {
-  const h = windowsFixture()
+  const h = await windowsFixture()
   let resume!: () => void, entered!: () => void
   const blocked = new Promise<void>(resolve => { resume = resolve })
   const scanning = new Promise<void>(resolve => { entered = resolve })

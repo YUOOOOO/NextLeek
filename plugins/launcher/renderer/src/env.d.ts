@@ -2,10 +2,9 @@
 
 // Ambient type declarations for renderer, so TS knows window.ztools
 
-import type { CommonKeyboardModifier } from '@renderer/utils/convertKeyboardEvent'
-import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
-import type { AiRequestStatusChange } from '@shared/aiRequestStatus'
-import type { AfdianPaymentMethod, AfdianPaymentWindowState } from '@shared/afdianPaymentWindow'
+import type { CommonKeyboardModifier } from './utils/convertKeyboardEvent'
+import type { SearchWallpaperConfig } from './shared/searchWallpaper'
+import type { AiRequestStatusChange } from './shared/aiRequestStatus'
 
 /**
  * 上次匹配状态接口
@@ -64,34 +63,24 @@ interface PluginMarketDownloadProgress {
   error?: string
 }
 
-declare global {
-  interface Window {
-    afdianPayment: {
-      onState: (callback: (state: AfdianPaymentWindowState) => void) => () => void
-      sendLoginCode: (phone: string) => void
-      submitLoginCode: (phone: string, code: string) => void
-      selectMethod: (method: AfdianPaymentMethod) => void
-      submit: () => void
-      openOriginal: () => void
-      close: () => void
-    }
-    electron: {
-      ipcRenderer: {
-        send: (channel: string, ...args: any[]) => void
-        on: (channel: string, callback: (...args: any[]) => void) => () => void
-      }
-    }
-    ztools: {
+// 原版指令支持主动触发与内容匹配，设置页与启动器共用此协议。
+export type SourceCommandType = 'text' | 'regex' | 'over' | 'window' | 'img' | 'files'
+export type SourceCommandKind = 'plugin' | 'direct' | 'builtin'
+
+export interface SourceLauncherAPI {
       getApps: () => Promise<Array<{ name: string; path: string; icon?: string }>>
       getSystemSettings: () => Promise<any[]>
-      isWindows: () => Promise<boolean>
+      isWindows: () => boolean
+      isMacOs: () => boolean
+      isMacOS: () => boolean
+      isLinux: () => boolean
       launch: (options: {
         path: string
         type?: 'direct' | 'plugin' | 'builtin' | 'file'
         featureCode?: string
         param?: any
         name?: string
-        cmdType?: string // cmd 类型（用于判断是否添加历史记录）
+        cmdType?: SourceCommandType // cmd 类型（用于判断是否添加历史记录）
         confirmDialog?: any // 确认对话框配置
         launchSource?: 'search' | 'global-shortcut' | 'super-panel'
       }) => Promise<any>
@@ -99,7 +88,6 @@ declare global {
       hideWindow: () => void
       resizeWindow: (height: number) => void
       onUpdateCompactMainWindowHeader: (callback: (enabled: boolean) => void) => () => void
-      onUpdateHideMainWindowOnPluginEsc: (callback: (enabled: boolean) => void) => () => void
       updateLaunchContext: (context: {
         searchQuery: string
         pastedImage: string | null
@@ -112,6 +100,9 @@ declare global {
       getWindowMaterial: () => Promise<'mica' | 'acrylic' | 'none'>
       setWindowMaterial: (material: 'mica' | 'acrylic' | 'none') => Promise<{ success: boolean }>
       openExternal: (url: string) => Promise<void>
+      shellOpenExternal: (url: string) => Promise<void>
+      showNotification: (message: string) => Promise<void>
+      outPlugin: () => Promise<void>
       copyToClipboard: (text: string) => Promise<void>
       openTerminal: (path: string) => Promise<void>
       getFinderPath: () => Promise<string | null>
@@ -180,7 +171,8 @@ declare global {
       pinApp: (app: any) => Promise<void>
       unpinApp: (appPath: string, featureCode?: string, name?: string) => Promise<void>
       updatePinnedOrder: (newOrder: any[]) => Promise<void>
-      hidePlugin: () => void
+      hidePlugin: () => Promise<void>
+      focusPlugin: () => Promise<void>
       onContextMenuCommand: (callback: (command: string) => void) => () => void
       onFocusSearch: (
         callback: (
@@ -230,7 +222,7 @@ declare global {
           featureCode?: string
           param?: any
           name?: string
-          cmdType?: string // cmd 类型（用于判断是否添加历史记录）
+          cmdType?: SourceCommandType // cmd 类型（用于判断是否添加历史记录）
         }) => void
       ) => void
       openPluginDevTools: () => Promise<{ success: boolean; error?: string }>
@@ -250,7 +242,8 @@ declare global {
       ) => Promise<{ success: boolean; error?: string }>
       // 快捷键录制（临时注册，触发后自动注销）
       startHotkeyRecording: () => Promise<{ success: boolean; error?: string }>
-      onHotkeyRecorded: (callback: (shortcut: string) => void) => void
+      stopHotkeyRecording: () => Promise<void>
+      onHotkeyRecorded: (callback: (shortcut: string) => void) => () => void
       // 数据库相关
       dbPut: (key: string, data: any) => Promise<any>
       dbGet: (key: string) => Promise<any>
@@ -281,6 +274,10 @@ declare global {
         timestamp: number
       } | null>
       // 子输入框相关
+      setSubInput: (callback: (value: { text: string }) => void, placeholder?: string, focus?: boolean) => boolean
+      removeSubInput: () => boolean
+      subInputFocus: () => boolean
+      subInputSelect: () => boolean
       notifySubInputChange: (text: string) => void
       setSubInputValue: (text: string) => Promise<boolean>
       onSetSearchText: (callback: (text: string) => void) => void
@@ -300,7 +297,6 @@ declare global {
       ) => () => void
       onAiStatusChanged: (callback: (change: AiRequestStatusChange) => void) => void
       onUpdateAutoPaste: (callback: (autoPaste: string) => void) => void
-      onUpdateAutoClear: (callback: (autoClear: string) => void) => void
       onUpdateShowRecentInSearch: (callback: (showRecentInSearch: boolean) => void) => void
       onUpdateMatchRecommendation: (callback: (showMatchRecommendation: boolean) => void) => void
       onUpdateRecentRows: (callback: (rows: number) => void) => void
@@ -394,9 +390,9 @@ declare global {
       getPathForFile: (file: File) => string
       // 超级面板相关
       onSuperPanelSearch: (
-        callback: (data: { text: string; clipboardContent?: any }) => void
+        callback: (data: { requestId: number; text: string; clipboardContent?: any }) => void
       ) => void
-      sendSuperPanelSearchResult: (data: { results: any[]; clipboardContent?: any }) => void
+      sendSuperPanelSearchResult: (data: { requestId: number; results: any[]; clipboardContent?: any }) => void
       onSuperPanelData: (
         callback: (data: {
           type: string
@@ -418,9 +414,10 @@ declare global {
         featureCode?: string
       ) => Promise<{ success: boolean; error?: string }>
       pinToSuperPanel: (command: any) => Promise<{ success: boolean; error?: string }>
+      sendSuperPanelLaunchResult: (data: { requestId: number; success: boolean; error?: string }) => void
       getSuperPanelPinned: () => Promise<any[]>
       onSuperPanelLaunch: (
-        callback: (data: { command: any; clipboardContent?: any; windowInfo?: any }) => void
+        callback: (data: { requestId: number; command: any; launchSource?: 'search' | 'global-shortcut' | 'super-panel'; clipboardContent?: any; windowInfo?: any }) => void
       ) => void
       superPanelAddBlockedApp: () => Promise<{ success: boolean; app?: string; error?: string }>
       // 超级面板窗口匹配
@@ -447,8 +444,4 @@ declare global {
         callback: (files: Array<{ path: string; name: string; isDirectory: boolean }>) => void
       ) => void
       onFloatingBallDoubleClickCommand?: (callback: (command: string) => void) => void
-    }
-  }
 }
-
-export {}

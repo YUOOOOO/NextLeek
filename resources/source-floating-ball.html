@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      /* 外层容器：承载渐变边框 + 旋转动画 */
+      .floating-ball {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        position: relative;
+        cursor: pointer;
+        transition: transform 0.15s ease;
+        /* 渐变边框通过伪元素实现 */
+      }
+
+      /* 渐变彩色边框（AI 风格） */
+      .floating-ball::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        padding: 3px; /* 边框宽度 */
+        background: conic-gradient(
+          from 0deg,
+          #f43f5e,
+          #ec4899,
+          #a855f7,
+          #6366f1,
+          #3b82f6,
+          #06b6d4,
+          #10b981,
+          #eab308,
+          #f97316,
+          #f43f5e
+        );
+        -webkit-mask:
+          linear-gradient(#fff 0 0) content-box,
+          linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        transition: transform 0.15s ease;
+        /* 默认不旋转 */
+        animation: none;
+      }
+
+      /* hover 时边框旋转 */
+      .floating-ball:hover::before {
+        animation: border-spin 2s linear infinite;
+      }
+
+      @keyframes border-spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* 内圆：半透明灰色背景 */
+      .floating-ball-inner {
+        position: absolute;
+        inset: 3px; /* 与边框宽度一致 */
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* 字母 Z */
+      .floating-ball-letter {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1;
+        pointer-events: none;
+        background: conic-gradient(
+          from 0deg,
+          #f43f5e,
+          #ec4899,
+          #a855f7,
+          #6366f1,
+          #3b82f6,
+          #06b6d4,
+          #10b981,
+          #eab308,
+          #f97316,
+          #f43f5e
+        );
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      /* 按下缩小 */
+      .floating-ball.pressing {
+        transform: scale(0.92);
+      }
+
+      /* 拖拽中 */
+      .floating-ball.dragging {
+        transform: scale(1);
+        opacity: 0.8;
+        transition: none;
+      }
+      .floating-ball.dragging::before {
+        animation: border-spin 2s linear infinite;
+      }
+
+      /* 文件拖入悬停效果 */
+      .floating-ball.file-hover::before {
+        animation: border-spin 1s linear infinite;
+      }
+      .floating-ball.file-hover .floating-ball-inner {
+        background: rgba(80, 130, 255, 0.55);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="floating-ball" id="ball">
+      <div class="floating-ball-inner">
+        <span class="floating-ball-letter">Z</span>
+      </div>
+    </div>
+    <script src="./source-floating-ball.js"></script>
+  </body>
+</html>

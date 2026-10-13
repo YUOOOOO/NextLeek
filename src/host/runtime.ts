@@ -5,18 +5,19 @@ import { settingsPatch, identifier, boolean, launcherSearchRequest, searchItemId
 import type { DesktopService } from './services/contracts'
 import type { EverythingEnvironment } from './services/everything'
 import type { ApplicationsEnvironment } from '../../plugins/applications/host'
-import { composePlugins } from './composition'
+import { composePlugins, type CompositionEnvironment } from './composition'
 import type { InstalledPlugin } from '../../plugins/plugin-market/shared'
 
 const statuses = ['pending', 'loading', 'active', 'failed', 'disposed', 'unloading'] as const
 
-export interface RuntimeOptions { version?: string }
+export interface RuntimeOptions extends Pick<CompositionEnvironment, 'settings' | 'nativeContext' | 'auxiliarySurfaces'> { version?: string; onContext?(ctx: Context): void }
 
 
 export async function createRuntime(path: string, desktop: DesktopService, everythingEnvironment?: EverythingEnvironment, applicationsEnvironment?: ApplicationsEnvironment, options: RuntimeOptions = {}) {
   const ctx = new Context()
+  options.onContext?.(ctx)
   const version = options.version ?? packageMetadata.version
-  const entries = await composePlugins({ path, version, desktop, everything: everythingEnvironment, applications: applicationsEnvironment, executeCommand })
+  const entries = await composePlugins({ path, version, desktop, everything: everythingEnvironment, applications: applicationsEnvironment, executeCommand, settings: options.settings, nativeContext: options.nativeContext, auxiliarySurfaces: options.auxiliarySurfaces })
   let pending: Promise<unknown> = Promise.resolve()
   let disposed = false
   async function release() {
@@ -34,7 +35,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     const clients = ctx.get('clientModules')
     if (pluginId === 'plugin-market' && clients && args && typeof args === 'object') {
       const input = args as Record<string, unknown>
-      if ((method === 'open' && typeof input.id === 'string' && clients.has(input.id)) || (typeof input.session === 'string' && clients.ownsSession(input.session))) return clients.invoke(method, input)
+      if (((method === 'open' || method === 'getPluginMemoryInfo') && typeof input.id === 'string' && clients.has(input.id)) || (typeof input.session === 'string' && clients.ownsSession(input.session))) return clients.invoke(method, input)
     }
     const result = await ctx.get('pluginEndpoints')!.invoke(pluginId, method, args)
     if (pluginId === 'plugin-market' && method === 'installed' && clients) return [...result as InstalledPlugin[], ...clients.list()]
@@ -93,7 +94,7 @@ export async function createRuntime(path: string, desktop: DesktopService, every
     invokePlugin(pluginId: string, method: string, args: unknown) {
       // Data requests must not hold the mutation queue: disabling their provider
       // needs to reach the market immediately so it can abort in-flight work.
-      if (pluginId === 'plugin-market' && ['invokeCapability', 'configureSource', 'close', 'viewBounds', 'viewVisible'].includes(method)) {
+      if (pluginId === 'plugin-market' && ['invokeCapability', 'configureSource', 'cancelDownload', 'close', 'viewBounds', 'viewVisible', 'focus', 'sendInputEvent', 'detach', 'getPluginMemoryInfo'].includes(method)) {
         if (disposed) return Promise.reject(new Error('Runtime is shutting down'))
         return invokeEndpoint(pluginId, method, args)
       }

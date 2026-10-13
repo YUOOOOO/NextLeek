@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PluginDetail as SharedPluginDetail } from '@/components'
+import SharedPluginDetail from '@/components/common/PluginDetail/PluginDetail.vue'
 import type { PluginUninstallOptions } from '@/components'
 
 defineProps<{

@@ -1,20 +1,44 @@
-<!-- MIT Copyright (c) 2025 lzx8589561; adapted to the NextTools Cordis desktop contract. -->
 <script setup lang="ts">
-import { settingMenu } from '../../navigation'
-defineProps<{ active: string }>()
-const emit = defineEmits<{ select: [name: string] }>()
-// 保留上游菜单项结构，具体导航由设置壳决定。
-function setActiveMenu(item: typeof settingMenu[number]) { emit('select', item.name) }
+// MIT Copyright (c) 2025 lzx8589561. Account/sync are intentionally outside this deployment.
+import { MenuRouterItemType } from '@/router'
+import { onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+const router = useRouter()
+const route = useRoute()
+const menuRoutes = ref<MenuRouterItemType[]>([] as MenuRouterItemType[])
+
+/**
+ * 切换右侧设置页面。
+ * @param item 要切换到的菜单路由项
+ * @returns 无返回值
+ */
+const setActiveMenu = (item: MenuRouterItemType): void => {
+  // 菜单导航直接替换右侧路由内容。
+  router.replace({ name: item.name })
+}
+
+// 自动加载路由
+const autoLoadRouter = (): void => {
+  menuRoutes.value = router
+    .getRoutes()
+    .filter((item) => item.meta)
+    .filter((item) => item.path.split('/').length <= 2)
+    .filter((item) => item.meta.menu) as MenuRouterItemType[]
+}
+
+onMounted(autoLoadRouter)
 </script>
+
 <template>
   <!-- 左侧菜单 -->
   <div class="settings-sidebar">
     <div class="menu-list">
       <div
-        v-for="menuRoute in settingMenu"
+        v-for="menuRoute in menuRoutes"
         :key="menuRoute.name"
         class="menu-item"
-        :class="{ active: active === menuRoute.name }"
+        :class="{ active: route.name === menuRoute.name }"
         @click="setActiveMenu(menuRoute)"
       >
         <div :class="menuRoute.meta?.menu?.icon ?? ''" class="menu-icon" style="font-size: 18px" />
@@ -24,6 +48,7 @@ function setActiveMenu(item: typeof settingMenu[number]) { emit('select', item.n
 
   </div>
 </template>
+
 <style scoped>
 /* 左侧菜单 */
 .settings-sidebar {

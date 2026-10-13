@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import commentLikeIcon from '@/assets/icons/comment-like.svg'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { PluginDetail as SharedPluginDetail, useToast } from '@/components'
+import { useToast } from '@/components'
+import SharedPluginDetail from '@/components/common/PluginDetail/PluginDetail.vue'
 import { ACCOUNT_CHANGED_EVENT } from '@/composables/useZToolsAccount'
 import type { PluginUninstallOptions, TabId } from '@/components'
 import type { PluginDownloadState } from '../types'

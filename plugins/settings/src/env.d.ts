@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
-/// <reference types="@ztools-center/ztools-api-types" />
 
 import type { SearchWallpaperConfig } from '@shared/searchWallpaper'
+import type { SourceCommandKind, SourceCommandType } from '../../launcher/renderer/src/env'
 import type {
   AiProviderInput,
   AiProviderMutationResult,
@@ -27,10 +27,7 @@ interface Services {
   writeImageFile: (base64Url: string) => string | undefined
 }
 
-declare global {
-  interface Window {
-    services: Services
-    ztools: {
+export interface SourceSettingsAPI {
       // 获取拖放文件的路径（Electron webUtils）
       getPathForFile: (file: File) => string
       hideMainWindow: (isRestorePreWindow?: boolean) => boolean | Promise<boolean>
@@ -125,10 +122,11 @@ declare global {
         revealInFinder: (filePath: string) => Promise<void>
         launch: (options: {
           path: string
-          type?: 'direct' | 'plugin' | 'builtin'
+          type?: SourceCommandKind
           featureCode?: string
           param?: any
           name?: string
+          cmdType?: SourceCommandType
         }) => Promise<{ success: boolean; error?: string }>
         quitApp: () => Promise<{ success: boolean }>
         openApp: (appPath: string) => Promise<void>
@@ -343,6 +341,7 @@ declare global {
 
         // 快捷键相关
         startHotkeyRecording: () => Promise<{ success: boolean; error?: string }>
+        stopHotkeyRecording: () => Promise<void>
         updateShortcut: (shortcut: string) => Promise<{ success: boolean; error?: string }>
         getCurrentShortcut: () => Promise<string>
         registerGlobalShortcut: (
@@ -367,7 +366,7 @@ declare global {
           success: boolean
           error?: string
         }>
-        onHotkeyRecorded: (callback: (shortcut: string) => void) => void
+        onHotkeyRecorded: (callback: (shortcut: string) => void) => () => void
 
         // 窗口和设置
         setWindowOpacity: (opacity: number) => Promise<void>
@@ -401,11 +400,6 @@ declare global {
         }>
         updateAvatar: (avatar: string) => Promise<void>
         updateAutoPaste: (autoPaste: string) => Promise<void>
-        updateAutoClear: (autoClear: string) => Promise<void>
-        updateAutoBackToSearch: (autoBackToSearch: string) => Promise<void>
-        updateHideMainWindowOnPluginEsc: (
-          enabled: boolean
-        ) => Promise<{ success: boolean; error?: string }>
         updateWindowPositionStrategy: (strategy: string) => Promise<void>
         updateShowRecentInSearch: (showRecentInSearch: boolean) => Promise<void>
         updateMatchRecommendation: (showMatchRecommendation: boolean) => Promise<void>
@@ -470,6 +464,10 @@ declare global {
         updateCommandAliases: (
           aliases: Record<string, Array<{ alias: string; icon?: string }>>
         ) => Promise<{ success: boolean }>
+        onLocalShortcutsChanged: (callback: () => void) => () => void
+        onAppsChanged: (callback: () => void) => () => void
+        onCommandAliasesChanged: (callback: () => void) => () => void
+        onDisabledCommandsChanged: (callback: () => void) => () => void
 
         // 本地启动管理
         localShortcuts: {
@@ -1103,7 +1101,5 @@ declare global {
         offLogEntries: (callback: (...args: any[]) => void) => void
       }
     }
-  }
-}
 
 export {}

@@ -13,6 +13,8 @@ import type { DesktopService } from './services/contracts'
 import { updaterPlugin, type OnlineUpdater } from '../../plugins/updater/host'
 import { getApplicationIcon } from './services/application-icons'
 import { createPluginViewAdapter } from './services/plugin-views'
+import { createSourceNative } from './services/source-native'
+import { createSourceEnvironment } from './services/source-environment'
 
 
 function trayImage(directory: string) {
@@ -34,8 +36,8 @@ async function start() {
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   await app.whenReady()
   const here = fileURLToPath(new URL('.', import.meta.url))
-  const rendererFile = join(here, '../renderer/index.html')
-  const devURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
+  const rendererFile = join(here, '../renderer/src/client/index.html')
+  const devURL = !app.isPackaged && process.env.ELECTRON_RENDERER_URL ? new URL('/src/client/index.html', process.env.ELECTRON_RENDERER_URL).href : undefined
   const rendererURL = devURL ?? pathToFileURL(rendererFile).href
   const frameNonce = randomBytes(18).toString('base64url')
   const iconDirectory = app.isPackaged ? join(process.resourcesPath, 'icons') : fileURLToPath(new URL('../../resources/icons/', import.meta.url))
@@ -63,6 +65,10 @@ async function start() {
   let launcherCenterY = layoutBounds.y + layoutBounds.height / 2
   let dragTimer: NodeJS.Timeout | undefined
   let releaseDragTimer: (() => void) | undefined
+  let defaultHeight = 690
+  let tray: Tray | undefined
+  let sizeLocked = false
+  let pendingHeight: number | undefined
   const endWindowDrag = () => {
     if (dragTimer === undefined) return
     releaseDragTimer?.()
@@ -93,12 +99,14 @@ async function start() {
   }
   const setLauncherHeight = (height: number) => {
     if (!Number.isFinite(height) || height < 0) throw new TypeError('Invalid launcher height')
+    pendingHeight = height
+    if (sizeLocked) return
     if (window.isDestroyed()) return
     const bounds = window.getBounds()
     const workArea = screen.getDisplayMatching(bounds).workArea
     if (bounds.y !== layoutBounds.y) launcherCenterY = bounds.y + bounds.height / 2
     const margin = Math.min(24, Math.max(0, (workArea.height - 64) / 2))
-    const nextHeight = Math.min(690, workArea.height - margin * 2, Math.max(64, Math.ceil(height)))
+    const nextHeight = Math.min(defaultHeight, workArea.height - margin * 2, Math.max(64, Math.ceil(height)))
     const y = Math.round(Math.max(workArea.y + margin, Math.min(launcherCenterY - nextHeight / 2, workArea.y + workArea.height - margin - nextHeight)))
     if (bounds.height === nextHeight && bounds.y === y) return
     window.setBounds({ ...bounds, height: nextHeight, y })
@@ -111,7 +119,7 @@ async function start() {
     window.show(); window.focus(); view.webContents.focus(); emit({ type: 'shown' })
   }
   const toggle = () => {
-    if (hotkeyCapture) return
+    if (hotkeyCapture || (runtime && (runtime.ctx.nativeContext.shouldIgnoreHotkeys() || runtime.ctx.nativeContext.isWakeupBlocked()))) return
     if (window.isVisible() && window.isFocused() && !window.isMinimized()) window.hide()
     else show()
   }
@@ -140,12 +148,41 @@ async function start() {
       }
     }
   }
+  const setTrayVisible = (visible: boolean) => {
+    if (!visible) { tray?.destroy(); tray = undefined; return }
+    if (tray) return
+    tray = new Tray(trayImage(iconDirectory))
+    tray.setToolTip('NextTools — Alt+Z')
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '显示 NextTools', click: show },
+      { label: '设置', click: () => { show(); emit({ type: 'navigate', page: 'settings' }) } },
+      { type: 'separator' }, { label: '退出', click: () => app.quit() },
+    ]))
+    const currentTray = tray
+    runtime!.ctx.effect(() => {
+      currentTray.on('click', toggle)
+      return () => { if (!currentTray.isDestroyed()) currentTray.removeListener('click', toggle) }
+    }, 'tray click listener')
+  }
+  const sourceEnvironment = createSourceEnvironment({
+    window, rendererSession: view.webContents.session, rendererFile,
+    preloadDirectory: join(here, '../preload'),
+    resourcesDirectory: app.isPackaged ? process.resourcesPath : join(here, '../../resources'),
+    emit, show, toggle, setTrayVisible,
+    setDefaultHeight(height) { defaultHeight = height; setLauncherHeight(window.getBounds().height) },
+  })
   const desktop: DesktopService = {
     emit,
+    settingsNative: sourceEnvironment.settingsNative,
+    async revealMarketPath(path) { shell.showItemInFolder(path) },
+    async chooseMarketExportPath(suggestedName) {
+      const selection = await dialog.showSaveDialog(window, { title: '导出插件', defaultPath: join(app.getPath('downloads'), suggestedName), filters: [{ name: 'NextTools 插件备份', extensions: ['zip'] }] })
+      return selection.canceled ? null : selection.filePath ?? null
+    },
     openPluginView: createPluginViewAdapter(window, join(here, '../preload/plugin-sandbox.cjs'), emit, async accelerator => {
       if (!runtime || hotkeyCapture) return null
       return await runtime.invokePlugin('command-shortcuts', 'dispatch', { accelerator }) as CommandResult | null
-    }),
+    }, () => { if (!quitting) show() }),
     hide: () => window.hide(),
     quit: () => app.quit(),
     // 系统桥仅注册原生组合键，指令配置和生命周期由内置插件管理。
@@ -153,8 +190,8 @@ async function start() {
       const nativeAccelerator = accelerator.replace(/Meta/g, 'Super')
       if (nativeAccelerator === currentHotkey || commandShortcuts.has(nativeAccelerator)) throw new Error(`快捷键已被使用：${accelerator}`)
       const callback = () => {
-        if (hotkeyCapture || !runtime) return
-        void runtime.runCommand(commandId).then(result => {
+        if (hotkeyCapture || !runtime || runtime.ctx.nativeContext.shouldIgnoreHotkeys()) return
+        void runtime.invokePlugin('command-shortcuts', 'beforeExecute', { commandId }).then(() => runtime!.runCommand(commandId)).then(result => {
           show()
           emit({ type: 'command-result', result })
         }).catch(error => console.error('Plugin shortcut failed', error))
@@ -272,7 +309,15 @@ exit 1
         nativeImage,
       }),
       openPath: path => shell.openPath(path),
-    }, { version: app.getVersion() })
+      launchAsAdmin: async path => {
+        if (process.platform !== 'win32') throw new Error('Administrator launch is only available on Windows')
+        const encoded = Buffer.from(path, 'utf16le').toString('base64')
+        const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encoded}')); Start-Process -FilePath $target -Verb RunAs`
+        await new Promise<void>((resolve, reject) => {
+          execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { timeout: 60000, windowsHide: true }, error => error ? reject(error) : resolve())
+        })
+      },
+    }, { version: app.getVersion(), ...sourceEnvironment.options })
     const ctx = runtime.ctx
     ctx.effect(() => {
       window.on('resize', resize)
@@ -334,15 +379,8 @@ exit 1
       }
     }, 'Electron lifecycle and security')
     ctx.effect(() => {
-      const tray = new Tray(trayImage(iconDirectory))
-      tray.setToolTip('NextTools — Alt+Z')
-      tray.setContextMenu(Menu.buildFromTemplate([
-        { label: '显示 NextTools', click: show },
-        { label: '设置', click: () => { show(); emit({ type: 'navigate', page: 'settings' }) } },
-        { type: 'separator' }, { label: '退出', click: () => app.quit() },
-      ]))
-      tray.on('click', toggle)
-      return () => tray.destroy()
+      setTrayVisible(true)
+      return () => setTrayVisible(false)
     }, 'system tray')
     const updaterFiber = ctx.plugin(updaterPlugin({
       app,
@@ -356,7 +394,21 @@ exit 1
     await updaterFiber.await()
     const updater = ctx.get('updater')!
     installIPC(runtime, view, rendererURL, frameNonce, setHotkeyCapture, setLauncherHeight, startWindowDrag, endWindowDrag, updater)
+    ctx.effect(() => {
+      const invoke = createSourceNative(ctx, window, emit, setLauncherHeight, sourceEnvironment, locked => {
+        sizeLocked = locked
+        if (!locked && pendingHeight !== undefined) setLauncherHeight(pendingHeight)
+      })
+      ipcMain.handle(channels.sourceNative, (event, method: unknown, args: unknown) => {
+        const frame = event.senderFrame
+        if (event.sender !== view.webContents || frame !== view.webContents.mainFrame || !frame || frame.url !== view.webContents.getURL()) throw new Error('Unauthorized native sender')
+        if (typeof method !== 'string' || !Array.isArray(args)) throw new TypeError('Invalid native request')
+        return invoke(method, args)
+      })
+      return () => ipcMain.removeHandler(channels.sourceNative)
+    }, 'Original source native IPC')
     await (devURL ? view.webContents.loadURL(devURL) : view.webContents.loadFile(rendererFile))
+    await sourceEnvironment.start()
     show()
   } catch (error) {
     endWindowDrag()

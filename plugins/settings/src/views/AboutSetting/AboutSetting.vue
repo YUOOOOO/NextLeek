@@ -1,23 +1,224 @@
-<!-- MIT Copyright (c) 2025 lzx8589561; adapted to the NextTools Cordis desktop contract. -->
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useDesktopStore } from '../../../../../src/client/store'
-const desktop=useDesktopStore()
-const appVersion=computed(()=>desktop.updateState?.currentVersion??'未读取')
-const labels={unsupported:'当前安装方式不支持在线更新',idle:'尚未检查更新',checking:'正在检查更新',available:'发现新版本','not-available':'已是最新版本',downloading:'正在下载更新',downloaded:'更新已下载',installing:'正在重启安装',error:'更新失败'}
-const updateInProgress=computed(()=>desktop.updateBusy||['checking','downloading','installing'].includes(desktop.updateState?.status??''))
-const isCheckingUpdate=computed(()=>desktop.updateState?.status==='checking')
-// 更新动作完全交给宿主更新服务，保留实际错误与支持状态。
-function handleCheckUpdate(){void desktop.checkForUpdates()}
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useToast } from '@/components'
+import { GITHUB_LATEST_RELEASE_URL, GITHUB_REPOSITORY_URL } from '@shared/updateSource'
+
+const { info, error, confirm } = useToast()
+
+const appVersion = ref('')
+const isCheckingUpdate = ref(false)
+const autoCheckUpdate = ref(true)
+const receiveBetaUpdates = ref(false)
+const showUpdateOptions = ref(false)
+const currentYear = new Date().getFullYear()
+const showBetaUpdateOption = computed(
+  () => appVersion.value !== '' && appVersion.value !== '未知' && !appVersion.value.includes('-')
+)
+
+onMounted(async () => {
+  await getAppVersion()
+  await loadAutoCheckSetting()
+  window.addEventListener('click', closeUpdateOptions)
+  window.addEventListener('keydown', handleUpdateOptionsKeydown, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeUpdateOptions)
+  window.removeEventListener('keydown', handleUpdateOptionsKeydown, true)
+})
+
+async function getAppVersion(): Promise<void> {
+  try {
+    appVersion.value = await window.ztools.internal.getAppVersion()
+  } catch (err) {
+    console.error('获取版本失败:', err)
+    appVersion.value = '未知'
+  }
+}
+
+async function handleCheckUpdate(): Promise<void> {
+  if (isCheckingUpdate.value) return
+  isCheckingUpdate.value = true
+
+  try {
+    const result = await window.ztools.internal.updaterCheckUpdate()
+    if (result.migrationRequired) {
+      const shouldOpenRelease = await confirm({
+        title: '需要更新 ZTools',
+        message:
+          '当前版本使用的是较早的更新方式，请安装一次最新完整版本。您的数据、设置和插件都会保留。',
+        type: 'info',
+        confirmText: '下载最新版本',
+        cancelText: '稍后'
+      })
+      if (shouldOpenRelease) {
+        window.ztools.shellOpenExternal(result.releaseUrl || GITHUB_LATEST_RELEASE_URL)
+      }
+      return
+    }
+    if (result.hasUpdate) {
+      const accepted = await confirm({ title: '发现新版本', message: '下载经过校验的更新安装包？', type: 'info', confirmText: '下载更新', cancelText: '稍后' })
+      if (!accepted) return
+      const downloaded = await window.desktop.downloadUpdate()
+      if (downloaded.status !== 'downloaded') { error(downloaded.message || '更新下载失败'); return }
+      const install = await confirm({ title: '更新已下载', message: '现在重启并安装更新？', type: 'info', confirmText: '重启安装', cancelText: '稍后' })
+      if (install) await window.desktop.installUpdate()
+      return
+    }
+    if (!result.hasUpdate) {
+      if (result.error) {
+        error('检查更新出错: ' + result.error)
+      } else {
+        info('当前已是最新版本')
+      }
+    }
+  } catch (err: unknown) {
+    console.error('检查更新失败:', err)
+    error('检查更新失败: ' + (err instanceof Error ? err.message : '未知错误'))
+  } finally {
+    isCheckingUpdate.value = false
+  }
+}
+
+function openQQGroup(): void {
+  window.ztools.shellOpenExternal('https://qm.qq.com/q/fXCzbh3Txe')
+}
+
+function openGithub(): void {
+  window.ztools.shellOpenExternal(GITHUB_REPOSITORY_URL)
+}
+
+function openSponsor(): void {
+  window.ztools.shellOpenExternal('https://afdian.com/a/ZTools')
+}
+
+async function loadAutoCheckSetting(): Promise<void> {
+  try {
+    const data = await window.ztools.internal.dbGet('settings-general')
+    if (data) {
+      autoCheckUpdate.value = data.autoCheckUpdate ?? true
+      receiveBetaUpdates.value = data.receiveBetaUpdates === true
+    }
+  } catch (err) {
+    console.error('加载自动更新设置失败:', err)
+  }
+}
+
+async function handleAutoCheckUpdateChange(): Promise<void> {
+  try {
+    // 更新数据库中的设置
+    const data = (await window.ztools.internal.dbGet('settings-general')) || {}
+    data.autoCheckUpdate = autoCheckUpdate.value
+    await window.ztools.internal.dbPut('settings-general', data)
+    // 通知主进程
+    await window.ztools.internal.updaterSetAutoCheck(autoCheckUpdate.value)
+  } catch (err) {
+    console.error('更新自动检查更新设置失败:', err)
+  }
+}
+
+/**
+ * 打开或关闭更新高级选项菜单，并阻止当前点击触发外部关闭监听。
+ * @param event 三点按钮的点击事件。
+ * @returns 无返回值。
+ */
+function toggleUpdateOptions(event: MouseEvent): void {
+  event.stopPropagation()
+  showUpdateOptions.value = !showUpdateOptions.value
+}
+
+/**
+ * 关闭更新高级选项菜单。
+ * @returns 无返回值。
+ */
+function closeUpdateOptions(): void {
+  showUpdateOptions.value = false
+}
+
+/**
+ * 在更新高级选项打开时响应 Esc 键关闭菜单。
+ * @param event 窗口键盘事件。
+ * @returns 无返回值。
+ */
+function handleUpdateOptionsKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape' || !showUpdateOptions.value) return
+  event.stopPropagation()
+  closeUpdateOptions()
+}
+
+/**
+ * 保存 Beta 更新订阅偏好，并在开启时立即检查一次新版本。
+ * @returns 设置保存和可选更新检查完成后的 Promise。
+ */
+async function handleReceiveBetaUpdatesChange(): Promise<void> {
+  try {
+    // 与自动检查更新共用设备级设置，确保自动和手动检查读取同一状态。
+    const data = (await window.ztools.internal.dbGet('settings-general')) || {}
+    data.receiveBetaUpdates = receiveBetaUpdates.value
+    await window.ztools.internal.dbPut('settings-general', data)
+
+    // 开启订阅后立即检查，避免用户等待下一次定时检查。
+    if (receiveBetaUpdates.value && autoCheckUpdate.value) {
+      await window.ztools.internal.updaterCheckUpdate()
+    }
+  } catch (err) {
+    console.error('更新 Beta 版本订阅设置失败:', err)
+    error('Beta 更新设置保存失败')
+  }
+}
 </script>
-<template><div class="content-panel">    <div class="about-container">
+<template>
+  <div class="content-panel">
+    <!-- 右上角自动检查更新 -->
+    <div class="auto-update-row">
+      <label class="auto-update-label" for="auto-check-update">自动检查更新</label>
+      <label class="toggle">
+        <input
+          id="auto-check-update"
+          v-model="autoCheckUpdate"
+          type="checkbox"
+          @change="handleAutoCheckUpdateChange"
+        />
+        <span class="toggle-slider"></span>
+      </label>
+      <div v-if="showBetaUpdateOption" class="update-options-wrapper" @click.stop>
+        <button
+          class="icon-btn update-options-button"
+          type="button"
+          title="更新选项"
+          aria-label="更新选项"
+          :aria-expanded="showUpdateOptions"
+          @click="toggleUpdateOptions"
+        >
+          <div class="i-z-more" />
+        </button>
+        <Transition name="update-options">
+          <div v-if="showUpdateOptions" class="update-options-menu">
+            <div class="update-options-copy">
+              <span>接收 Beta 版本更新</span>
+              <small>开启后，正式版也会接收测试版本</small>
+            </div>
+            <label class="toggle beta-update-toggle">
+              <input
+                v-model="receiveBetaUpdates"
+                type="checkbox"
+                @change="handleReceiveBetaUpdatesChange"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </Transition>
+      </div>
+    </div>
+
+    <div class="about-container">
       <!-- Logo -->
       <div class="about-logo">
-        <div class="i-z-info" style="font-size:64px" />
+        <img src="/logo.png" alt="ZTools" draggable="false" />
       </div>
 
       <!-- 应用名称 -->
-      <h1 class="about-title">NextTools</h1>
+      <h1 class="about-title">ZTools</h1>
 
       <!-- 版本号 -->
       <div class="about-version">v{{ appVersion }}</div>
@@ -45,10 +246,120 @@ function handleCheckUpdate(){void desktop.checkForUpdates()}
               />
             </svg>
           </div>
-          <div class="card-label">原始界面来源（MIT）</div>
-          <div class="card-value">ZTools · lzx8589561</div>
-        </div></div>      <!-- 检查更新按钮 -->
-      <button class="check-update-btn" :disabled="updateInProgress || !desktop.updateState?.supported" @click="handleCheckUpdate">
+          <div class="card-label">作者</div>
+          <div class="card-value">Zing</div>
+        </div>
+
+        <div class="about-card clickable" @click="openQQGroup">
+          <div class="card-icon card-icon-qq">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M21 11.5C21.0034 12.8199 20.6951 14.1219 20.1 15.3C19.3944 16.7118 18.3098 17.8992 16.9674 18.7293C15.6251 19.5594 14.0782 19.9994 12.5 20C11.1801 20.0034 9.87812 19.6951 8.7 19.1L3 21L4.9 15.3C4.30493 14.1219 3.99656 12.8199 4 11.5C4.00061 9.92179 4.44061 8.37488 5.27072 7.03258C6.10083 5.69028 7.28825 4.6056 8.7 3.90003C9.87812 3.30496 11.1801 2.99659 12.5 3.00003H13C15.0843 3.11502 17.053 3.99479 18.5291 5.47089C20.0052 6.94699 20.885 8.91568 21 11V11.5Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="card-label">QQ 交流群</div>
+          <div class="card-value">
+            1076942619
+            <svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 13V19C18 19.5304 17.7893 20.0391 17.4142 20.4142C17.0391 20.7893 16.5304 21 16 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V8C3 7.46957 3.21071 6.96086 3.58579 6.58579C3.96086 6.21071 4.46957 6 5 6H11"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M15 3H21V9"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M10 14L21 3"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        <div class="about-card clickable" @click="openGithub">
+          <div class="card-icon card-icon-github">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M9 19C4 20.5 4 16.5 2 16M16 22V18.13C16.0375 17.6532 15.9731 17.1738 15.811 16.7238C15.6489 16.2738 15.3929 15.8634 15.06 15.52C18.2 15.17 21.5 13.98 21.5 8.52C21.4997 7.12383 20.9627 5.7812 20 4.77C20.4559 3.54851 20.4236 2.19835 19.91 1C19.91 1 18.73 0.650001 16 2.48C13.708 1.85882 11.292 1.85882 9 2.48C6.27 0.650001 5.09 1 5.09 1C4.57638 2.19835 4.54414 3.54851 5 4.77C4.03013 5.7887 3.49252 7.14346 3.5 8.55C3.5 13.97 6.8 15.16 9.94 15.55C9.611 15.89 9.35726 16.2954 9.19531 16.7399C9.03335 17.1844 8.96681 17.658 9 18.13V22"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="card-label">开源地址</div>
+          <div class="card-value">
+            查看代码
+            <svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M18 13V19C18 19.5304 17.7893 20.0391 17.4142 20.4142C17.0391 20.7893 16.5304 21 16 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V8C3 7.46957 3.21071 6.96086 3.58579 6.58579C3.96086 6.21071 4.46957 6 5 6H11"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M15 3H21V9"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M10 14L21 3"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+        </div>
+
+        <div class="about-card clickable" @click="openSponsor">
+          <div class="card-icon card-icon-sponsor">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M20.84 4.61C20.3292 4.099 19.7228 3.69364 19.0554 3.41708C18.3879 3.14052 17.6725 2.99817 16.95 2.99817C16.2275 2.99817 15.5121 3.14052 14.8446 3.41708C14.1772 3.69364 13.5708 4.099 13.06 4.61L12 5.67L10.94 4.61C9.9083 3.57831 8.50903 2.99871 7.05 2.99871C5.59096 2.99871 4.19169 3.57831 3.16 4.61C2.1283 5.6417 1.54871 7.04097 1.54871 8.5C1.54871 9.95903 2.1283 11.3583 3.16 12.39L4.22 13.45L12 21.23L19.78 13.45L20.84 12.39C21.351 11.8792 21.7563 11.2728 22.0329 10.6054C22.3095 9.93789 22.4518 9.22249 22.4518 8.5C22.4518 7.77751 22.3095 7.0621 22.0329 6.39464C21.7563 5.72718 21.351 5.12075 20.84 4.61Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="card-label">赞助支持</div>
+          <div class="card-value">支持作者</div>
+        </div>
+      </div>
+
+      <!-- 核心技术 -->
+      <div class="about-techs">
+        <span class="tech-tag">Electron 41</span>
+        <span class="tech-tag">Vue 3</span>
+        <span class="tech-tag">TypeScript</span>
+        <span class="tech-tag">LMDB</span>
+        <span class="tech-tag">Fuse.js</span>
+      </div>
+
+      <!-- 检查更新按钮 -->
+      <button class="check-update-btn" :disabled="isCheckingUpdate" @click="handleCheckUpdate">
         <svg v-if="!isCheckingUpdate" width="18" height="18" viewBox="0 0 24 24" fill="none">
           <path
             d="M23 4V10H17"
@@ -116,7 +427,16 @@ function handleCheckUpdate(){void desktop.checkForUpdates()}
           />
         </svg>
         {{ isCheckingUpdate ? '检查中...' : '检查更新' }}
-      </button><p role="status">{{desktop.updateState?labels[desktop.updateState.status]:'未读取更新状态'}}<span v-if="desktop.updateState?.version"> · {{desktop.updateState.version}}</span></p><p>{{desktop.updateState?.message}}</p><progress v-if="desktop.updateState?.status==='downloading'" :value="desktop.updateState.progress?.percent??0" max="100" /><button v-if="desktop.updateState?.status==='available'" class="check-update-btn" :disabled="updateInProgress" @click="desktop.downloadUpdate()">下载更新</button><button v-if="desktop.updateState?.status==='downloaded'" class="check-update-btn" :disabled="updateInProgress" @click="desktop.installUpdate()">重启并安装</button><p v-if="desktop.updateError" role="alert">{{desktop.updateError}}</p><p>自动检查更新偏好、Beta 通道与外链打开未提供对应安全 API。</p><div class="about-copyright">MIT Copyright (c) 2025 lzx8589561</div></div></div></template>
+      </button>
+
+      <!-- 版权信息 -->
+      <div class="about-copyright">
+        Copyright &copy; 2025-{{ currentYear }} ZTools. All rights reserved.
+      </div>
+    </div>
+  </div>
+</template>
+
 <style scoped>
 .content-panel {
   position: relative;

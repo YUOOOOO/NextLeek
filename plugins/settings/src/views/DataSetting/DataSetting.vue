@@ -4,7 +4,6 @@ import { useToast, AdaptiveIcon, DetailPanel } from '@/components'
 import ProgressCircleButton from '@/components/common/ProgressCircleButton/ProgressCircleButton.vue'
 import { weightedSearch } from '@/utils'
 import { useZtoolsSubInput } from '@/composables'
-import { ACCOUNT_CHANGED_EVENT } from '@/composables/useZToolsAccount'
 
 const { success, error, confirm } = useToast()
 
@@ -125,7 +124,6 @@ const selectedDocKey = ref('')
 const currentDocContent = ref<any>(null)
 const currentDocType = ref<'document' | 'attachment'>('document')
 const docListAnimation = ref('slide') // 二级页面的动画名称，完全手动控制
-let removeAccountStorageListener: (() => void) | undefined
 let removeDownloadProgressListener: (() => void) | undefined
 let loadRequestId = 0
 
@@ -266,12 +264,6 @@ async function downloadPlugin(pluginData: PluginData): Promise<void> {
   }
 }
 
-async function handleAccountStorageChanged(): Promise<void> {
-  closeDocDetailModal()
-  closeDocListModal()
-  isLoaded.value = false
-  await loadPluginData()
-}
 
 // 查看插件文档
 async function viewPluginDocs(pluginData: PluginData): Promise<void> {
@@ -435,18 +427,12 @@ function handleKeydown(e: KeyboardEvent): void {
 onMounted(() => {
   loadPluginData()
   window.addEventListener('keydown', handleKeydown, true)
-  window.addEventListener(ACCOUNT_CHANGED_EVENT, handleAccountStorageChanged)
-  removeAccountStorageListener = window.ztools.internal.onSyncAccountStorageChanged?.(() => {
-    handleAccountStorageChanged()
-  })
   removeDownloadProgressListener =
     window.ztools.internal.onPluginMarketDownloadProgress?.(handleDownloadProgress)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown, true)
-  window.removeEventListener(ACCOUNT_CHANGED_EVENT, handleAccountStorageChanged)
-  removeAccountStorageListener?.()
   removeDownloadProgressListener?.()
 })
 </script>

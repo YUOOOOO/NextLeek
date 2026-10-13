@@ -58,6 +58,8 @@ export function useZtoolsSubInput(
 
   // 是否在注册中
   let registering = false
+  const retryTimers = new Set<number>()
+  let disposed = false
 
   // 子输入框的值
   const subInput = ref(initialValue)
@@ -96,6 +98,7 @@ export function useZtoolsSubInput(
 
     let retryCount = 0
     const timer = window.setInterval(() => {
+      if (disposed) return
       const handled = select
         ? ztoolsWithSubInput.subInputSelect?.()
         : ztoolsWithSubInput.subInputFocus?.()
@@ -103,19 +106,23 @@ export function useZtoolsSubInput(
       retryCount++
       if (handled || retryCount >= 10) {
         window.clearInterval(timer)
+        retryTimers.delete(timer)
       }
     }, 50)
+    retryTimers.add(timer)
   }
 
+  // 仅存活的页面可以注册子输入框，重试随页面卸载撤销。
   function register(autoFocus = isFocus): void {
-    if (registering) {
+    if (disposed || registering) {
       return
     }
     registering = true
     // 先移除之前的
     ztools.removeSubInput()
     // 注册新的
-    const interval = setInterval(() => {
+    const interval = window.setInterval(() => {
+      if (disposed) return
       const res = ztools.setSubInput(
         ({ text }) => {
           if (subInput.value !== text) {
@@ -139,10 +146,12 @@ export function useZtoolsSubInput(
           ztools.setSubInputValue(initialValue)
         }
         // 清除定时器
-        clearInterval(interval)
+        window.clearInterval(interval)
+        retryTimers.delete(interval)
         registering = false
       }
     }, 100)
+    retryTimers.add(interval)
   }
 
   onMounted(() => {
@@ -152,6 +161,9 @@ export function useZtoolsSubInput(
   })
 
   onUnmounted(() => {
+    disposed = true
+    retryTimers.forEach(timer => window.clearInterval(timer))
+    retryTimers.clear()
     ztools.removeSubInput()
     window.removeEventListener('keydown', handleKeyDown)
   })

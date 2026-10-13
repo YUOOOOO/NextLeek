@@ -1,5 +1,24 @@
-/* Original ZTools MIT source: Copyright (c) 2025 lzx8589561. Scoped to launcher only. */
-.app-container {
+/* 全局禁用滚动条（只针对 html 和 body，不影响内部组件） */
+html,
+body {
+  overflow: hidden !important;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* 隐藏 body 的滚动条 */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+:root {
   --bg-color: #f4f4f4;
   --text-color: #333333;
   --text-secondary: #616161;
@@ -8,12 +27,78 @@
   --control-bg: rgba(0, 0, 0, 0.035);
   --hover-bg: #f9fafb;
   --active-bg: #ecfdf5;
+  --primary-color: #059669;
   --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   --text-on-primary: #ffffff;
   --highlight-color: #ea580c;
 }
+
+/* macOS 下使用透明背景 */
+.os-mac:root {
+  --bg-color: #f4f4f4ab;
+}
+
+/* Windows 下默认使用普通背景色 */
+.os-windows:root {
+  --bg-color: #f4f4f4;
+}
+
+/* Windows 下根据 data-material 属性应用不同材质样式 */
+.os-windows[data-material='mica'] {
+  --bg-color: transparent;
+  --card-bg: rgba(255, 255, 255, 0.5); /* 增加白度 */
+  --control-bg: rgba(255, 255, 255, 0.6);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --active-bg: rgba(0, 0, 0, 0.06);
+  --divider-color: rgba(0, 0, 0, 0.06);
+  --highlight-color: rgba(234, 88, 12, 0.9);
+}
+
+.os-windows[data-material='acrylic'] {
+  --bg-color: transparent;
+  --card-bg: rgba(255, 255, 255, 0.3);
+  --control-bg: rgba(255, 255, 255, 0.25);
+  --hover-bg: rgba(0, 0, 0, 0.05);
+  --active-bg: rgba(0, 0, 0, 0.08);
+  --divider-color: rgba(0, 0, 0, 0.06);
+  --control-border: rgba(0, 0, 0, 0.15);
+  --highlight-color: rgba(234, 88, 12, 0.9);
+}
+
+.os-windows[data-material='none'] {
+  --bg-color: #f4f4f4;
+  --card-bg: white;
+  --control-bg: white;
+}
+
+/* 主题色定义 - 亮色模式 */
+.theme-blue {
+  --primary-color: #0284c7;
+}
+
+.theme-purple {
+  --primary-color: #7c3aed;
+}
+
+:root,
+.theme-green {
+  --primary-color: #059669;
+}
+
+.theme-orange {
+  --primary-color: #ea580c;
+}
+
+.theme-red {
+  --primary-color: #dc2626;
+}
+
+.theme-pink {
+  --primary-color: #db2777;
+}
+
 @media (prefers-color-scheme: dark) {
-  .app-container {
+  :root {
     --bg-color: #303133;
     --text-color: #f3f4f6;
     --text-secondary: #bfc0c3;
@@ -26,49 +111,198 @@
     --highlight-color: #fb923c;
   }
 
+  /* macOS 暗色模式下使用透明背景 */
+  .os-mac:root {
+    --bg-color: #303133ab;
+  }
+
+  /* Windows 暗色模式下默认使用普通背景色 */
+  .os-windows:root {
+    --bg-color: #303133;
+  }
+
+  /* Windows 暗色模式下根据 data-material 属性应用不同材质样式 */
+  .os-windows[data-material='mica']:root {
+    --bg-color: transparent;
+    --card-bg: rgba(255, 255, 255, 0.04);
+    --control-bg: rgba(255, 255, 255, 0.06);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --active-bg: rgba(255, 255, 255, 0.08);
+    --divider-color: rgba(255, 255, 255, 0.08);
+    --highlight-color: rgba(251, 146, 60, 0.85);
+  }
+
+  .os-windows[data-material='acrylic'] {
+    --bg-color: transparent;
+    --card-bg: rgba(255, 255, 255, 0.02);
+    --control-bg: rgba(255, 255, 255, 0.04);
+    --hover-bg: rgba(255, 255, 255, 0.05);
+    --active-bg: rgba(255, 255, 255, 0.08);
+    --divider-color: rgba(255, 255, 255, 0.06);
+    --control-border: rgba(255, 255, 255, 0.15);
+    --highlight-color: rgba(251, 146, 60, 0.85);
+  }
+
+  .os-windows[data-material='none'] {
+    --bg-color: #303133;
+    --card-bg: #3a3a3c;
+    --control-bg: #48484a;
+  }
+
+  /* 主题色定义 - 暗色模式 */
+  /* 主题色定义 - 暗色模式 */
+  .theme-blue {
+    --primary-color: #38bdf8;
+  }
+
+  .theme-purple {
+    --primary-color: #a78bfa;
+  }
+
+  :root,
+  .theme-green {
+    --primary-color: #34d399;
+  }
+
+  .theme-orange {
+    --primary-color: #fb923c;
+  }
+
+  .theme-red {
+    --primary-color: #f87171;
+  }
+
+  .theme-pink {
+    --primary-color: #f472b6;
+  }
 }
-.app-container, .app-container * { box-sizing: border-box; }
-.app-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color:var(--text-color); background:var(--bg-color); --primary-hover: color-mix(in srgb, var(--primary-color), black 10%); --primary-light-bg: color-mix(in srgb, var(--primary-color), white 80%); }
-.app-container ::-webkit-scrollbar {
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* 注意：html 和 body 的 overflow 设置已在文件开头全局定义 */
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+
+  /* 使用 color-mix 计算 hover 和 light-bg */
+  /* 必须定义在 body 上，以便在 theme-xxx 类改变 --primary-color 时重新计算 */
+  --primary-hover: color-mix(in srgb, var(--primary-color), black 10%);
+  --primary-light-bg: color-mix(in srgb, var(--primary-color), white 80%);
+}
+
+/* 默认的 active-bg 和 hover-bg（非 Windows 材质模式） */
+html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acrylic']) body {
+  --active-bg: color-mix(in srgb, var(--primary-color) 20%, white);
+  --hover-bg: color-mix(in srgb, var(--primary-color) 12%, white);
+}
+
+/* 文本选择样式 - 使用主题色 */
+::selection {
+  background: color-mix(in srgb, var(--primary-color) 35%, white);
+  color: var(--text-color);
+}
+
+::-moz-selection {
+  background: color-mix(in srgb, var(--primary-color) 35%, white);
+  color: var(--text-color);
+}
+
+#app {
+  overflow: hidden !important; /* 完全隐藏滚动条 */
+  max-width: 100%; /* 限制最大宽度 */
+  height: 100%;
+}
+
+/* Windows 11 圆角支持（无边框窗口） */
+.os-windows #app {
+  border-radius: 8px; /* Windows 11 默认圆角 */
+  overflow: hidden;
+}
+
+.os-windows body {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    /* 暗色模式下的计算逻辑 */
+    --primary-hover: color-mix(in srgb, var(--primary-color), white 10%);
+    --primary-light-bg: color-mix(in srgb, var(--primary-color), transparent 92%);
+  }
+
+  /* 暗色模式下默认的 active-bg 和 hover-bg（非 Windows 材质模式） */
+  html:not(.os-windows[data-material='mica']):not(.os-windows[data-material='acrylic']) body {
+    --active-bg: color-mix(in srgb, var(--primary-color) 12%, #303133);
+    --hover-bg: color-mix(in srgb, var(--primary-color) 5%, #303133);
+  }
+
+  /* 暗色模式下的文本选择样式 */
+  ::selection {
+    background: color-mix(in srgb, var(--primary-color) 40%, #303133);
+    color: var(--text-color);
+  }
+
+  ::-moz-selection {
+    background: color-mix(in srgb, var(--primary-color) 40%, #303133);
+    color: var(--text-color);
+  }
+}
+
+/*
+ * 全局滚动条样式优化
+ * 注意：插件 WebContentsView 的滚动条样式在 src/main/core/globalStyles.ts 中定义
+ * 两者应保持一致
+ */
+::-webkit-scrollbar {
   width: 6px !important;
   height: 6px !important;
 }
 
-.app-container ::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent !important;
 }
 
-.app-container ::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   border-radius: 3px !important;
   transition: background 0.2s ease !important;
 }
 
 /* 全局滚动条样式优化 - 亮色模式 */
 @media (prefers-color-scheme: light) {
-  .app-container ::-webkit-scrollbar-thumb {
+  ::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.08) !important;
   }
 
-  .app-container ::-webkit-scrollbar-thumb:hover {
+  ::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 0, 0, 0.15) !important;
   }
 
-  .app-container ::-webkit-scrollbar-thumb:active {
+  ::-webkit-scrollbar-thumb:active {
     background: rgba(0, 0, 0, 0.25) !important;
   }
 }
 
 /* 全局滚动条样式优化 - 暗色模式 */
 @media (prefers-color-scheme: dark) {
-  .app-container ::-webkit-scrollbar-thumb {
+  ::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1) !important;
   }
 
-  .app-container ::-webkit-scrollbar-thumb:hover {
+  ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2) !important;
   }
 
-  .app-container ::-webkit-scrollbar-thumb:active {
+  ::-webkit-scrollbar-thumb:active {
     background: rgba(255, 255, 255, 0.35) !important;
   }
 }

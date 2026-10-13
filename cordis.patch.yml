@@ -19,6 +19,10 @@
       name: nexttools/desktop
       label: Electron 桌面宿主
       protected: true
+    - id: native-context
+      name: nexttools/native-context
+      label: 原生剪贴板与窗口上下文
+      protected: true
     - id: contributions
       name: nexttools/contributions
       label: 工具与技能注册表
@@ -38,6 +42,10 @@
     - id: builtin-search
       name: nexttools/builtin-search
       label: 搜索
+      protected: true
+    - id: auxiliary-surfaces
+      name: nexttools/auxiliary-surfaces
+      label: 悬浮球与超级面板
       protected: true
     - id: plugin-market
       name: nexttools/plugin-market

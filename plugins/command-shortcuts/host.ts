@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '../../src/shared/contracts'
 import { identifier } from '../../src/shared/validation'
 import type { CommandShortcut } from '../../src/host/services/contracts'
+import { installSourceShortcuts } from './source-shortcuts'
 
 // 统一键名和修饰键顺序，避免 Ctrl/Control 或大小写绕过冲突检测。
 export function commandAccelerator(value: unknown): string | null {
@@ -24,11 +25,12 @@ export function commandAccelerator(value: unknown): string | null {
 
 export function commandShortcutsPlugin(execute: (id: string) => Promise<CommandResult>) {
   return {
-    name: 'command-shortcuts', inject: ['storage', 'commands', 'pluginEndpoints', 'desktop'],
+    name: 'command-shortcuts', inject: ['storage', 'commands', 'pluginEndpoints', 'desktop', 'settings'],
     apply(ctx: Context) {
       const bindings = new Map<string, CommandShortcut>()
       const registrations = new Map<string, { accelerator: string; dispose: () => void }>()
       const failures = new Map<string, string>()
+      const source = installSourceShortcuts(ctx)
       for (const saved of ctx.storage.readShortcuts()) {
         const commandId = identifier(saved.commandId)
         if (bindings.has(commandId)) throw new Error(`重复命令快捷键配置：${commandId}`)
@@ -59,6 +61,14 @@ export function commandShortcutsPlugin(execute: (id: string) => Promise<CommandR
       ctx.commands.subscribe(ctx, reconcile)
       reconcile()
       ctx.pluginEndpoints.register(ctx, 'command-shortcuts', async (method, args) => {
+        if (method === 'source') {
+          if (!args || typeof args !== 'object' || !('method' in args) || typeof args.method !== 'string' || !('args' in args) || !Array.isArray(args.args)) throw new TypeError('Invalid source shortcut request')
+          return source.invoke(args.method, args.args)
+        }
+        if (method === 'beforeExecute') {
+          if (!args || typeof args !== 'object' || !('commandId' in args) || typeof args.commandId !== 'string') throw new TypeError('Command id required')
+          await source.beforeExecute(args.commandId); return { success: true }
+        }
         if (method === 'list') {
           if (args !== null) throw new TypeError('list takes null')
           const ids = new Set([...ctx.commands.list().map(command => command.id), ...bindings.keys()])
@@ -69,7 +79,8 @@ export function commandShortcutsPlugin(execute: (id: string) => Promise<CommandR
         if (method === 'dispatch') {
           const accelerator = commandAccelerator(input.accelerator)
           const binding = [...bindings.values()].find(item => item.application === accelerator && accelerator !== null && ctx.commands.has(item.commandId))
-          return binding ? execute(binding.commandId) : null
+          if (!binding) return null
+          return execute(binding.commandId)
         }
         if (method !== 'set') throw new Error(`Unknown shortcut method: ${method}`)
         const commandId = identifier(input.commandId)

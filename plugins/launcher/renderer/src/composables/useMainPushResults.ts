@@ -1,5 +1,6 @@
 import { ref, toRaw, watch } from 'vue'
 import { useCommandDataStore } from '../stores/commandDataStore'
+import type { SourceCommandType } from '../env'
 
 /**
  * mainPush 结果项（插件回调返回的单个搜索结果）
@@ -30,7 +31,7 @@ export interface MainPushGroup {
   /** 功能图标。 */
   featureIcon?: string
   /** 当前分组命中的 cmd 类型。 */
-  matchedCmdType: string
+  matchedCmdType: SourceCommandType
   /** 插件返回的结果项集合。 */
   items: MainPushItem[]
 }

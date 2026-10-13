@@ -5,11 +5,118 @@
     :class="{ 'is-compact': windowStore.compactMainWindowHeader }"
     :style="{ height: `${mainWindowHeaderHeight}px` }"
     @mousedown="handleMouseDown"
+    @dblclick="handleDoubleClick"
   >
+    <!-- 拖放蒙版 -->
+    <div v-if="isDraggingOver" class="drag-overlay"></div>
     <!-- 隐藏的测量元素,用于计算文本宽度 -->
     <div class="search-input-container">
+      <!-- 插件模式胶囊标签 -->
+      <div
+        v-if="currentView === 'plugin' && windowStore.currentPlugin"
+        class="plugin-tag"
+        :class="{ 'has-cmd': windowStore.currentPlugin.cmdName }"
+      >
+        <div class="plugin-tag-left">
+          <AdaptiveIcon
+            v-if="windowStore.currentPlugin.logo"
+            :src="windowStore.currentPlugin.logo"
+            class="plugin-tag-icon"
+            :force-adaptive="false"
+            draggable="false"
+          />
+          <span class="plugin-tag-title">
+            {{ windowStore.currentPlugin.title || windowStore.currentPlugin.name }}
+          </span>
+        </div>
+        <span v-if="windowStore.currentPlugin.cmdName" class="plugin-tag-cmd">
+          {{ windowStore.currentPlugin.cmdName }}
+        </span>
+        <button title="返回搜索" class="plugin-tag-close" @click.stop="handleClosePlugin">
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </div>
+      <!-- 粘贴的图片缩略图 -->
+      <div v-if="pastedImage" class="pasted-image-thumbnail">
+        <img :src="pastedImage" alt="粘贴的图片" />
+      </div>
+      <!-- 粘贴的文件显示 -->
+      <div v-if="pastedFiles && pastedFiles.length > 0" class="pasted-files">
+        <div class="file-icon">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M13 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V9L13 2Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M13 2V9H20"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+        <div class="file-info">
+          <span class="file-name">{{ getFirstFileName(pastedFiles) }}</span>
+          <span v-if="pastedFiles.length > 1" class="file-count">{{ pastedFiles.length }}</span>
+        </div>
+      </div>
+      <!-- 粘贴的文本显示 -->
+      <div v-if="pastedText" class="pasted-text" @click="handlePastedTextClick">
+        <div class="text-icon">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M14 2V8H20M16 13H8M16 17H8M10 9H8"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+        <div class="text-info">
+          <span class="text-content">{{ truncatedPastedText }}</span>
+        </div>
+      </div>
       <!-- 输入框包装器：占位符和输入框在同一容器内 -->
-      <div class="input-wrapper">
+      <!-- 主搜索界面始终显示，插件模式下受 subInputVisible 控制 -->
+      <div v-if="currentView !== 'plugin' || windowStore.subInputVisible" class="input-wrapper">
         <span ref="measureRef" class="measure-text"></span>
         <!-- 独立的占位符显示 -->
         <div v-if="!modelValue && !isComposing" class="placeholder-text">
@@ -31,90 +138,1167 @@
           @keydown.up="(e) => keydownEvent(e, 'up')"
           @keydown.enter="(e) => keydownEvent(e, 'enter')"
           @keydown.tab="(e) => keydownEvent(e, 'tab')"
+          @paste="handlePaste"
         />
       </div>
     </div>
 
     <!-- 操作栏 -->
     <div ref="searchActionsRef" class="search-actions">
-      <!-- 原版头像入口导航至安全设置页 -->
+      <!-- Tab 键功能提示 -->
+      <div v-if="tabHintText && currentView !== 'plugin' && modelValue" class="tab-target-hint">
+        <span class="tab-target-text">{{ tabHintText }}</span>
+        <span class="tab-target-key">Tab</span>
+      </div>
+      <!-- 更新提示 -->
+      <div v-if="windowStore.shouldShowUpdateNotification" class="update-notification">
+        <button class="update-action" type="button" @click="handleUpdateClick">
+          <span class="update-text">发现新版本，点击更新</span>
+          <UpdateIcon />
+        </button>
+        <button
+          class="update-dismiss"
+          type="button"
+          title="关闭本次提示"
+          aria-label="关闭更新提示"
+          @click="handleDismissUpdateNotification"
+        >
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <!-- 当前插件存在市场新版本时显示，展开层向左覆盖以避免右侧图标位移。 -->
+      <div v-if="hasPluginUpdate" class="plugin-upgrade-slot">
+        <div
+          class="plugin-upgrade-control"
+          :class="{
+            upgrading: pluginUpdateStatus === 'upgrading',
+            error: pluginUpdateStatus === 'error'
+          }"
+          :title="pluginUpgradeTitle"
+        >
+          <div class="plugin-upgrade-actions">
+            <button
+              type="button"
+              class="plugin-upgrade-action market-action"
+              :disabled="pluginUpdateStatus === 'upgrading'"
+              @click.stop="handleOpenPluginMarket"
+            >
+              进入市场查看
+            </button>
+            <button
+              type="button"
+              class="plugin-upgrade-action upgrade-now-action"
+              :disabled="pluginUpdateStatus === 'upgrading'"
+              @click.stop="handleUpgradePlugin"
+            >
+              {{ pluginUpgradeActionText }}
+            </button>
+          </div>
+          <button
+            type="button"
+            class="plugin-upgrade-trigger"
+            :aria-label="pluginUpgradeTitle"
+            @click.stop
+          >
+            <PluginUpgradeIcon />
+          </button>
+        </div>
+      </div>
+      <!-- 头像按钮（无更新或插件模式时显示） -->
       <div
+        v-if="!windowStore.shouldShowUpdateNotification"
         class="avatar-wrapper"
-        :class="{ 'is-default': true }"
+        :class="{
+          loading: isPluginLoading,
+          'is-default': isDefaultAvatar,
+          'ai-active': windowStore.aiRequestStatus !== 'idle',
+          'ai-sending': windowStore.aiRequestStatus === 'sending',
+          'ai-receiving': windowStore.aiRequestStatus === 'receiving'
+        }"
         @click="handleSettingsClick"
       >
-        <!-- 保留原版头像容器 -->
+        <!-- 插件模式下显示操作提示图标 -->
+        <div v-if="windowStore.currentPlugin" class="action-indicator">
+          <svg
+            width="4"
+            height="18"
+            viewBox="0 0 4 18"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <circle cx="2" cy="2" r="2" fill="currentColor" opacity="0.7" />
+            <circle cx="2" cy="9" r="2" fill="currentColor" opacity="0.7" />
+            <circle cx="2" cy="16" r="2" fill="currentColor" opacity="0.7" />
+          </svg>
+        </div>
+        <!-- 头像容器（包含头像、动画层、加载动画）-->
         <div class="avatar-container">
+          <!-- AI 状态动画层 -->
+          <div v-if="windowStore.aiRequestStatus !== 'idle'" class="ai-animation-layer">
+            <!-- 蒙版层 -->
+            <div class="ai-mask"></div>
+            <!-- AI 文字 -->
+            <div class="ai-text">AI</div>
+            <!-- 发送状态：同心圆向外扩散 -->
+            <div v-if="windowStore.aiRequestStatus === 'sending'" class="ai-ripple-container"></div>
+            <!-- 接收状态：边缘向内收缩 -->
+            <div
+              v-if="windowStore.aiRequestStatus === 'receiving'"
+              class="ai-pulse-container"
+            ></div>
+          </div>
           <AdaptiveIcon
             :src="avatarUrl"
             :force-adaptive="false"
-            class="search-btn is-default"
+            :class="[
+              'search-btn',
+              { 'plugin-logo': windowStore.currentPlugin?.logo && !isPluginLoading },
+              { 'is-default': isDefaultAvatar }
+            ]"
             draggable="false"
           />
+          <div v-if="isPluginLoading" class="avatar-spinner"></div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
-import type { Page } from '../../../../../../src/shared/contracts'
-import { useDesktopStore } from '../../../../../../src/client/store'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import PluginUpgradeIcon from '../../assets/icons/plugin-upgrade.svg?component'
+import { resolveMainWindowHeaderHeight } from '../../shared/mainWindowLayout'
+import { normalizeConfigList } from '../../shared/pluginSettings'
+import {
+  resolveMainPushMenuState,
+  toggleMainPushSetting
+} from '../../composables/useMainPushSetting'
 import { DEFAULT_AVATAR, useWindowStore } from '../../stores/windowStore'
+import type { NavDirectionKey } from '../../utils/convertKeyboardEvent'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
-defineProps<{ modelValue: string }>()
-const emit = defineEmits<{ 'update:model-value': [value: string]; composing: [active: boolean]; 'arrow-keydown': [event: KeyboardEvent]; navigate: [page: Page] }>()
-const desktop = useDesktopStore()
+import UpdateIcon from './UpdateIcon.vue'
+
+// FileItem 接口（从剪贴板管理器返回的格式）
+interface FileItem {
+  path: string
+  name: string
+  isDirectory: boolean
+}
+
+type PluginUpdateStatus = 'idle' | 'available' | 'upgrading' | 'error'
+
+interface PluginMarketDownloadProgress {
+  pluginName: string
+  taskId: string
+  status: 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}
+
+const props = defineProps<{
+  modelValue: string
+  pastedImage?: string | null
+  pastedFiles?: FileItem[] | null
+  pastedText?: string | null
+  currentView?: string
+  embeddedSettings?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: string): void
+  (e: 'update:pastedImage', value: string | null): void
+  (e: 'update:pastedFiles', value: FileItem[] | null): void
+  (e: 'update:pastedText', value: string | null): void
+  (e: 'keydown', event: KeyboardEvent): void
+  (e: 'arrow-keydown', event: KeyboardEvent, direction: NavDirectionKey): void
+  (e: 'composing', isComposing: boolean): void
+  (e: 'settings-click'): void
+  (e: 'close-plugin'): void
+}>()
+
 const windowStore = useWindowStore()
-const searchBoxRef = ref<HTMLElement>()
+const mainWindowHeaderHeight = computed(() =>
+  resolveMainWindowHeaderHeight(windowStore.compactMainWindowHeader)
+)
+
+const searchBoxRef = ref<HTMLDivElement | null>(null)
+const searchActionsRef = ref<HTMLDivElement | null>(null)
+
+/**
+ * 根据当前上下文选择搜索框占位文案。
+ */
+const placeholderText = computed(() => {
+  // 如果在插件模式下,使用子输入框的 placeholder
+  if (windowStore.currentPlugin) {
+    return windowStore.subInputPlaceholder
+  }
+  // 否则使用全局 placeholder
+  return windowStore.placeholder
+})
+
+/**
+ * 获取当前打开插件的有效名称。
+ */
+function getCurrentPluginName(): string | null {
+  return windowStore.currentPlugin?.name ?? null
+}
+
+/**
+ * 切换当前插件在指定行为设置中的选中状态。
+ */
+async function toggleCurrentPluginVariantSetting(
+  key: 'out-kill-plugin' | 'auto-detach-plugin' | 'auto-start-plugin'
+): Promise<void> {
+  const currentPluginName = getCurrentPluginName()
+  if (!currentPluginName) {
+    return
+  }
+
+  let currentList: string[] = []
+  try {
+    const data = await window.ztools.dbGet(key)
+    currentList = normalizeConfigList(data)
+  } catch (error) {
+    console.debug(`未找到 ${key} 配置`, error)
+  }
+
+  const nextList = currentList.includes(currentPluginName)
+    ? currentList.filter((n) => n !== currentPluginName)
+    : [...currentList, currentPluginName]
+  await window.ztools.dbPut(key, nextList)
+  console.log(`已更新 ${key} 配置:`, nextList)
+}
+
+// 当前实际显示的占位符文字
+const currentPlaceholder = computed(() => {
+  // 如果有粘贴内容（图片/文件/文本），显示"搜索"
+  if (props.pastedImage || props.pastedFiles || props.pastedText) {
+    return '搜索'
+  }
+  // 否则显示完整的占位符文字
+  return placeholderText.value
+})
+const avatarUrl = computed(() => {
+  // 优先显示插件图标
+  if (windowStore.currentPlugin?.logo) {
+    return windowStore.currentPlugin.logo
+  }
+  // 否则显示用户头像
+  return windowStore.avatar
+})
+
+// 判断是否是默认头像
+const isDefaultAvatar = computed(() => {
+  // 使用严格相等判断，而不是字符串包含判断
+  // 这样在打包后路径被处理时也能正确判断
+  return avatarUrl.value === DEFAULT_AVATAR
+})
+
+const isPluginLoading = computed(() => windowStore.pluginLoading)
+const pluginUpdateStatus = ref<PluginUpdateStatus>('idle')
+const pluginUpdateName = ref('')
+const pluginCurrentVersion = ref('')
+const pluginLatestVersion = ref('')
+const pluginUpgradeProgress = ref<number | null>(null)
+const pluginUpgradeError = ref('')
+let pluginUpdateRequestSequence = 0
+
+const hasPluginUpdate = computed(
+  () =>
+    !!windowStore.currentPlugin &&
+    pluginUpdateName.value === windowStore.currentPlugin.name &&
+    pluginUpdateStatus.value !== 'idle'
+)
+const pluginUpgradeActionText = computed(() => {
+  if (pluginUpdateStatus.value === 'error') return '重试升级'
+  if (pluginUpdateStatus.value !== 'upgrading') return '立即升级'
+  if (pluginUpgradeProgress.value != null) {
+    return `升级 ${Math.round(pluginUpgradeProgress.value)}%`
+  }
+  return '正在安装'
+})
+const pluginUpgradeTitle = computed(() => {
+  if (pluginUpgradeError.value) return pluginUpgradeError.value
+  return `发现新版本 ${pluginLatestVersion.value}，当前版本 ${pluginCurrentVersion.value}`
+})
+
+/**
+ * 清空当前插件的更新展示状态。
+ * @returns 无返回值
+ */
+function resetPluginUpdateState(): void {
+  pluginUpdateStatus.value = 'idle'
+  pluginUpdateName.value = ''
+  pluginCurrentVersion.value = ''
+  pluginLatestVersion.value = ''
+  pluginUpgradeProgress.value = null
+  pluginUpgradeError.value = ''
+}
+
+/**
+ * 异步检查当前插件的市场版本，并丢弃插件切换后到达的过期响应。
+ * @returns 检查完成后结束的 Promise
+ */
+async function checkCurrentPluginUpdate(): Promise<void> {
+  const plugin = windowStore.currentPlugin
+  const requestSequence = ++pluginUpdateRequestSequence
+  resetPluginUpdateState()
+  if (!plugin) return
+
+  try {
+    const result = await window.ztools.pluginUpdates.check(plugin.name, plugin.path)
+    // 插件切换后不允许旧请求覆盖新插件的界面状态。
+    if (
+      requestSequence !== pluginUpdateRequestSequence ||
+      windowStore.currentPlugin?.name !== plugin.name ||
+      windowStore.currentPlugin?.path !== plugin.path
+    ) {
+      return
+    }
+    if (!result.success || !result.updateAvailable || !result.latestVersion) return
+
+    pluginUpdateName.value = plugin.name
+    pluginCurrentVersion.value = result.currentVersion || ''
+    pluginLatestVersion.value = result.latestVersion
+    pluginUpdateStatus.value = 'available'
+  } catch (error: unknown) {
+    // 更新检查失败不应干扰插件正常打开，只保留调试日志。
+    console.debug('[PluginUpdate] 检查更新失败:', error)
+  }
+}
+
+/**
+ * 打开当前插件对应的市场详情页。
+ * @returns 操作完成后结束的 Promise
+ */
+async function handleOpenPluginMarket(): Promise<void> {
+  const pluginName = pluginUpdateName.value
+  if (!pluginName || pluginUpdateStatus.value === 'upgrading') return
+
+  try {
+    const result = await window.ztools.pluginUpdates.openMarket(pluginName)
+    if (!result.success) {
+      alert(`打开插件市场失败: ${result.error || '未知错误'}`)
+    }
+  } catch (error: unknown) {
+    alert(`打开插件市场失败: ${error instanceof Error ? error.message : '未知错误'}`)
+  }
+}
+
+/**
+ * 立即下载并安装当前插件的市场最新版本。
+ * @returns 升级完成后结束的 Promise
+ */
+async function handleUpgradePlugin(): Promise<void> {
+  const pluginName = pluginUpdateName.value
+  const pluginPath = windowStore.currentPlugin?.path
+  if (!pluginName || !pluginPath || pluginUpdateStatus.value === 'upgrading') return
+
+  // 安装器会先准备新实体，发布前才停止当前插件。
+  pluginUpdateStatus.value = 'upgrading'
+  pluginUpgradeProgress.value = null
+  pluginUpgradeError.value = ''
+  try {
+    const result = await window.ztools.pluginUpdates.upgrade(pluginName, pluginPath)
+    if (!result.success) {
+      pluginUpdateStatus.value = 'error'
+      pluginUpgradeError.value = result.error || '升级失败'
+      alert(`插件升级失败: ${pluginUpgradeError.value}`)
+    } else {
+      resetPluginUpdateState()
+    }
+  } catch (error: unknown) {
+    pluginUpdateStatus.value = 'error'
+    pluginUpgradeError.value = error instanceof Error ? error.message : '升级失败'
+    alert(`插件升级失败: ${pluginUpgradeError.value}`)
+  }
+}
+
+/**
+ * 将主进程发送的市场下载进度同步到当前升级控件。
+ * @param payload 下载或安装阶段的进度数据
+ * @returns 无返回值
+ */
+function handlePluginUpgradeProgress(payload: PluginMarketDownloadProgress): void {
+  if (payload.pluginName !== pluginUpdateName.value) return
+
+  if (payload.status === 'downloading') {
+    pluginUpgradeProgress.value = payload.progress
+  } else if (payload.status === 'installing') {
+    pluginUpgradeProgress.value = null
+  } else if (payload.status === 'error' || payload.status === 'cancelled') {
+    pluginUpdateStatus.value = 'error'
+    pluginUpgradeError.value =
+      payload.error || (payload.status === 'cancelled' ? '升级已取消' : '升级失败')
+  }
+}
+
+// Tab 键功能提示文字
+const tabHintText = computed(() => {
+  if (windowStore.tabKeyFunction === 'navigate') {
+    return '切换选中'
+  }
+
+  const target = windowStore.tabTargetCommand
+  if (!target) return ''
+  const parts = target.split('/')
+  return parts.length === 2 ? parts[1] : target
+})
+
+// 截断显示的粘贴文本（从中间截断，显示头尾）
+const truncatedPastedText = computed(() => {
+  if (!props.pastedText) return ''
+  const maxLength = 30
+  if (props.pastedText.length <= maxLength) return props.pastedText
+
+  // 从中间截断，保留前15个字符和后10个字符
+  const headLength = 15
+  const tailLength = 10
+  const head = props.pastedText.substring(0, headLength)
+  const tail = props.pastedText.substring(props.pastedText.length - tailLength)
+  return `${head}...${tail}`
+})
+
 const inputRef = ref<HTMLInputElement>()
-const measureRef = ref<HTMLElement>()
-const searchActionsRef = ref<HTMLElement>()
-const isComposing = ref(false)
-const avatarUrl = DEFAULT_AVATAR
-const currentPlaceholder = '搜索应用、文件和指令'
-const mainWindowHeaderHeight = computed(() => windowStore.compactMainWindowHeader ? 48 : 60)
-let dragging = false
-// 输入法结束前不派发搜索，结束后提交最终文本。
-function onInput(event: Event): void { if (!isComposing.value) emit('update:model-value', (event.target as HTMLInputElement).value) }
-// 开始组合输入时隔离异步搜索。
-function onCompositionStart(): void { isComposing.value = true; emit('composing', true) }
-// 组合输入完成后恢复查询并提交文本。
-function onCompositionEnd(event: CompositionEvent): void { isComposing.value = false; emit('update:model-value', (event.target as HTMLInputElement).value); emit('composing', false) }
-// Escape 只发给启动页，快捷键保持宿主统一处理。
-function onKeydown(event: KeyboardEvent): void {
-  if (isComposing.value || event.isComposing) return
-  if (event.key === 'Escape') { event.stopPropagation(); emit('arrow-keydown', event) }
-  if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); emit('navigate', 'settings') }
+const measureRef = ref<HTMLSpanElement>()
+const isComposing = ref(false) // 是否正在输入法组合
+const composingText = ref('') // 正在组合的文本
+
+// 拖放相关状态
+const isDraggingOver = ref(false) // 是否正在拖动文件到搜索框
+const dragCounter = ref(0) // 拖动计数器，处理嵌套元素的 dragenter/dragleave
+
+watch(
+  () => composingText.value,
+  (newValue) => {
+    // console.log('composingText 更改了', newValue)
+    // 输入法组合中的文本也应该影响宽度
+    if (
+      newValue &&
+      measureRef.value &&
+      inputRef.value &&
+      searchBoxRef.value &&
+      searchActionsRef.value
+    ) {
+      measureRef.value.textContent = newValue
+      const width = measureRef.value.offsetWidth + 10
+
+      // 动态计算最大宽度
+      const searchBoxWidth = searchBoxRef.value.offsetWidth
+      const searchActionsWidth = searchActionsRef.value.offsetWidth
+      const gap = 8
+      const padding = 30
+      const maxWidth = searchBoxWidth - searchActionsWidth - gap - padding
+
+      inputRef.value.style.width = `${Math.min(width, maxWidth)}px`
+    } else {
+      // 组合文本为空时，使用正常的更新逻辑
+      updateInputWidth()
+    }
+  }
+)
+
+function onCompositionStart(): void {
+  isComposing.value = true
+  emit('composing', true)
 }
-// 方向键和 Enter 交给原版结果导航，输入光标左右移动不被无条件阻止。
-function keydownEvent(event: KeyboardEvent, direction: string): void {
-  if (isComposing.value || event.isComposing || (['left', 'right'].includes(direction) && !event.altKey)) return
-  if (direction === 'tab') return
-  event.preventDefault(); event.stopPropagation(); emit('arrow-keydown', event)
+
+function onCompositionEnd(event: Event): void {
+  isComposing.value = false
+  emit('composing', false)
+  // 组合结束后触发一次输入事件
+  const value = (event.target as HTMLInputElement).value
+  emit('update:modelValue', value)
 }
-// 头像进入设置页面，不调用不受支持的原版全局桥。
-function handleSettingsClick(): void { emit('navigate', 'settings') }
-// 只在空白标题区请求安全原生拖动，输入与按钮不触发拖动。
-function handleMouseDown(event: MouseEvent): void {
-  if (event.button !== 0 || (event.target as Element).closest('input,button,.avatar-wrapper')) return
-  dragging = true
-  void window.desktop.startWindowDrag().catch(cause => { desktop.error = String(cause) })
-  window.addEventListener('mouseup', finishDrag, { once: true })
+
+function onInput(event: Event): void {
+  // console.log('onInput', event)
+  // 如果正在输入法组合中,不触发更新
+  if (isComposing.value) {
+    composingText.value = (event.target as HTMLInputElement).value
+    return
+  }
+  const value = (event.target as HTMLInputElement).value
+  emit('update:modelValue', value)
 }
-// 结束原生拖动并移除临时监听。
-function finishDrag(): void {
-  if (!dragging) return
-  dragging = false; window.removeEventListener('mouseup', finishDrag)
-  void window.desktop.endWindowDrag().catch(cause => { desktop.error = String(cause) })
+
+async function onKeydown(event: KeyboardEvent): Promise<void> {
+  // 如果正在输入法组合中,不触发键盘事件
+  if (isComposing.value && event.key === 'Enter') {
+    return
+  }
+
+  // 检测 Command+, (Mac) 或 Ctrl+, (Windows/Linux) 快捷键 - 打开设置
+  if (event.key === ',' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+    event.preventDefault()
+    // 如果不在插件模式，直接打开设置
+    if (props.currentView !== 'plugin' || !windowStore.currentPlugin) {
+      window.ztools.openSettings()
+    }
+    return
+  }
+
+  // 检测 Command+F (Mac) 或 Ctrl+F (Windows/Linux) 快捷键
+  if (event.key === 'f' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+    const settings = (await window.ztools.dbGet('settings-general')) || {}
+    const isEnabled = settings?.builtinAppShortcutsEnabled?.search !== false
+    if (!isEnabled) {
+      return
+    }
+    // 如果输入框有文本内容，将其转为二次筛选状态
+    const inputText = props.modelValue?.trim()
+    if (inputText && inputText.length > 0) {
+      event.preventDefault()
+      // 将当前输入框的文本转为粘贴文本（触发二次筛选）
+      emit('update:pastedText', inputText)
+      // 清空输入框
+      emit('update:modelValue', '')
+      return
+    }
+  }
+
+  // 如果有粘贴的图片、文件或文本，按 Backspace 或 Delete 键清除
+  if (
+    (props.pastedImage || props.pastedFiles || props.pastedText) &&
+    (event.key === 'Backspace' || event.key === 'Delete')
+  ) {
+    // 如果输入框为空且不在输入法组合中，清除图片、文件或文本
+    if (!props.modelValue && !isComposing.value) {
+      event.preventDefault()
+      if (props.pastedImage) {
+        clearPastedImage()
+      } else if (props.pastedFiles) {
+        clearPastedFiles()
+      } else if (props.pastedText) {
+        // 文本类型：填充到输入框并全选
+        const textContent = props.pastedText
+        clearPastedText()
+        nextTick(() => {
+          emit('update:modelValue', textContent)
+          nextTick(() => {
+            // 全选文本
+            inputRef.value?.select()
+          })
+        })
+      }
+      return
+    }
+  }
+
+  emit('keydown', event)
 }
-// 恢复焦点但不改变用户原有输入选择。
-function focus(): void { inputRef.value?.focus({ preventScroll: true }) }
-// 为调用方提供原版输入选择能力。
-function selectAll(): void { inputRef.value?.select() }
-onUnmounted(finishDrag)
-defineExpose({ focus, selectAll })
+
+/**
+ * 处理搜索输入框的导航按键事件（方向键、回车键、Tab键），向上层派发转发或导航请求。
+ * @param event 键盘事件对象。
+ * @param direction 按键动作类型（'left' | 'right' | 'up' | 'down' | 'enter' | 'tab'）。
+ * @returns 无返回值。
+ */
+function keydownEvent(event: KeyboardEvent, direction: NavDirectionKey): void {
+  // 处于输入法组合态时，忽略导航与按键转发，避免打断拼音选词
+  if (isComposing.value) {
+    return
+  }
+
+  // 搜索模式下若存在文本选中态，阻止列表导航以优先保障输入框文本编辑行为
+  if (
+    props.currentView !== 'plugin' &&
+    inputRef.value &&
+    inputRef.value.selectionStart !== inputRef.value.selectionEnd
+  ) {
+    event.stopPropagation()
+    return
+  }
+
+  // 向父组件派发按键动作，供上层决定列表导航或转发给插件
+  emit('arrow-keydown', event, direction)
+}
+
+// 处理粘贴事件
+async function handlePaste(event: ClipboardEvent): Promise<void> {
+  try {
+    // 先阻止默认粘贴行为（因为是异步操作，必须在这里就阻止）
+    event.preventDefault()
+
+    // 手动粘贴不需要时间限制
+    const copiedContent = await window.ztools.getLastCopiedContent()
+
+    if (copiedContent?.type === 'image') {
+      // 粘贴的是图片 -> 作为匹配内容
+      emit('update:pastedImage', copiedContent.data as string)
+      // 清空输入框文本
+      emit('update:modelValue', '')
+    } else if (copiedContent?.type === 'file') {
+      // 粘贴的是文件 -> 作为匹配内容
+      emit('update:pastedFiles', copiedContent.data as FileItem[])
+      // 清空输入框文本
+      emit('update:modelValue', '')
+    } else if (copiedContent?.type === 'text') {
+      // 粘贴的是文本 -> 检查输入框状态
+      const input = inputRef.value
+      const hasSelection =
+        input && input.selectionStart !== null && input.selectionStart !== input.selectionEnd
+      const hasInputText = props.modelValue && props.modelValue.trim().length > 0
+
+      if (hasSelection || hasInputText) {
+        // 有选中文字或输入框有文本 -> 手动插入文本到光标位置
+        const text = copiedContent.data as string
+        const currentValue = props.modelValue || ''
+
+        if (hasSelection) {
+          // 替换选中内容
+          const start = input!.selectionStart!
+          const end = input!.selectionEnd!
+          const newValue = currentValue.substring(0, start) + text + currentValue.substring(end)
+          emit('update:modelValue', newValue)
+
+          // 设置光标位置到插入文本的末尾
+          nextTick(() => {
+            if (input) {
+              const newCursorPos = start + text.length
+              input.setSelectionRange(newCursorPos, newCursorPos)
+            }
+          })
+        } else {
+          // 在光标位置插入文本
+          const cursorPos = input?.selectionStart || currentValue.length
+          const newValue =
+            currentValue.substring(0, cursorPos) + text + currentValue.substring(cursorPos)
+          emit('update:modelValue', newValue)
+
+          // 设置光标位置到插入文本的末尾
+          nextTick(() => {
+            if (input) {
+              const newCursorPos = cursorPos + text.length
+              input.setSelectionRange(newCursorPos, newCursorPos)
+            }
+          })
+        }
+      } else {
+        // 输入框为空 -> 作为粘贴内容（用于 over 类型匹配指令）
+        emit('update:pastedText', copiedContent.data as string)
+        // 清空输入框文本
+        emit('update:modelValue', '')
+      }
+    }
+  } catch (error) {
+    console.error('处理粘贴失败:', error)
+  }
+}
+
+// 拖放事件处理
+function handleDragEnter(event: DragEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+  dragCounter.value++
+  if (dragCounter.value === 1) {
+    isDraggingOver.value = true
+  }
+}
+
+function handleDragOver(event: DragEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function handleDragLeave(event: DragEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+  dragCounter.value--
+  if (dragCounter.value === 0) {
+    isDraggingOver.value = false
+  }
+}
+
+async function handleDrop(event: DragEvent): Promise<void> {
+  event.preventDefault()
+  event.stopPropagation()
+
+  // 重置拖放状态
+  isDraggingOver.value = false
+  dragCounter.value = 0
+
+  try {
+    // 获取拖放的文件
+    const files = event.dataTransfer?.files
+    if (!files || files.length === 0) {
+      console.log('没有文件被拖放')
+      return
+    }
+
+    // 提取文件路径
+    const paths: string[] = []
+    const names: string[] = []
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      // 使用 Electron webUtils 获取文件路径
+      try {
+        const filePath = window.ztools.getPathForFile(file)
+        if (filePath) {
+          paths.push(filePath)
+          names.push(file.name)
+        }
+      } catch (error) {
+        console.error('获取文件路径失败:', file.name, error)
+      }
+    }
+
+    if (paths.length === 0) {
+      console.log('没有有效的文件路径')
+      return
+    }
+
+    // 使用主进程提供的异步方法检查文件类型
+    const fileStats = await window.ztools.checkFilePaths(paths)
+
+    // 转换为 FileItem[] 格式
+    const fileItems: FileItem[] = fileStats
+      .filter((stat) => stat.exists)
+      .map((stat, index) => ({
+        path: stat.path,
+        name: names[index],
+        isDirectory: stat.isDirectory
+      }))
+
+    // 触发粘贴文件事件（和粘贴文件一样的处理）
+    if (fileItems.length > 0) {
+      emit('update:pastedFiles', fileItems)
+      // 清空输入框文本
+      emit('update:modelValue', '')
+    } else {
+      console.log('没有有效的文件项')
+    }
+  } catch (error) {
+    console.error('处理拖放文件失败:', error)
+  }
+}
+
+// 处理点击粘贴文本框
+function handlePastedTextClick(): void {
+  if (props.pastedText) {
+    // 将粘贴的文本填充到输入框
+    emit('update:modelValue', props.pastedText)
+    // 清除粘贴状态
+    emit('update:pastedText', null)
+    // 聚焦输入框
+    nextTick(() => {
+      inputRef.value?.focus()
+    })
+  }
+}
+
+// 清除粘贴的图片
+function clearPastedImage(): void {
+  emit('update:pastedImage', null)
+  nextTick(() => {
+    inputRef.value?.focus()
+  })
+}
+
+// 清除粘贴的文件
+function clearPastedFiles(): void {
+  emit('update:pastedFiles', null)
+  nextTick(() => {
+    inputRef.value?.focus()
+  })
+}
+
+// 清除粘贴的文本
+function clearPastedText(): void {
+  emit('update:pastedText', null)
+  nextTick(() => {
+    inputRef.value?.focus()
+  })
+}
+
+// 窗口拖拽 Composable
+interface DragHandlers {
+  onStart: (e: MouseEvent) => Promise<void>
+  cleanup: () => void
+}
+
+const useDrag = (): DragHandlers => {
+  let isDragging = false
+  let dragReady = false
+  let offsetX = 0
+  let offsetY = 0
+
+  const onMove = (e: MouseEvent): void => {
+    // 安全检查：如果鼠标已经松开但状态未清理，主动取消拖拽
+    if (e.buttons === 0) {
+      cancelDrag()
+      return
+    }
+    if (!isDragging) return
+    window.ztools.setWindowPosition(e.screenX - offsetX, e.screenY - offsetY)
+  }
+
+  const onEnd = (e: MouseEvent): void => {
+    if (!isDragging && !dragReady) return
+    cancelDrag()
+
+    const target = e.target as HTMLElement
+    if (!target.closest('input') && !target.closest('.search-actions')) {
+      inputRef.value?.focus()
+    }
+  }
+
+  const cancelDrag = (): void => {
+    isDragging = false
+    dragReady = false
+    window.ztools.setWindowSizeLock(false)
+    cleanup()
+  }
+
+  const onStart = async (e: MouseEvent): Promise<void> => {
+    const target = e.target as HTMLElement
+    if (target === inputRef.value || target.closest('.search-actions')) return
+
+    // 同步注册监听器，防止 mouseup 在 await 期间丢失
+    dragReady = true
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onEnd)
+
+    const { x, y } = await window.ztools.getWindowPosition()
+
+    // await 返回后检查：如果期间已经松开鼠标，则不进入拖拽
+    if (!dragReady) return
+
+    offsetX = e.screenX - x
+    offsetY = e.screenY - y
+    isDragging = true
+    window.ztools.setWindowSizeLock(true)
+  }
+
+  const cleanup = (): void => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onEnd)
+  }
+
+  return { onStart, cleanup }
+}
+
+const { onStart: handleMouseDown, cleanup: cleanupDrag } = useDrag()
+
+// 获取第一个文件的名称（用于显示）
+function getFirstFileName(files: FileItem[]): string {
+  if (files.length === 0) return ''
+  return files[0].name
+}
+
+function updateInputWidth(): void {
+  nextTick(() => {
+    if (measureRef.value && inputRef.value && searchBoxRef.value && searchActionsRef.value) {
+      let width: number
+      const minWidth = 2 // 最小宽度，确保光标可见
+
+      if (props.modelValue && props.modelValue.length > 0) {
+        // 有内容时，根据内容计算宽度
+        measureRef.value.textContent = props.modelValue
+        width = measureRef.value.offsetWidth + 10 // 添加光标和边距
+
+        // 动态计算最大宽度 = 父容器宽度 - 右侧操作栏宽度 - gap - padding
+        const searchBoxWidth = searchBoxRef.value.offsetWidth
+        const searchActionsWidth = searchActionsRef.value.offsetWidth
+        const gap = 8 // .search-box 的 gap
+        const padding = 30 // .search-box 的左右 padding (15 * 2)
+        const maxWidth = searchBoxWidth - searchActionsWidth - gap - padding
+
+        // 限制最大宽度
+        width = Math.min(width, maxWidth)
+      } else {
+        // 无内容时，使用最小宽度（确保光标可见）
+        width = minWidth
+      }
+
+      // 设置输入框宽度
+      inputRef.value.style.width = `${width}px`
+      // console.log('inputWidth.value', width, 'hasContent', !!props.modelValue)
+    }
+  })
+}
+
+// 监听 modelValue 变化
+watch(
+  () => props.modelValue,
+  () => {
+    updateInputWidth()
+  }
+)
+
+// 监听 currentPlugin 变化（可能改变占位符，但不影响宽度计算）
+watch(
+  () => windowStore.currentPlugin,
+  () => {
+    updateInputWidth()
+    void checkCurrentPluginUpdate()
+  }
+)
+
+// 用于清理的 ResizeObserver
+let resizeObserver: ResizeObserver | null = null
+let cleanupContextMenuListener: (() => void) | null = null
+let cleanupPluginUpdateProgressListener: (() => void) | null = null
+
+onMounted(() => {
+  // 初始化输入框宽度（updateInputWidth 内部会根据是否有内容来决定宽度）
+  updateInputWidth()
+
+  inputRef.value?.focus()
+
+  // 监听窗口大小变化，重新计算输入框最大宽度
+  resizeObserver = new ResizeObserver(() => {
+    updateInputWidth()
+  })
+  if (searchBoxRef.value) {
+    resizeObserver.observe(searchBoxRef.value)
+  }
+
+  // 添加拖放事件监听
+  if (searchBoxRef.value) {
+    searchBoxRef.value.addEventListener('dragenter', handleDragEnter)
+    searchBoxRef.value.addEventListener('dragover', handleDragOver)
+    searchBoxRef.value.addEventListener('dragleave', handleDragLeave)
+    searchBoxRef.value.addEventListener('drop', handleDrop)
+  }
+
+  // 监听 AI 状态变化
+  window.ztools.onAiStatusChanged?.((change) => {
+    windowStore.setAiRequestStatus(change)
+  })
+
+  // 升级进度只监听当前主窗口发起的市场安装任务。
+  cleanupPluginUpdateProgressListener = window.ztools.pluginUpdates.onProgress(
+    handlePluginUpgradeProgress
+  )
+  void checkCurrentPluginUpdate()
+
+  // 监听菜单命令
+  cleanupContextMenuListener?.()
+  cleanupContextMenuListener = window.ztools.onContextMenuCommand(async (command) => {
+    // 内置设置没有独立进程或视图，拒绝遗留菜单发来的隔离插件操作。
+    if (props.embeddedSettings && command !== 'kill-plugin') return
+    if (command === 'open-devtools') {
+      const result = await window.ztools.openPluginDevTools()
+      if (!result.success && result.error) {
+        window.alert(result.error)
+      }
+    } else if (command === 'kill-plugin') {
+      try {
+        // 调用新接口：终止插件并返回搜索页面
+        const result = await window.ztools.killPluginAndReturn(windowStore.currentPlugin!.path)
+        if (!result.success) {
+          alert(`终止插件失败: ${result.error}`)
+        }
+      } catch (error: any) {
+        console.error('终止插件失败:', error)
+        alert(`终止插件失败: ${error.message || '未知错误'}`)
+      }
+    } else if (command === 'detach-plugin') {
+      try {
+        const result = await window.ztools.detachPlugin()
+        if (!result.success) {
+          alert(`分离插件失败: ${result.error}`)
+        }
+      } catch (error: any) {
+        console.error('分离插件失败:', error)
+        alert(`分离插件失败: ${error.message || '未知错误'}`)
+      }
+    } else if (command === 'toggle-auto-kill') {
+      try {
+        await toggleCurrentPluginVariantSetting('out-kill-plugin')
+      } catch (error: any) {
+        console.error('切换自动结束配置失败:', error)
+        alert(`操作失败: ${error.message || '未知错误'}`)
+      }
+    } else if (command === 'toggle-auto-detach') {
+      try {
+        await toggleCurrentPluginVariantSetting('auto-detach-plugin')
+      } catch (error: any) {
+        console.error('切换自动分离配置失败:', error)
+        alert(`操作失败: ${error.message || '未知错误'}`)
+      }
+    } else if (command === 'toggle-auto-start') {
+      try {
+        await toggleCurrentPluginVariantSetting('auto-start-plugin')
+      } catch (error: any) {
+        console.error('切换跟随启动配置失败:', error)
+        alert(`操作失败: ${error.message || '未知错误'}`)
+      }
+    } else if (command === 'toggle-main-push') {
+      try {
+        await toggleMainPushSetting(getCurrentPluginName())
+      } catch (error: any) {
+        console.error('切换搜索栏推送配置失败:', error)
+        alert(`操作失败: ${error.message || '未知错误'}`)
+      }
+    }
+  })
+})
+
+// 关闭插件，返回搜索页
+function handleClosePlugin(): void {
+  emit('close-plugin')
+}
+
+// 处理双击事件 - 在插件显示状态下分离插件
+async function handleDoubleClick(): Promise<void> {
+  // 只在插件模式下响应双击事件
+  if (!props.embeddedSettings && props.currentView === 'plugin' && windowStore.currentPlugin) {
+    console.log('双击搜索框，触发插件分离')
+    try {
+      const result = await window.ztools.detachPlugin()
+      if (!result.success) {
+        console.error('分离插件失败:', result.error)
+      }
+    } catch (error: any) {
+      console.error('分离插件失败:', error)
+    }
+  }
+}
+
+// 内置设置仅提供返回搜索，市场插件保留原版完整操作菜单。
+async function handleSettingsClick(): Promise<void> {
+  console.log('点击设置按钮:', {
+    currentView: props.currentView,
+    currentPlugin: windowStore.currentPlugin
+  })
+
+  // 只有在插件视图真正显示时才显示插件菜单
+  if (props.currentView === 'plugin' && windowStore.currentPlugin) {
+    console.log('显示插件菜单')
+    if (props.embeddedSettings) {
+      await window.ztools.showContextMenu([{ id: 'kill-plugin', label: '返回搜索' }])
+      return
+    }
+
+    // 从数据库读取配置
+    let outKillPlugins: string[] = []
+    let autoDetachPlugins: string[] = []
+    let autoStartPlugins: string[] = []
+    try {
+      const killData = await window.ztools.dbGet('out-kill-plugin')
+      outKillPlugins = normalizeConfigList(killData)
+      const detachData = await window.ztools.dbGet('auto-detach-plugin')
+      autoDetachPlugins = normalizeConfigList(detachData)
+      const startData = await window.ztools.dbGet('auto-start-plugin')
+      autoStartPlugins = normalizeConfigList(startData)
+    } catch (error) {
+      console.log('读取配置失败（可能不存在）:', error)
+    }
+
+    // 检查当前插件是否在列表中
+    const currentPluginName = getCurrentPluginName()
+    const isAutoKill = !!currentPluginName && outKillPlugins.includes(currentPluginName)
+    const isAutoDetach = !!currentPluginName && autoDetachPlugins.includes(currentPluginName)
+    const isAutoStart = !!currentPluginName && autoStartPlugins.includes(currentPluginName)
+    const mainPushState = await resolveMainPushMenuState(currentPluginName)
+
+    // 根据平台显示不同的快捷键
+    const platform = window.ztools.getPlatform()
+    const detachShortcut = platform === 'darwin' ? '⌘+D' : 'Ctrl+D'
+    const killShortcut = platform === 'darwin' ? '⌘+Q' : 'Ctrl+Q'
+
+    const menuItems = [
+      { id: 'detach-plugin', label: `分离到独立窗口 (${detachShortcut})` },
+      ...(windowStore.currentPlugin.sourceType === 'closed_source'
+        ? []
+        : [{ id: 'open-devtools', label: '打开开发者工具' }]),
+      {
+        label: '插件设置',
+        submenu: [
+          ...(mainPushState.supported
+            ? [
+                {
+                  id: 'toggle-main-push',
+                  label: '搜索栏推送',
+                  type: 'checkbox',
+                  checked: mainPushState.enabled
+                }
+              ]
+            : []),
+          {
+            id: 'toggle-auto-kill',
+            label: '退出到后台立即结束运行',
+            type: 'checkbox',
+            checked: isAutoKill
+          },
+          {
+            id: 'toggle-auto-detach',
+            label: '自动分离为独立窗口',
+            type: 'checkbox',
+            checked: isAutoDetach
+          },
+          {
+            id: 'toggle-auto-start',
+            label: '跟随主程序同时启动运行',
+            type: 'checkbox',
+            checked: isAutoStart
+          }
+        ]
+      },
+      { id: 'kill-plugin', label: `结束运行 (${killShortcut})` }
+    ]
+
+    await window.ztools.showContextMenu(menuItems)
+  } else {
+    // 否则打开设置插件
+    console.log('打开设置插件')
+    window.ztools.openSettings()
+  }
+}
+
+async function handleUpdateClick(): Promise<void> {
+  try {
+    const result = await window.ztools.updater.showUpdateWindow()
+    if (!result.success) {
+      alert(`打开更新窗口失败: ${result.error}`)
+    }
+  } catch (error: any) {
+    console.error('打开更新窗口失败:', error)
+    alert(`打开更新窗口失败: ${error.message || '未知错误'}`)
+  }
+}
+
+/**
+ * 关闭当前版本的更新提示，关闭状态仅在本次应用运行期间有效。
+ * @returns 无返回值
+ */
+function handleDismissUpdateNotification(): void {
+  windowStore.dismissUpdateNotification()
+}
+
+onUnmounted(() => {
+  // 使仍在途中的版本查询结果失效。
+  pluginUpdateRequestSequence++
+  resizeObserver?.disconnect()
+  cleanupDrag()
+
+  // 清理右键菜单命令监听
+  cleanupContextMenuListener?.()
+  cleanupContextMenuListener = null
+  cleanupPluginUpdateProgressListener?.()
+  cleanupPluginUpdateProgressListener = null
+
+  // 清理拖放事件监听
+  if (searchBoxRef.value) {
+    searchBoxRef.value.removeEventListener('dragenter', handleDragEnter)
+    searchBoxRef.value.removeEventListener('dragover', handleDragOver)
+    searchBoxRef.value.removeEventListener('dragleave', handleDragLeave)
+    searchBoxRef.value.removeEventListener('drop', handleDrop)
+  }
+})
+
+defineExpose({
+  focus: () => inputRef.value?.focus(),
+  selectAll: () => inputRef.value?.select()
+})
 </script>
+
 <style scoped>
 .search-box {
   padding: 5px 12px;

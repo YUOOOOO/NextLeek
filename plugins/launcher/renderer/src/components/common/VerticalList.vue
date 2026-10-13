@@ -33,7 +33,7 @@
 <script setup lang="ts">
 import type { Command } from '../../stores/commandDataStore'
 import { highlightMatch } from '../../utils/highlight'
-import { isDevelopmentPluginName } from '../../../../../ztools-shared/pluginRuntimeNamespace'
+import { isDevelopmentPluginName } from '../../shared/pluginRuntimeNamespace'
 
 interface Props {
   apps: Command[]
@@ -51,12 +51,10 @@ defineEmits<{
   (e: 'contextmenu', app: Command): void
 }>()
 
-// 使用原版转义高亮逻辑展示结果标题。
 function getHighlightedName(app: Command): string {
   return highlightMatch(app.name, app.matches, app.matchType, props.searchQuery)
 }
 
-// 保留原版描述或路径副标题。
 function getSubtitle(app: Command): string {
   if (app.pluginExplain) {
     return app.pluginExplain

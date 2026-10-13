@@ -120,10 +120,9 @@ export const useDesktopStore = defineStore('desktop', () => {
   }
   // 指令执行结果统一驱动插件页面，保留沙箱打开请求的独立版本号。
   function applyCommandResult(result: CommandResult) {
-    if (result.navigate) navigate(result.navigate)
+    if (!result.pluginId && result.navigate) navigate(result.navigate)
     if (result.pluginId) {
       openPluginRequest.value = { pluginId: result.pluginId, commandId: result.commandId, revision: (openPluginRequest.value?.revision ?? 0) + 1 }
-      page.value = 'plugin-market'
     }
   }
   // 应用快捷键由内置插件保存；界面只缓存有效绑定以同步阻止默认按键。
@@ -136,7 +135,7 @@ export const useDesktopStore = defineStore('desktop', () => {
   }
   // 已保存的应用快捷键优先于页面按键；录制区和输入法组合不执行指令。
   function handleApplicationShortcut(event: KeyboardEvent) {
-    if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[data-shortcut-capture]'))) return
+    if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[data-shortcut-capture], .hotkey-input.recording'))) return
     const accelerator = keyboardAccelerator(event)
     if (!accelerator || !shortcutBindings.value.some(binding => binding.application === accelerator && commands.value.some(command => command.id === binding.commandId))) return
     event.preventDefault()

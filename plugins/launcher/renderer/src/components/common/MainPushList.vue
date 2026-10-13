@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import type { MainPushItem } from '../../composables/useMainPushResults'
 import { highlightSubstring } from '../../utils/highlight'
-import { isDevelopmentPluginName } from '../../../../shared/pluginRuntimeNamespace'
+import { isDevelopmentPluginName } from '../../shared/pluginRuntimeNamespace'
 
 interface Props {
   title: string

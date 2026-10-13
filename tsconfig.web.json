@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "lib": ["ES2022", "DOM", "DOM.Iterable"], "types": ["vite/client"] },
-  "include": ["src/client/**/*.ts", "src/client/**/*.vue", "src/shared/**/*.ts", "plugins/**/client.vue", "plugins/**/shared.ts"]
+  "compilerOptions": { "lib": ["ES2022", "DOM", "DOM.Iterable"], "types": ["vite/client"], "baseUrl": ".", "paths": { "@renderer/*": ["plugins/launcher/renderer/src/*"], "@/*": ["plugins/settings/src/*"], "@shared/*": ["plugins/ztools-shared/*"] } },
+  "include": ["src/client/**/*.ts", "src/client/**/*.vue", "src/shared/**/*.ts", "plugins/**/client.vue", "plugins/**/shared.ts", "plugins/auxiliary-surfaces/renderer/**/*.ts", "plugins/auxiliary-surfaces/renderer/**/*.vue"]
 }

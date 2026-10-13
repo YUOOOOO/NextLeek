@@ -15,7 +15,7 @@ NextTools 是 Electron + Vue 3 + TypeScript + Pinia + Cordis 桌面启动器。�
 
 隐藏/唤出保留当前页面、查询、结果、选择和打开插件的活视图；`shown` 只请求恢复焦点，不清空搜索。搜索空查询且无有效历史/固定项时收缩到输入栏；内容超出可用高度时在内容区滚动。
 
-Esc 按页面层级返回：打开插件先关闭其会话并回市场列表，市场列表再返回进入市场前的页面；设置/插件管理等页面返回搜索。搜索页非空查询时清空，空查询时留在搜索并聚焦，重复 Esc 不隐藏窗口。不存在“第二次 Esc 隐藏”或“ESC 隐藏”设置。原生关闭隐藏窗口；唤醒快捷键可切换显隐；退出由托盘执行。
+Esc 按页面层级返回：打开插件先关闭其会话并回来源列表（插件市场或已安装插件）；设置/插件管理等页面返回搜索。搜索页非空查询时清空，空查询时留在搜索并聚焦，重复 Esc 不隐藏窗口。不存在“第二次 Esc 隐藏”或“ESC 隐藏”设置。原生关闭隐藏窗口；唤醒快捷键可切换显隐；退出由托盘执行。
 
 市场本身是宿主 Vue 页面。打开的市场包及可信 Browser half 使用独立 `WebContentsView`，不是 iframe。窗口隐藏仅收起 surface，重新显示复用同一 contents；显式返回关闭插件会话，下一次打开创建新会话。
 
@@ -28,8 +28,10 @@ Esc 按页面层级返回：打开插件先关闭其会话并回市场列表，�
 - `src/host/services/contributions.ts`：tools / skills 注册和调用。
 - `src/host/services/client-modules.ts`：Browser 定义、打开命令与子会话 Fiber。
 - `src/host/services/plugin-views.ts`：Electron 原生视图、权限、IPC 校验和释放。
-- `src/client/`：启动器与设置；`plugins/plugin-market/`：市场宿主、Vue 页面、静态包验证和数据源能力。
+- `src/client/`：宿主嵌入层；`plugins/launcher/renderer/src/` 与 `plugins/settings/src/`：原版启动器、设置路由及页面逻辑；`plugins/plugin-market/`：静态包验证、管理端点和数据源能力。
 - `src/preload/`：宿主桥与受限插件桥，不能混用。
+- `src/host/services/settings-native.ts`、`source-native.ts`：原版页面受校验的窄原生桥；`plugins/native-system-settings/`、`native-context/`、`auxiliary-surfaces/`：设置与原生资源的 Cordis 生命周期。
+- `resources/source-floating-ball.html`、`source-floating-ball.js`：原版浮球页面与外部脚本；通过受限 preload 访问原生能力，不放宽宿主 CSP。
 
 ## Cordis 组合
 

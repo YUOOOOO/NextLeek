@@ -1,0 +1,191 @@
+// Copyright (c) 2025 lzx8589561 — MIT; resources/icons/ZTools-LICENSE
+import type { Context } from '@deepseek-ai/cordis'
+import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { nativeImage } from 'electron'
+
+export interface ImageAnalysisResult {
+  isSimpleIcon: boolean // 是否是简单图标
+  mainColor: string | null // 主色调（RGB hex）
+  isDark: boolean // 主色调是否为深色
+  needsAdaptation: boolean // 是否需要自适应
+}
+
+export type ImageAnalyzer = (imagePath: string) => Promise<ImageAnalysisResult>
+
+// 分析缓存归属于原生插件作用域，禁用或退出时释放。
+export function createImageAnalyzer(ctx: Context, root: string, images: Pick<typeof nativeImage, 'createFromBuffer'>): ImageAnalyzer {
+const analysisCache = new Map<string, ImageAnalysisResult>()
+ctx.effect(() => () => analysisCache.clear(), 'source image analysis cache')
+// 保留原版逐像素采样、透明度和色差判断，不对图标插值。
+async function analyzeImage(imagePath: string): Promise<ImageAnalysisResult> {
+  try {
+    // 1. 处理不同格式的图片输入
+    let imageBuffer: Buffer
+    if (imagePath.startsWith('ztools-icon://')) {
+      // 动态生成的应用图标，不做颜色分析，直接返回默认值
+      // 避免尝试作为文件读取导致 ENOENT 错误
+      return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+    } else if (imagePath.startsWith('data:image/')) {
+      // Base64 格式
+      const base64Data = imagePath.split(',')[1]
+      imageBuffer = Buffer.from(base64Data, 'base64')
+    } else if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      // URL 格式 - 暂不支持
+      return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+    } else {
+      // 文件路径格式
+      let filePath = imagePath
+
+      // 处理 file:// 协议
+      if (filePath.startsWith('file:')) {
+        try {
+          // 使用 fileURLToPath 安全地将 file:// URL 转换为文件路径
+          filePath = fileURLToPath(filePath)
+        } catch (error) {
+          console.error('[ImageAnalysis] 无效的 file:// URL:', filePath, error)
+          return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+        }
+      }
+
+      // 渲染器已按当前文档解析 Vite URL；保留原生路径调用的相对目录解析。
+      if (!path.isAbsolute(filePath)) filePath = path.resolve(root, filePath)
+
+      imageBuffer = await fs.readFile(filePath)
+    }
+
+    // 计算哈希并检查缓存
+    const bufferHash = crypto.createHash('md5').update(imageBuffer).digest('hex')
+    if (analysisCache.has(bufferHash)) {
+      return analysisCache.get(bufferHash)!
+    }
+
+    // 2. 使用 Electron nativeImage 加载图片
+    const image = images.createFromBuffer(imageBuffer)
+    if (image.isEmpty()) {
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
+    }
+
+    // 3. 获取原始像素数据（不缩放，避免插值产生的杂色）
+    const size = image.getSize()
+    // 强制转换为 Buffer 以避免 TypeScript 错误
+    const data = image.toBitmap()
+
+    // 4. 像素抽样分析
+    // 为了性能，我们不需要遍历几百万个像素，只需要均匀抽样约 1000-2000 个点即可
+    // 这相当于"最近邻插值"的物理版，完全通过跳过像素来实现，保证不修改颜色值
+    const totalPixels = size.width * size.height
+    const targetSamples = 1600 // 相当于分析一张 40x40 的图片
+    const step = Math.max(1, Math.floor(totalPixels / targetSamples)) // 步长
+
+    const colorMap = new Map<string, number>()
+    let opaquePixels = 0 // 抽样到的不透明像素数
+    let totalSampled = 0 // 总抽样数
+    let mainColor = ''
+    let maxCount = 0
+
+    // BGRA 格式遍历
+    for (let i = 0; i < data.length; i += 4 * step) {
+      // 边界检查
+      if (i + 3 >= data.length) break
+
+      const a = data[i + 3]
+      totalSampled++
+
+      // 阈值设为 20，忽略极低透明度的噪点，但保留大部分半透明可能
+      if (a > 20) {
+        opaquePixels++
+        const b = data[i]
+        const g = data[i + 1]
+        const r = data[i + 2]
+
+        const key = `${r},${g},${b}`
+        const count = (colorMap.get(key) || 0) + 1
+        colorMap.set(key, count)
+
+        if (count > maxCount) {
+          maxCount = count
+          mainColor = key
+        }
+      }
+    }
+
+    // 如果没有任何不透明像素
+    if (opaquePixels === 0) {
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
+    }
+
+    // 5. 检测颜色相似度
+    const [mainR, mainG, mainB] = mainColor.split(',').map(Number)
+    const colorThreshold = 30
+    let similarPixels = 0
+
+    // 再次遍历采样点计算相似度
+    // 为了性能，如果不重新遍历，可以在第一次遍历时存下来？
+    // 但 sampling 只有 1600 个点，再次遍历 Buffer (按步长) 也是极快的。
+    // 重新遍历 Buffer 比分配新数组存对象更省内存。
+    for (let i = 0; i < data.length; i += 4 * step) {
+      if (i + 3 >= data.length) break
+
+      const a = data[i + 3]
+
+      if (a > 20) {
+        const b = data[i]
+        const g = data[i + 1]
+        const r = data[i + 2]
+
+        const distance = Math.sqrt(
+          Math.pow(r - mainR, 2) + Math.pow(g - mainG, 2) + Math.pow(b - mainB, 2)
+        )
+
+        if (distance < colorThreshold) {
+          similarPixels++
+        }
+      }
+    }
+
+    // 6. 判断是否是纯色图标
+    // 由于是直接采样，没有杂色，数据非常纯净，我们可以恢复严格的判定标准
+    const transparencyRatio = (totalSampled - opaquePixels) / totalSampled
+    const similarityRatio = similarPixels / opaquePixels // 相似像素占比
+
+    // 恢复严格标准：
+    // 1. 相似度 > 85% (因为没有缩放杂色，纯色图标通常能达到 95%+)
+    // 2. 透明度 > 10% (排除满铺的图片)
+    const isPureColorIcon = similarityRatio > 0.85 && transparencyRatio > 0.1 && opaquePixels > 20
+
+    // 7. 计算主色调的亮度
+    const [r, g, b] = mainColor.split(',').map(Number)
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    const isDark = luminance < 0.5
+    const hexColor = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+
+    if (!isPureColorIcon) {
+      const result = { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+      analysisCache.set(bufferHash, result)
+      return result
+    }
+
+    const result = {
+      isSimpleIcon: true,
+      mainColor: hexColor,
+      isDark,
+      needsAdaptation: true
+    }
+    analysisCache.set(bufferHash, result)
+    return result
+  } catch (error) {
+    console.error('[ImageAnalysis] 图片分析失败:', error)
+    return { isSimpleIcon: false, mainColor: null, isDark: false, needsAdaptation: false }
+  }
+}
+
+
+return analyzeImage
+}

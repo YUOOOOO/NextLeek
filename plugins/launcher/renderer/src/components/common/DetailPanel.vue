@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import BackIcon from '@renderer/assets/icons/arrow-back.svg?component'
+import BackIcon from '../../assets/icons/arrow-back.svg?component'
 
 defineProps<{
   title: string

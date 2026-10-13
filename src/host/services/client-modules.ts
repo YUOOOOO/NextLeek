@@ -1,4 +1,5 @@
 import type { Context, Fiber } from '@deepseek-ai/cordis'
+import type { KeyboardInputEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { InstalledPlugin, OpenPlugin } from '../../../plugins/plugin-market/shared'
 import type { PluginViewHandle, PluginViewBounds } from './contracts'
@@ -21,7 +22,7 @@ export const clientModulesPlugin = {
   name: 'client-modules', inject: ['desktop', 'commands'],
   apply(ctx: Context) {
     const definitions = new Map<string, { owner: Context; definition: ClientModuleDefinition }>()
-    const sessions = new Map<string, { fiber: Fiber; view?: PluginViewHandle }>()
+    const sessions = new Map<string, { id: string; fiber: Fiber; view?: PluginViewHandle }>()
     ctx.provide('clientModules', {
       register(owner, definition) {
         const id = definition.metadata.id
@@ -37,13 +38,18 @@ export const clientModulesPlugin = {
       has(id) { return definitions.has(id) },
       ownsSession(session) { return sessions.has(session) },
       async invoke(method, args) {
+        if (method === 'getPluginMemoryInfo') {
+          if (Object.keys(args).some(key => key !== 'id') || typeof args.id !== 'string' || !definitions.has(args.id)) throw new TypeError('Invalid trusted plugin identifier')
+          for (const entry of sessions.values()) if (entry.id === args.id) return { success: true, data: entry.view?.memoryInfo() ?? null }
+          return { success: true, data: null }
+        }
         if (method === 'open') {
           const record = definitions.get(String(args.id))
           if (!record) throw new Error('Trusted browser module is unavailable')
           const session = randomUUID()
           let fiber!: Fiber
           fiber = record.owner.plugin({ name: `client-session-${session}`, async apply(owner: Context) {
-            owner.effect(() => { sessions.set(session, { fiber }); return () => { sessions.delete(session) } })
+            owner.effect(() => { sessions.set(session, { id: record.definition.metadata.id, fiber }); return () => { sessions.delete(session) } })
             const view = await ctx.desktop.openPluginView?.(owner, { session, html: record.definition.html, invoke: record.definition.invoke, closed: () => { void fiber.dispose() } })
             if (!view) throw new Error('Native plugin view is unavailable')
             const entry = sessions.get(session)
@@ -51,6 +57,27 @@ export const clientModulesPlugin = {
           } })
           try { await fiber.await() } catch (error) { await fiber.dispose(); throw error }
           return { id: record.definition.metadata.id, name: record.definition.metadata.name, session, html: record.definition.html, commandId: args.commandId } as OpenPlugin
+        }
+        if (typeof args.session !== 'string' || !/^[a-f0-9-]{36}$/.test(args.session)) throw new TypeError('Invalid trusted plugin session')
+        if (method === 'focus' || method === 'sendInputEvent' || method === 'detach' || method === 'openDevTools') {
+          if (Object.keys(args).some(key => key !== 'session' && !(method === 'sendInputEvent' && key === 'event'))) throw new TypeError('Unexpected plugin view input field')
+          const entry = sessions.get(args.session)
+          if (!entry) throw new Error('Trusted plugin session is closed')
+          if (!entry.view) throw new Error('Native plugin view is unavailable')
+          if (method === 'focus') return entry.view.focus()
+          if (method === 'detach') { entry.view.detach(); return { success: true } }
+          if (method === 'openDevTools') { entry.view.openDevTools(); return { success: true } }
+          if (!args.event || typeof args.event !== 'object' || Array.isArray(args.event)) throw new TypeError('Invalid keyboard event')
+          const event = args.event as Record<string, unknown>
+          if (Object.keys(event).some(key => !['type', 'keyCode', 'modifiers'].includes(key))) throw new TypeError('Unexpected keyboard event field')
+          if (event.type !== 'keyDown' && event.type !== 'keyUp' && event.type !== 'char') throw new TypeError('Only keyboard input events are allowed')
+          if (typeof event.keyCode !== 'string' || !event.keyCode || event.keyCode.length > 64 || /[\x00-\x1f]/.test(event.keyCode)) throw new TypeError('Invalid keyboard keyCode')
+          const modifiers = event.modifiers
+          const allowed = ['shift', 'control', 'ctrl', 'alt', 'meta', 'command', 'cmd', 'isKeypad', 'isAutoRepeat', 'capsLock', 'numLock'] as const
+          if (modifiers !== undefined && (!Array.isArray(modifiers) || modifiers.length > allowed.length || !modifiers.every((value): value is typeof allowed[number] => typeof value === 'string' && allowed.some(allowedValue => allowedValue === value)) || new Set(modifiers).size !== modifiers.length)) throw new TypeError('Invalid keyboard modifiers')
+          const keyboardEvent: KeyboardInputEvent = { type: event.type, keyCode: event.keyCode }
+          if (modifiers !== undefined) keyboardEvent.modifiers = modifiers.map(value => value === 'isKeypad' ? 'iskeypad' : value === 'isAutoRepeat' ? 'isautorepeat' : value === 'capsLock' ? 'capslock' : value === 'numLock' ? 'numlock' : value)
+          return entry.view.sendInputEvent(keyboardEvent)
         }
         const session = sessions.get(String(args.session))
         if (!session) throw new Error('Trusted plugin session is closed')

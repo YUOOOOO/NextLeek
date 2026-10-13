@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { channels, type DesktopAPI, type DesktopEvent } from '../shared/contracts'
 
 const api: DesktopAPI = {
@@ -9,6 +9,9 @@ const api: DesktopAPI = {
   setPinned: (id, pinned) => ipcRenderer.invoke(channels.pin, id, pinned),
   setPluginEnabled: (id, enabled) => ipcRenderer.invoke(channels.plugin, id, enabled),
   invokePlugin: (pluginId, method, args) => ipcRenderer.invoke(channels.invokePlugin, pluginId, method, args),
+  sourceNative: (method, args) => ipcRenderer.invoke(channels.sourceNative, method, args),
+  getPlatform: () => process.platform,
+  getPathForFile: file => webUtils.getPathForFile(file),
   getFrameNonce: () => ipcRenderer.invoke(channels.frameNonce),
   hide: () => ipcRenderer.invoke(channels.hide),
   quit: () => ipcRenderer.invoke(channels.quit),

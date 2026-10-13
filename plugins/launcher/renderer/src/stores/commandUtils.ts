@@ -3,7 +3,7 @@
  * 提取自 commandDataStore.ts，便于单元测试
  */
 
-import { getCommandId as _getCommandId, type CommandIdLike } from '@shared/commandShared'
+import { getCommandId as _getCommandId, type CommandIdLike } from '../shared/commandShared'
 
 interface MatchInfo {
   indices: Array<[number, number]>

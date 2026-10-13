@@ -8,6 +8,7 @@ import type { DesktopEvent, UpdateState } from '../../src/shared/contracts'
 interface UpdateInfo { version: string }
 interface UpdateResult { cancellationToken?: { cancel(): void } }
 export interface UpdaterPort extends Pick<EventEmitter, 'on' | 'removeListener'> {
+  allowPrerelease?: boolean
   checkForUpdates(): Promise<UpdateResult | null>
   downloadUpdate(): Promise<string[]>
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void
@@ -17,6 +18,7 @@ export interface OnlineUpdater {
   check(): Promise<UpdateState>
   download(): Promise<UpdateState>
   install(): Promise<UpdateState>
+  setBeta(enabled: boolean): void
 }
 
 export function updateSupport(environment: { isPackaged: boolean; platform: string; installed: boolean }): string | undefined {
@@ -83,6 +85,7 @@ export function createUpdateController(ctx: Context, options: {
 
   return {
     getState,
+    setBeta(enabled: boolean) { if (updater) updater.allowPrerelease = enabled },
     async check(): Promise<UpdateState> {
       assertActive()
       if (!supported || busy() || state.status === 'downloaded') return getState()
@@ -155,9 +158,29 @@ declare module '@deepseek-ai/cordis' {
 // 更新状态与原生监听归独立业务 Fiber，宿主只负责安全 IPC 转发。
 export function updaterPlugin(options: Parameters<typeof createUpdater>[1]) {
   return {
-    name: 'updater',
+    name: 'updater', inject: ['settings', 'pluginEndpoints'],
     async apply(ctx: Context) {
-      ctx.provide('updater', await createUpdater(ctx, options))
+      const updater = await createUpdater(ctx, options)
+      ctx.provide('updater', updater)
+      const preferences = () => {
+        const value = ctx.settings.getDocument('settings-general')
+        return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+      }
+      const checkAutomatic = async () => {
+        const prefs = preferences(); updater.setBeta(prefs.receiveBetaUpdates === true)
+        if (prefs.autoCheckUpdate !== false) await updater.check()
+      }
+      ctx.effect(() => {
+        const timer = setInterval(() => { void checkAutomatic().catch(error => console.error('自动更新检查失败:', error)) }, 30 * 60 * 1000)
+        timer.unref()
+        void checkAutomatic().catch(error => console.error('自动更新检查失败:', error))
+        return () => clearInterval(timer)
+      }, 'original automatic update schedule')
+      ctx.settings.subscribe(ctx, key => { if (key === 'settings-general') updater.setBeta(preferences().receiveBetaUpdates === true) })
+      ctx.pluginEndpoints.register(ctx, 'updater', async (method, args) => {
+        if (method !== 'setAutoCheck' || !Array.isArray(args) || typeof args[0] !== 'boolean') throw new TypeError('Invalid updater preference request')
+        await checkAutomatic(); return { success: true }
+      })
     },
   }
 }

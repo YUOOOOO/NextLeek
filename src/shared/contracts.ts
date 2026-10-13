@@ -73,6 +73,7 @@ export type DesktopEvent =
   | { type: 'command-result'; result: CommandResult }
   | { type: 'plugin-back'; session: string }
   | { type: 'update'; update: UpdateState }
+  | { type: 'source-event'; name: string; payload?: unknown }
 export interface DesktopAPI {
   getSnapshot(): Promise<Snapshot>
   updateSettings(patch: Partial<Settings>): Promise<Snapshot>
@@ -81,6 +82,9 @@ export interface DesktopAPI {
   setPinned(id: string, pinned: boolean): Promise<Snapshot>
   setPluginEnabled(id: string, enabled: boolean): Promise<Snapshot>
   invokePlugin(pluginId: string, method: string, args: unknown): Promise<unknown>
+  sourceNative(method: string, args: unknown[]): Promise<unknown>
+  getPlatform(): string
+  getPathForFile(file: File): string
   getFrameNonce(): Promise<string>
   hide(): Promise<void>
   quit(): Promise<void>
@@ -106,4 +110,5 @@ export const channels = {
   updateDownload: 'desktop:update-download', updateInstall: 'desktop:update-install',
   searchLauncher: 'desktop:search-launcher', searchAction: 'desktop:search-action',
   invokePlugin: 'desktop:invoke-plugin', frameNonce: 'desktop:frame-nonce',
+  sourceNative: 'desktop:source-native',
 } as const

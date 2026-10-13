@@ -282,7 +282,7 @@ useJumpFunction<PluginInstallerJumpFunction>((state) => {
               覆盖安装会替换插件文件，但会保留插件数据。
             </p>
             <p class="dialog-message dialog-warning-text">
-              第三方插件可能包含恶意代码，存在隐私泄露、数据损坏等安全风险。请仅安装来自可信来源的插件。
+              仅支持经过宿主校验的受信任静态 .nlplugin 包；不接受可执行 ZPX/npm 插件，也不授予任意文件或原生执行权限。
             </p>
           </div>
           <div class="dialog-footer">

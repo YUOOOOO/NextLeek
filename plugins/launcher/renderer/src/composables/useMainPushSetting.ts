@@ -3,7 +3,7 @@ import {
   isMainPushPluginEnabled,
   normalizeConfigList,
   pluginSupportsMainPush
-} from '@shared/pluginSettings'
+} from '../shared/pluginSettings'
 
 /** 「搜索栏推送」菜单项所需状态。 */
 export interface MainPushMenuState {

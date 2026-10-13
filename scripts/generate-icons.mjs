@@ -5,22 +5,12 @@ import sharp from 'sharp'
 
 const icons = new URL('../resources/icons/', import.meta.url)
 const mark = await readFile(new URL('mark.svg', icons), 'utf8')
-const component = await readFile(new URL('../src/client/components/AppIcon.vue', import.meta.url), 'utf8')
-const styles = await readFile(new URL('../src/client/styles.css', import.meta.url), 'utf8')
-const glyph = [...mark.matchAll(/<path\s+d="([^"]+)"/g)].map(match => match[1])
-const brand = component.slice(component.indexOf("name === 'brand'"), component.indexOf('</template>', component.indexOf("name === 'brand'")))
-assert.deepEqual(glyph, [...brand.matchAll(/<path\s+d="([^"]+)"/g)].map(match => match[1]), 'Desktop and search button must use the same brand glyph')
-const token = name => {
-  const value = styles.match(new RegExp(`--${name}:\\s*([^;]+);`))?.[1].trim()
-  assert.ok(value, `Missing brand CSS token: ${name}`)
-  return value
-}
-const buttonSize = parseFloat(token('space-12'))
-const glyphSize = parseFloat(token('space-8'))
-const canvasSize = 24 * buttonSize / glyphSize
-const inset = (canvasSize - 24) / 2
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvasSize} ${canvasSize}">\n  <!-- Brand glyph provenance and MIT terms: ZTools-LICENSE. Palette and scale match the light search button. -->\n  <circle cx="${canvasSize / 2}" cy="${canvasSize / 2}" r="${canvasSize / 2}" fill="${token('brand')}"/>\n  <g transform="translate(${inset} ${inset})" fill="${token('brand-ink')}">\n${glyph.map(path => `    <path d="${path}"/>`).join('\n')}\n  </g>\n</svg>\n`
-await writeFile(new URL('icon.svg', icons), svg)
+// 分发 SVG 是品牌图标的唯一来源，不依赖已退役的重建页面组件。
+const svg = await readFile(new URL('icon.svg', icons), 'utf8')
+const glyph = source => [...source.matchAll(/<path\s+d="([^"]+)"/g)].map(match => match[1])
+assert.deepEqual(glyph(svg), glyph(mark), 'Distributed icon must preserve the canonical brand glyph')
+const canvasSize = Number(svg.match(/viewBox="0 0 (\d+) \d+"/)?.[1])
+assert.ok(Number.isFinite(canvasSize) && canvasSize > 0, 'Icon SVG requires a square canvas')
 const sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
 const pngs = new Map(await Promise.all(sizes.map(async size => {
   const png = await sharp(Buffer.from(svg), { density: size * 72 / canvasSize }).resize(size, size).png().toBuffer()

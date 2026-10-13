@@ -1,9 +1,10 @@
 import { router } from '@/router'
 import type { HistoryState } from 'vue-router'
+import type { SourceCommandType } from '../../../../launcher/renderer/src/env'
 
 export type ShortcutsSettingTab = 'global' | 'app' | 'alias'
 
-export type ShortcutsSettingCommandCmdType = 'text' | 'regex' | 'over' | 'img' | 'files' | 'window'
+export type ShortcutsSettingCommandCmdType = SourceCommandType
 
 /**
  * 统一归一化快捷键目标字符串，兼容旧的“标题 / 指令”格式。

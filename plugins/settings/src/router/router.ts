@@ -69,28 +69,6 @@ const homeRoutes: MenuRouterItemType[] = [
     }
   },
   {
-    path: '/providers',
-    name: 'Providers',
-    component: () => import('@/views/ProvidersSetting/ProvidersSetting.vue'),
-    meta: {
-      menu: {
-        label: '提供商',
-        icon: 'i-z-brain'
-      }
-    }
-  },
-  {
-    path: '/mcpService',
-    name: 'McpService',
-    component: () => import('@/views/McpServiceSetting/McpServiceSetting.vue'),
-    meta: {
-      menu: {
-        label: 'MCP 服务',
-        icon: 'i-z-mcp'
-      }
-    }
-  },
-  {
     path: '/data',
     name: 'Data',
     component: () => import('@/views/DataSetting/DataSetting.vue'),
@@ -120,17 +98,6 @@ const homeRoutes: MenuRouterItemType[] = [
       menu: {
         label: '本地启动',
         icon: 'i-z-folder'
-      }
-    }
-  },
-  {
-    path: '/sync',
-    name: 'Sync',
-    component: () => import('@/views/SyncSetting/SyncSetting.vue'),
-    meta: {
-      menu: {
-        label: '数据同步',
-        icon: 'i-z-cloud'
       }
     }
   },
@@ -166,16 +133,6 @@ const homeRoutes: MenuRouterItemType[] = [
         icon: 'i-z-info'
       }
     }
-  },
-  {
-    path: '/account',
-    name: 'Account',
-    component: () => import('@/views/AccountSetting/AccountSetting.vue')
-  },
-  {
-    path: '/notifications',
-    name: 'Notifications',
-    component: () => import('@/views/NotificationCenter/NotificationCenter.vue')
   },
   {
     path: '/pluginInstaller',

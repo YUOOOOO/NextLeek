@@ -3,34 +3,161 @@
     ref="imgRef"
     :src="displaySrc"
     :class="['adaptive-icon', adaptiveClass]"
-    :alt="alt"
+    :style="adaptiveStyle"
     v-bind="$attrs"
     @error="onError"
   />
 </template>
+
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-const props = defineProps<{ src: string; alt?: string; forceAdaptive?: boolean }>()
-const emit = defineEmits<{ error: [event: Event] }>()
-const imgRef = ref<HTMLImageElement>()
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useColorScheme } from '../../composables/useColorScheme'
+
+const props = defineProps<{
+  src: string
+  alt?: string
+  forceAdaptive?: boolean // 强制启用自适应（跳过检测）
+}>()
+
+const emit = defineEmits<{
+  (e: 'error', event: Event): void
+}>()
+
+const { isDark } = useColorScheme()
+const analysisResult = ref<{
+  isSimpleIcon: boolean
+  mainColor: string | null
+  isDark: boolean
+  needsAdaptation: boolean
+} | null>(null)
+
+const isAnalyzing = ref(false)
 const isVisible = ref(false)
-const displaySrc = computed(() => isVisible.value ? props.src : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E")
-const adaptiveClass = computed(() => props.forceAdaptive ? 'force-adaptive' : '')
-let observer: IntersectionObserver | undefined
-// 保留原版懒加载，不伪造宿主尚未提供的图标分析结果。
+const imgRef = ref<HTMLImageElement>()
+let observer: IntersectionObserver | null = null
+const TRANSPARENT_PIXEL =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1' height='1'%3E%3C/svg%3E"
+
+const displaySrc = computed(() => (isVisible.value ? props.src : TRANSPARENT_PIXEL))
+
+// 分析图片
+async function analyzeImage(): Promise<void> {
+  if (isAnalyzing.value || !props.src) return
+
+  isAnalyzing.value = true
+  try {
+    const result = await window.ztools.analyzeImage(props.src)
+    analysisResult.value = result
+  } catch (error) {
+    console.error('[AdaptiveIcon] 图片分析失败:', error)
+    analysisResult.value = null
+  } finally {
+    isAnalyzing.value = false
+  }
+}
+
+// 计算自适应类名
+const adaptiveClass = computed(() => {
+  if (props.forceAdaptive) {
+    return 'force-adaptive'
+  }
+
+  if (!analysisResult.value?.needsAdaptation) {
+    return ''
+  }
+
+  // 自适应反色规则：图标颜色和背景颜色相同时反色
+  // - 深色图标 + 深色模式 → 反色（黑色变白色）
+  // - 浅色图标 + 浅色模式 → 反色（白色变黑色）
+  const shouldInvert = analysisResult.value.isDark === isDark.value
+
+  if (shouldInvert) {
+    return 'adaptive-invert'
+  }
+
+  return ''
+})
+
+// 计算自适应样式
+const adaptiveStyle = computed(() => {
+  if (props.forceAdaptive || !analysisResult.value?.needsAdaptation) {
+    return {}
+  }
+
+  // 可以在这里添加更复杂的颜色映射逻辑
+  return {}
+})
+
+// 错误处理
+function onError(event: Event): void {
+  emit('error', event)
+}
+
+// 设置 IntersectionObserver 懒加载
 function setupObserver(): void {
+  cleanupObserver()
+
   if (!imgRef.value) return
-  observer = new IntersectionObserver(entries => {
-    if (entries.some(entry => entry.isIntersecting)) { isVisible.value = true; observer?.disconnect() }
-  }, { rootMargin: '200px' })
+
+  observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          isVisible.value = true
+          // 可见后触发图片分析
+          if (props.src) {
+            analyzeImage()
+          }
+          // 一旦可见就停止观察
+          observer?.disconnect()
+          observer = null
+          break
+        }
+      }
+    },
+    {
+      // 提前 200px 开始加载，提升滚动体验
+      rootMargin: '200px'
+    }
+  )
+
   observer.observe(imgRef.value)
 }
-// 图标失败交由原版列表展示文字占位。
-function onError(event: Event): void { emit('error', event) }
-onMounted(setupObserver)
-onBeforeUnmount(() => observer?.disconnect())
+
+function cleanupObserver(): void {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+}
+
+// 监听 src 变化，重新分析（仅在已可见时）
+watch(
+  () => props.src,
+  () => {
+    analysisResult.value = null
+    if (isVisible.value && props.src) {
+      analyzeImage()
+    }
+  }
+)
+
+onMounted(() => {
+  setupObserver()
+})
+
+onBeforeUnmount(() => {
+  cleanupObserver()
+})
 </script>
-<script lang="ts">export default { name: 'AdaptiveIcon', inheritAttrs: false }</script>
+
+<script lang="ts">
+export default {
+  name: 'AdaptiveIcon',
+  inheritAttrs: false
+}
+</script>
+
 <style scoped>
 .adaptive-icon {
   background: transparent;

@@ -80,3 +80,15 @@ export interface InstalledPlugin {
 // html 仅保留宿主静态验证合同；客户端必须用 session 定位原生视图，不执行该文档。
 export interface OpenPlugin { id: string; name: string; html: string; session: string; commandId?: string }
 export interface MarketRuntimeSummary { version: string; platform: string; mode: 'desktop'; status: 'ready'; installed: number; enabled: number }
+
+export interface RunningPlugin { id: string; name: string; session: string }
+export interface MarketExportResult { path: string; count: number }
+export interface MarketDownloadProgress {
+  pluginName: string
+  taskId: string
+  status: 'downloading' | 'installing' | 'success' | 'error' | 'cancelled'
+  progress: number | null
+  receivedBytes?: number
+  totalBytes?: number
+  error?: string
+}

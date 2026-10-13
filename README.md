@@ -11,13 +11,13 @@ NextTools is a desktop-first command launcher built with Electron, Vue 3, TypeSc
 - Light, dark, and system themes, six accent colors, and configurable launcher and command shortcuts.
 - Explicit Windows NSIS update check, download, install, and relaunch flow.
 
-The launcher and basic settings pages use source components adapted from the MIT-licensed upstream project. Application search, file search, settings, theme, command shortcuts, and updates are owned by Cordis plugins. Account/sync, provider configuration, and AI integration are not included in this basic release.
+The launcher and settings use the original MIT-licensed source pages, including their templates, styles, router, state, and handlers. Their native calls are adapted to Cordis-owned application search, file search, settings, shortcuts, HTTP, local-launch, floating-ball, and SuperPanel services. Account/sync, provider configuration, and AI integration are not included in this basic release.
 
 Hiding and showing the window preserves the current page, search query, results, and an open plugin's live view. Escape navigates back one page level; in search it clears a nonempty query and otherwise stays at search. Escape at the top level does not hide the window. The launcher shortcut can toggle visibility; native window close hides rather than quits.
 
-In the marketplace, Discover offers installation and available updates; Installed offers opening and package management. Back first closes an open plugin and returns to the list, then returns to the settings or installed-plugin menu used to enter the marketplace. The marketplace itself is part of the host UI; opened plugin content uses an independent view, not an iframe.
+The plugin marketplace and installed-plugin manager are host Vue pages. Closing an opened package returns to the originating marketplace or installed-plugin list. Opened plugin content uses an independent native view, not an iframe; closing it ends that session, and reopening creates a new one.
 
-Installation, uninstall, and dependency-disabling confirmations stay inside the marketplace page, retaining permission and dependency details without moving focus to a native dialog that can hide the launcher.
+Marketplace downloads install approved static packages directly after host validation; there is no separate installation-permission dialog. Package permissions must be empty. Package management retains the source page's confirmations. Local executable registration separately requires a native approval dialog; it is not a marketplace package or an authorization bypass.
 
 ## Plugin contracts
 

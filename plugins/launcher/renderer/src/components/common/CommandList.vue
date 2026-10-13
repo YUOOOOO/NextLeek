@@ -108,7 +108,7 @@ import { highlightMatch } from '../../utils/highlight'
 import AdaptiveIcon from '../common/AdaptiveIcon.vue'
 import PinIcon from '../../assets/icons/pin.svg?component'
 
-import { isDevelopmentPluginName } from '../../../../../ztools-shared/pluginRuntimeNamespace'
+import { isDevelopmentPluginName } from '../../shared/pluginRuntimeNamespace'
 
 type CommandListItem = Command & { isPinnedInSearch?: boolean }
 
@@ -141,7 +141,6 @@ const localApps = computed({
   set: (value) => emit('update:apps', value)
 })
 
-// 拖动完成由 v-model 通知父级；安全启动页不启用重排入口。
 function onDragEnd(): void {
   // 拖动结束后自动通过 v-model 更新
 }
@@ -149,7 +148,6 @@ function onDragEnd(): void {
 const listRef = ref<HTMLElement>()
 const itemRefs = ref<(HTMLElement | null)[]>([])
 
-// 记录原版网格元素，供选中项滚动使用。
 function setItemRef(el: Element | ComponentPublicInstance | null, index: number): void {
   if (el instanceof HTMLElement) {
     itemRefs.value[index] = el
@@ -200,7 +198,6 @@ watch(
   }
 )
 
-// 使用原版安全转义高亮函数展示名称。
 function getHighlightedName(app: Command): string {
   return highlightMatch(app.name, app.matches, app.matchType, props.searchQuery)
 }
@@ -209,7 +206,7 @@ function getHighlightedName(app: Command): string {
 function getTitleText(app: Command): string {
   // 插件类型：显示功能说明和插件标题
   if (app.type === 'plugin' && app.pluginExplain) {
-    const title = app.pluginName || ''
+    const title = app.pluginTitle || app.pluginName || ''
     return title ? `${app.pluginExplain}\n插件应用【${title}】` : app.pluginExplain
   }
 
@@ -220,7 +217,6 @@ function getTitleText(app: Command): string {
 // 记录图标加载失败的应用
 const iconErrors = ref<Set<string>>(new Set())
 
-// 记录失效图标以显示文字占位。
 function onIconError(_event: Event, app: Command): void {
   // 图标加载失败，标记该应用
   const key = `${app.path}-${app.featureCode || ''}-${app.name}`

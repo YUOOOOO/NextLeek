@@ -16,13 +16,14 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'out/preload',
-      rollupOptions: { input: { index: resolve('src/preload/index.ts'), 'plugin-sandbox': resolve('src/preload/plugin-sandbox.ts') }, external: ['electron'], output: { format: 'cjs', entryFileNames: '[name].cjs' } },
+      rollupOptions: { input: { index: resolve('src/preload/index.ts'), 'plugin-sandbox': resolve('src/preload/plugin-sandbox.ts'), auxiliary: resolve('src/preload/auxiliary.ts') }, external: ['electron'], output: { format: 'cjs', entryFileNames: '[name].cjs' } },
     },
   },
   renderer: {
-    root: 'src/client',
+    root: '.',
+    publicDir: resolve('plugins/settings/public'),
     plugins: [vue(), svgLoader(), UnoCSS({ ...settingsUno, content: { filesystem: ['plugins/settings/src/**/*.{vue,js,ts}'] } })],
-    resolve: { alias: { '@renderer': resolve('plugins/launcher/renderer/src'), '@shared': resolve('plugins/ztools-shared') } },
-    build: { outDir: resolve('out/renderer'), rollupOptions: { input: resolve('src/client/index.html') } },
+    resolve: { alias: { '@renderer': resolve('plugins/launcher/renderer/src'), '@': resolve('plugins/settings/src'), '@shared': resolve('plugins/ztools-shared') } },
+    build: { outDir: resolve('out/renderer'), rollupOptions: { input: { index: resolve('src/client/index.html'), 'super-panel': resolve('plugins/auxiliary-surfaces/renderer/super-panel.html') } } },
   },
 })

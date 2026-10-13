@@ -21,6 +21,15 @@ extraResources:
   - from: resources/icons
     to: icons
     filter: ['*.png', '*.ico', 'ZTools-LICENSE']
+  - from: resources/native
+    to: native
+    filter: ['*.node', 'ZTools-LICENSE']
+  - from: resources/source-floating-ball.html
+    to: source-floating-ball.html
+  - from: resources/source-floating-ball.js
+    to: source-floating-ball.js
+  - from: plugins/auxiliary-surfaces/LICENSE
+    to: licenses/auxiliary-surfaces-MIT-LICENSE
 win:
   icon: resources/icons/icon.ico
   target:

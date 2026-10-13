@@ -1,22 +1,37 @@
-<!-- MIT Copyright (c) 2025 lzx8589561; adapted to the NextTools Cordis desktop contract. -->
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { Page } from '../../../../../src/shared/contracts'
-import LeftMenu from '../LeftMenu/LeftMenu.vue'
-import GeneralSetting from '../../views/GeneralSetting/GeneralSetting.vue'
-import PluginsSetting from '../../views/PluginsSetting/PluginsSetting.vue'
-import ShortcutsSetting from '../../views/ShortcutsSetting/ShortcutsSetting.vue'
-import AboutSetting from '../../views/AboutSetting/AboutSetting.vue'
-import AllCommandsSetting from '../../views/AllCommandsSetting/AllCommandsSetting.vue'
-const props=withDefaults(defineProps<{page?:'settings'|'plugins'}>(),{page:'settings'})
-const emit=defineEmits<{navigate:[page:Page]}>()
-const active=ref(props.page==='plugins'?'Plugins':'GeneralSetting')
-// 宿主快捷入口更新本地菜单，窗口隐藏/重现不重置当前设置子页。
-watch(()=>props.page,value=>{active.value=value==='plugins'?'Plugins':'GeneralSetting'})
-// 市场使用既有受限生态；设置菜单保持原始顺序和名称。
-function select(name:string){if(name==='Market'){emit('navigate','plugin-market');return}active.value=name}
+import { LeftMenu } from '@/components'
+import { onMounted, onUnmounted } from 'vue'
+import { applyInitialAppearance } from './applyInitialAppearance'
+import { installSettingsBridge } from '../../bridge'
+
+const releaseSettingsBridge = installSettingsBridge()
+onUnmounted(releaseSettingsBridge)
+
+onMounted(() => {
+  // 页面挂载后立即应用已持久化的外观配置。
+  void applyInitialAppearance({
+    dbGet: (key) => window.ztools.internal.dbGet(key),
+    setTheme: (theme) => window.ztools.internal.setTheme(theme),
+    setWindowMaterial: (material) => window.ztools.internal.setWindowMaterial(material),
+    isWindows: window.ztools.isWindows()
+  }).catch((error) => {
+    console.error('初始化设置页外观失败:', error)
+  })
+})
+
 </script>
-<template><div class="setting-hone"><div class="setting-hone-menu"><LeftMenu :active="active" @select="select" /></div><div class="w-full setting-hone-content"><GeneralSetting v-if="active==='GeneralSetting'" /><PluginsSetting v-else-if="active==='Plugins'" @navigate="emit('navigate',$event)" /><ShortcutsSetting v-else-if="active==='Shortcuts'" /><AboutSetting v-else-if="active==='About'" /><AllCommandsSetting v-else-if="active==='AllCommands'" /></div></div></template>
+
+<template>
+  <div class="setting-hone">
+    <div class="setting-hone-menu">
+      <LeftMenu />
+    </div>
+    <div class="w-full setting-hone-content">
+      <router-view />
+    </div>
+  </div>
+</template>
+
 <style lang="less" scoped>
 .setting-hone {
   height: 100%;

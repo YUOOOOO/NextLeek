@@ -1,10 +1,9 @@
-<!-- MIT Copyright (c) 2025 lzx8589561; adapted to the NextTools Cordis desktop contract. -->
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import AdaptiveIcon from '../../../../../launcher/renderer/src/components/common/AdaptiveIcon.vue'
-import { useEscapeHandler } from '../../../composables/useEscapeStack'
-import { weightedSearch } from '../../../utils/weightedSearch'
-import type { ShortcutsSettingCommandTargetOptionBase } from '../desktop-types'
+import { AdaptiveIcon } from '@/components'
+import { useEscapeHandler } from '@/composables'
+import { weightedSearch } from '@/utils'
+import type { ShortcutsSettingCommandTargetOptionBase } from '@/views/ShortcutsSetting/ShortcutsSetting'
 
 interface TargetPluginOption {
   pluginName: string
@@ -162,7 +161,7 @@ function handleSelectTarget(target: ShortcutsSettingCommandTargetOptionBase): vo
   <div class="command-target-selector">
     <div v-if="currentTarget" class="target-card">
       <div class="icon-preview">
-        <img
+        <AdaptiveIcon
           v-if="currentTarget.icon"
           :src="currentTarget.icon"
           class="target-card-icon"
@@ -219,7 +218,7 @@ function handleSelectTarget(target: ShortcutsSettingCommandTargetOptionBase): vo
             @click="handleSelectTarget(item)"
           >
             <div class="icon-preview">
-              <img
+              <AdaptiveIcon
                 v-if="item.icon"
                 :src="item.icon"
                 class="selector-item-icon"
@@ -249,7 +248,7 @@ function handleSelectTarget(target: ShortcutsSettingCommandTargetOptionBase): vo
             @click="handleSelectPlugin(plugin.pluginName)"
           >
             <div class="icon-preview">
-              <img
+              <AdaptiveIcon
                 v-if="plugin.icon"
                 :src="plugin.icon"
                 class="selector-item-icon"

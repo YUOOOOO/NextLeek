@@ -103,8 +103,12 @@ test('persistent packages are reverified before opening, not trusted by filename
   try {
     await runtime.invoke('install', { id })
     const saved = JSON.parse(await readFile(join(directory, 'market-state.json'), 'utf8'))
-    await writeFile(join(directory, saved.plugins[0].file), 'tampered')
-    await assert.rejects(runtime.invoke('open', { id }), /SHA-256/)
+    // Change a ZIP header timestamp without changing the package size or invalidating its contents.
+    const tampered = value.bytes.slice()
+    tampered[10] = tampered[10]! ^ 1
+    await writeFile(join(directory, saved.plugins[0].file), tampered)
+    await assert.rejects(runtime.invoke('open', { id }))
+    assert.deepEqual(await runtime.invoke('running'), [])
   } finally { await runtime.dispose(); await rm(directory, { recursive: true, force: true }) }
 })
 

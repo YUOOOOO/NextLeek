@@ -15,6 +15,7 @@ export interface ApplicationsEnvironment {
   preferredLanguages?: readonly string[]
   getFileIcon(path: string): Promise<string>
   openPath(path: string): Promise<string>
+  launchAsAdmin?(path: string): Promise<void>
 }
 export interface ApplicationDirectoryEntry {
   name: string
@@ -213,6 +214,30 @@ export function createApplicationsProvider(ctx: Context, environment: Applicatio
     try { return await extraction }
     catch { active(); return undefined }
   }
+  // 原版前端需要完整应用目录建立拼音索引；授权仍由此插件维护。
+  async function listApplications() {
+    await refresh()
+    return Promise.all(applications.map(async application => ({ name: application.name, path: application.path,
+      aliases: application.aliases, icon: await icon(application) })))
+  }
+  ctx.pluginEndpoints.register(ctx, 'applications', async (method, args) => {
+    if (method === 'getApps') return listApplications()
+    if (method !== 'launch' && method !== 'launchAsAdmin') throw new Error(`未知应用方法：${method}`)
+    const target = args as { path?: unknown }
+    if (typeof target?.path !== 'string') throw new TypeError('应用路径无效')
+    await refresh()
+    const application = applications.find(item => key(item.path) === key(target.path as string))
+    if (!application) throw new Error('应用不在受信任索引中')
+    const info = await ports.stat(application.path)
+    if (info.mtimeMs !== application.revision) throw new Error('应用已更改，请重新加载')
+    if (method === 'launchAsAdmin') {
+      if (!environment.launchAsAdmin) throw new Error('原生管理员启动能力不可用')
+      await environment.launchAsAdmin(application.path)
+    } else {
+      const error = await environment.openPath(application.path)
+      if (error) throw new Error(error)
+    }
+  })
   return {
     id: 'applications', title: '应用',
     async search(request) {
@@ -266,7 +291,7 @@ export function createApplicationsProvider(ctx: Context, environment: Applicatio
 export function applicationsPlugin(environment: ApplicationsEnvironment) {
   return {
     name: 'applications-provider',
-    inject: ['search'],
+    inject: ['search', 'pluginEndpoints'],
     apply(ctx: Context) { ctx.search.register(ctx, createApplicationsProvider(ctx, environment)) },
   }
 }

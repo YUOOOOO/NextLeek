@@ -75,7 +75,7 @@ const installingPlugin = ref<string | null>(null)
 const downloadStates = ref<Record<string, PluginDownloadState | undefined>>({})
 const bannerActiveIndexes = ref<Record<string, number>>({})
 let stopDownloadProgressListener: (() => void) | undefined
-let bannerTimer: ReturnType<typeof window.setInterval> | undefined
+let bannerTimer: number | undefined
 
 const { value: searchQuery, setSubInput } = useZtoolsSubInput('', '搜索插件市场...')
 
@@ -283,6 +283,7 @@ function closeCategoryDetail(): void {
   selectedCategory.value = null
 }
 
+// 打开真实插件后收起详情，返回时保留原列表和筛选状态。
 async function handleOpenPlugin(plugin: Plugin): Promise<void> {
   if (!plugin.path) {
     error('无法打开插件: 路径未知')
@@ -298,6 +299,8 @@ async function handleOpenPlugin(plugin: Plugin): Promise<void> {
 
     if (result && !result.success) {
       error(`无法打开插件: ${result.error || '未知错误'}`)
+    } else {
+      closePluginDetail()
     }
   } catch (err: unknown) {
     console.error('打开插件失败:', err)

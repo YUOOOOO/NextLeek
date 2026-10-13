@@ -9,8 +9,9 @@ import {
   type ShortcutsSettingAliasDraftTarget
 } from '@/views/ShortcutsSetting/ShortcutsSetting'
 import { getCommandId as _getCommandId } from '@shared/commandShared'
+import type { SourceCommandKind, SourceCommandType } from '../../../launcher/renderer/src/env'
 
-export type CommandCmdType = 'text' | 'regex' | 'over' | 'img' | 'files' | 'window'
+export type CommandCmdType = SourceCommandType
 
 type MatchCmd = {
   type: string
@@ -27,7 +28,7 @@ export interface CommandActionCommand {
   name: string
   path?: string
   icon?: string
-  type: string
+  type: SourceCommandKind
   subType?: string
   featureCode?: string
   pluginName?: string
@@ -79,7 +80,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): string {
     return _getCommandId({
       type: 'plugin',
@@ -96,7 +97,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): boolean {
     const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
     return disabledCommands.value.includes(id)
@@ -106,7 +107,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): Promise<void> {
     const id = getPluginCommandId(pluginName, featureCode, cmdName, cmdType)
     const index = disabledCommands.value.indexOf(id)
@@ -244,6 +245,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     return pluginCommands.value.find((c) => c.featureCode === featureCode && c.name === cmdName)
   }
 
+  // 加载当前插件的原始指令快照，用于操作菜单与运行入口。
   async function loadPluginCommands(): Promise<void> {
     const pluginPath = getPluginPath()
     // 切换到非插件来源（如系统应用）时清空缓存，避免残留上一个插件的指令数据
@@ -266,6 +268,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
 
   // ============ 打开指令 ============
 
+  // 按原始指令类型启动指令，保留插件路径和功能编码。
   async function openCommand(featureCode: string, cmdName: string): Promise<void> {
     try {
       const command = findPluginCommand(featureCode, cmdName)
@@ -295,7 +298,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): ShortcutsSettingAliasDraftTarget {
     const pluginTitle = getPluginTitle() || pluginName
     const commandIcon = findPluginCommand(featureCode, cmdName)?.icon
@@ -320,7 +323,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): void {
     jumpFunctionShortcutsSetting({
       tab: 'alias',
@@ -436,7 +439,7 @@ export function usePluginCommandActions(options: UsePluginCommandActionsOptions)
     pluginName: string,
     featureCode: string,
     cmdName: string,
-    cmdType: 'text' | 'window'
+    cmdType: SourceCommandType
   ): Promise<void> {
     if (key === 'toggle') {
       await toggleCommandDisabled(pluginName, featureCode, cmdName, cmdType)

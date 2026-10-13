@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { KeyboardInputEvent } from 'electron'
 import type { Command, CommandResult, DesktopEvent, Settings, LauncherSearchRequest, LauncherSearchGroup } from '../../shared/contracts'
+import type { SettingsNative } from '../../../plugins/settings/native-contract'
 
 export interface PersistentState {
   settings: Settings
@@ -27,9 +29,15 @@ export interface PluginEndpointsService {
   invoke(pluginId: string, method: string, args: unknown): Promise<unknown>
 }
 export interface PluginViewBounds { x: number; y: number; width: number; height: number }
+export interface PluginMemoryInfo { private: number; shared: number; total: number }
 export interface PluginViewHandle {
   bounds(value: PluginViewBounds): void
   visible(value: boolean): void
+  focus(): void
+  sendInputEvent(event: KeyboardInputEvent): void
+  detach(): void
+  openDevTools(): void
+  memoryInfo(): PluginMemoryInfo | null
 }
 export interface PluginViewOptions {
   session: string
@@ -38,6 +46,9 @@ export interface PluginViewOptions {
   closed(): void
 }
 export interface DesktopService {
+  settingsNative?: SettingsNative
+  chooseMarketExportPath?(suggestedName: string): Promise<string | null>
+  revealMarketPath?(installedPackagePath: string): Promise<void>
   applySettings(next: Settings, previous?: Settings): Promise<void>
   emit(event: DesktopEvent): void
   hide(): void
